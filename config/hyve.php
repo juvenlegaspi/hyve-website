@@ -1,0 +1,172 @@
+<?php
+
+return [
+    'meta' => [
+        'title' => 'HYVE | Workspaces for Focus and Connection',
+        'description' => 'HYVE offers polished workspaces, private offices, and meeting rooms in Mandaue City for professionals who want to work well, meet well, and build stronger connections.',
+    ],
+    'navigation' => [
+        ['label' => 'Overview', 'href' => '#overview'],
+        ['label' => 'Services', 'href' => '#services'],
+        ['label' => 'Rates', 'href' => '#rates'],
+        ['label' => 'Spaces', 'href' => '#spaces'],
+        ['label' => 'Amenities', 'href' => '#amenities'],
+        ['label' => 'Why HYVE', 'href' => '#why-hyve'],
+        ['label' => 'Contact', 'href' => '#contact'],
+    ],
+    'quickFacts' => [
+        ['label' => 'Address', 'value' => '10F The Space Building'],
+        ['label' => 'Hours', 'value' => 'Open 24/7'],
+        ['label' => 'Access', 'value' => 'Open 7 Days'],
+        ['label' => 'Spaces', 'value' => '4 Ways to Work'],
+    ],
+    'booking' => [
+        'opening_time' => '00:00',
+        'closing_time' => '24:00',
+        'slot_interval_minutes' => 30,
+        'minimum_duration_minutes' => 60,
+        'blocked_statuses' => ['pending', 'confirmed'],
+    ],
+    'spaces' => [
+        [
+            'title' => 'Common Area',
+            'tag' => 'Open Workspace',
+            'image' => 'images/about1.jpg',
+            'description' => 'A welcoming shared workspace for independent professionals, remote workers, and students who want energy around them without losing focus.',
+            'features' => ['Fast Wi-Fi', 'Drink inclusions', 'Flexible daily use'],
+            'note' => 'Best for productive solo work with a social atmosphere nearby.',
+        ],
+        [
+            'title' => 'Fortitude Office (2 Seats)',
+            'tag' => 'Quiet Collaboration',
+            'image' => 'images/about2.jpg',
+            'description' => 'A private room for interviews, one-on-one meetings, focused partner work, and online calls that need a quieter setting.',
+            'features' => ['Private setup', 'Low-distraction environment', 'Ideal for two'],
+            'note' => 'A strong fit when privacy and clear conversation matter.',
+        ],
+        [
+            'title' => 'Tenacity Office (4 Seats)',
+            'tag' => 'Small Team Office',
+            'image' => 'images/about3.jpg',
+            'description' => 'A dedicated office for small teams that need room for planning, collaboration, and client conversations in a more composed environment.',
+            'features' => ['4-seat setup', 'Daily and monthly options', 'Team-ready atmosphere'],
+            'note' => 'Designed for teams that want structure without losing flexibility.',
+        ],
+        [
+            'title' => 'Zeal Room (8 Seats)',
+            'tag' => 'Conference Ready',
+            'image' => 'images/office.png',
+            'description' => 'A larger room for presentations, strategy sessions, workshops, and meetings where the right setting helps people engage with confidence.',
+            'features' => ['8-seat capacity', 'TV usage included', 'Presentation-ready setup'],
+            'note' => 'Built for collaborative sessions that need presence and clarity.',
+        ],
+    ],
+    'serviceHighlights' => [
+        [
+            'title' => 'Flexible Ways to Work',
+            'description' => 'Move from solo deep work to client meetings and team sessions without changing your standard for comfort or professionalism.',
+        ],
+        [
+            'title' => 'Meeting-Ready Spaces',
+            'description' => 'Host guests, partners, and clients in an environment that feels prepared, credible, and easy to trust from the moment they arrive.',
+        ],
+        [
+            'title' => 'A Network-Friendly Environment',
+            'description' => 'Work in a place designed not only for productivity, but also for natural conversations, new connections, and stronger professional relationships.',
+        ],
+    ],
+    'amenities' => [
+        'High-speed Wi-Fi',
+        'Air-conditioned spaces',
+        'Guest-ready atmosphere',
+        'Flexible workspace formats',
+        'Private room options',
+        'Conference-ready setup',
+        'Comfortable seating',
+        'Clean, polished interiors',
+        'Convenient Mandaue location',
+        'Daily access for flexible schedules',
+        'Built for meetings and focused work',
+        'A professional first impression',
+    ],
+    'rates' => [
+        [
+            'title' => 'Common Area',
+            'day_use' => ['2 hrs min' => 'Php 160', 'Succeeding hr' => 'Php 60', 'Daily' => 'Php 355', 'Weekly' => 'Php 2,155'],
+            'night_use' => ['2 hrs min' => 'Php 190', 'Succeeding hr' => 'Php 70', 'Daily' => 'Php 400', 'Weekly' => 'Php 2,499'],
+            'memberships' => ['Student Monthly' => 'Php 3,749', 'Regular Monthly' => 'Php 5,749', 'Night Student' => 'Php 5,249', 'Night Regular' => 'Php 6,749'],
+        ],
+        [
+            'title' => 'Fortitude Office (2 Seats)',
+            'day_use' => ['2 hrs min' => 'Php 299', 'Succeeding hr' => 'Php 149', 'Daily' => 'Php 749', 'Weekly' => 'Php 4,495'],
+            'night_use' => ['2 hrs min' => 'Php 319', 'Succeeding hr' => 'Php 159', 'Daily' => 'Php 849', 'Weekly' => 'Php 5,099'],
+            'memberships' => ['Monthly Rental' => 'Php 15,599', 'Night Monthly Rental' => 'Php 15,599', 'Night Upgrade Daily' => 'Plus Php 380', 'Night Upgrade Weekly' => 'Plus Php 2,159'],
+        ],
+        [
+            'title' => 'Tenacity Office (4 Seats)',
+            'day_use' => ['2 hrs min' => 'Php 719', 'Succeeding hr' => 'Php 359', 'Daily' => 'Php 2,159', 'Weekly' => 'Php 12,499'],
+            'night_use' => ['2 hrs min' => 'Php 789', 'Succeeding hr' => 'Php 389', 'Daily' => 'Php 2,399', 'Weekly' => 'Php 14,399'],
+            'memberships' => ['Monthly Rental' => 'Php 30,000', 'Night Monthly Rental' => 'Php 30,000', 'Night Upgrade Daily' => 'Plus Php 2,000', 'Night Upgrade Weekly' => 'Plus Php 10,795'],
+        ],
+        [
+            'title' => 'Zeal Room (8 Seats)',
+            'day_use' => ['2 hrs min' => 'Php 1,598', 'Succeeding hr' => 'Php 799', 'Daily' => 'Php 4,799', 'Weekly' => 'N/A'],
+            'night_use' => ['2 hrs min' => 'Php 1,799', 'Succeeding hr' => 'Php 899', 'Daily' => 'Php 5,099', 'Weekly' => 'Php 25,495'],
+            'memberships' => ['Upgrade 1st hr' => 'Plus Php 799', 'Night Upgrade Daily' => 'Plus Php 4,595', 'TV Usage' => 'Included', 'Monthly Rental' => 'Php 45,000'],
+        ],
+    ],
+    'inclusions' => [
+        'Free Wi-Fi, potable water, and microwave access across bookable workspace options.',
+        'Hourly bookings include one drink of your choice with a two-hour minimum stay.',
+        'Daily and weekly bookings include two cups of drinks of choice.',
+        'Private office and Zeal Room drink inclusions are counted per pax.',
+        'Zeal Room includes TV usage for presentation-friendly sessions.',
+        'Parking is available on a first-come, first-served basis.',
+    ],
+    'virtualOffice' => [
+        ['title' => 'Package A', 'price' => 'Php 2,000 / month', 'description' => 'Business address support for professionals establishing a credible presence.'],
+        ['title' => 'Package B', 'price' => 'Php 3,500 / month', 'description' => 'Business address support with call handling for a more responsive client experience.'],
+        ['title' => 'Package C', 'price' => 'Php 5,500 / month', 'description' => 'Business address support with call and mail handling for a fuller operational setup.'],
+    ],
+    'reasons' => [
+        'Professional spaces that help every meeting feel more intentional.',
+        'An atmosphere that supports focus while still making room for connection.',
+        'Flexible setups for solo work, private discussions, and team sessions.',
+        'A polished environment you can confidently share with clients and collaborators.',
+    ],
+    'bookingFlow' => [
+        [
+            'step' => 'Step 01',
+            'title' => 'Explore',
+            'description' => 'Review the available spaces, rates, and amenities to find the setting that fits your work style and meeting needs.',
+            'featured' => false,
+        ],
+        [
+            'step' => 'Step 02',
+            'title' => 'Connect',
+            'description' => 'Reach out to ask questions, confirm availability, or plan a visit before you book.',
+            'featured' => true,
+        ],
+        [
+            'step' => 'Step 03',
+            'title' => 'Book',
+            'description' => 'Reserve the space that gives you the right balance of privacy, focus, and professional presence.',
+            'featured' => false,
+        ],
+    ],
+    'contact' => [
+        'phone_display' => '+63 900 000 0000',
+        'phone_href' => '+639000000000',
+        'email' => 'hyveworkspace@email.com',
+        'address_lines' => [
+            '10F The Space Building',
+            'A.S. Fortuna Street',
+            'Mandaue City',
+        ],
+        'hours_lines' => [
+            'Monday to Sunday',
+            'Open 24 Hours',
+        ],
+        'map_url' => 'https://maps.google.com/?q=The+Space+Building+A.S.+Fortuna+Mandaue+City',
+    ],
+];
