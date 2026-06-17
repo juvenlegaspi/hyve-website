@@ -30,6 +30,7 @@ class BookingController extends Controller
     public function index(Request $request): View
     {
         $user = $request->user();
+        $memberBookings = collect();
         $spaces = Space::query()
             ->active()
             ->orderBy('sort_order')
@@ -43,6 +44,82 @@ class BookingController extends Controller
             ->active()
             ->orderBy('sort_order')
             ->get();
+
+        if ($user) {
+            $memberBookings = BookingHeader::query()
+                ->with(['details.hyveRoom', 'details.space'])
+                ->where('booking_type', BookingHeader::TYPE_MEMBER)
+                ->where('user_id', $user->id)
+                ->latest('created_at')
+                ->get();
+        }
+
+        $oldInput = $request->session()->getOldInput();
+        $oldScheduleSummary = null;
+
+        if (($oldInput['booking_mode'] ?? null) === 'schedule') {
+            $oldItems = $oldInput['selected_schedule_items'] ?? [];
+
+            if (is_string($oldItems) && $oldItems !== '') {
+                $decodedItems = json_decode($oldItems, true);
+                $oldItems = json_last_error() === JSON_ERROR_NONE && is_array($decodedItems)
+                    ? $decodedItems
+                    : [];
+            }
+
+            if (is_array($oldItems) && $oldItems !== []) {
+                $normalizedItems = collect($oldItems)
+                    ->filter(fn ($item) => is_array($item))
+                    ->values();
+                $roomLookup = $hyveRooms->keyBy('id');
+                $total = 0.0;
+
+                foreach ($normalizedItems as $item) {
+                    $roomId = isset($item['hyve_room_id']) ? (int) $item['hyve_room_id'] : 0;
+                    $bookingDate = $item['booking_date'] ?? null;
+                    $startTime = $item['start_time'] ?? null;
+                    $endTime = $item['end_time'] ?? null;
+                    $room = $roomLookup->get($roomId);
+
+                    if (! $room instanceof HyveRoom || ! is_string($bookingDate) || ! is_string($startTime) || ! is_string($endTime)) {
+                        continue;
+                    }
+
+                    $quote = $this->pricing->quoteForRoom($room, $bookingDate, $startTime, $endTime);
+                    $total += (float) ($quote['total_amount'] ?? 0);
+                }
+
+                $minimumDownpayment = $this->pricing->minimumDownpaymentForTotal($total);
+                $customerDownpayment = round((float) ($oldInput['downpayment_amount'] ?? 0), 2);
+
+                $oldScheduleSummary = [
+                    'slot_count' => $normalizedItems->count(),
+                    'room_count' => $normalizedItems->pluck('hyve_room_id')->filter()->unique()->count(),
+                    'date_count' => $normalizedItems->pluck('booking_date')->filter()->unique()->count(),
+                    'first_date' => $normalizedItems->pluck('booking_date')->filter()->first(),
+                    'items' => $normalizedItems->map(function (array $item) use ($roomLookup): array {
+                        $roomId = isset($item['hyve_room_id']) ? (int) $item['hyve_room_id'] : 0;
+                        $room = $roomLookup->get($roomId);
+                        $bookingDate = (string) ($item['booking_date'] ?? '');
+                        $startTime = (string) ($item['start_time'] ?? '');
+                        $endTime = (string) ($item['end_time'] ?? '');
+                        $label = $item['label'] ?? trim($startTime.'-'.$endTime);
+                        $amount = round((float) ($item['total_amount'] ?? 0), 2);
+
+                        return [
+                            'room_name' => $item['room_name'] ?? $room?->room_name ?? 'Room',
+                            'room_space' => $item['room_space'] ?? $room?->mappedSpaceLabel() ?? '',
+                            'booking_date' => $bookingDate,
+                            'label' => (string) $label,
+                            'total_amount' => $amount,
+                        ];
+                    })->all(),
+                    'total_amount' => round($total, 2),
+                    'minimum_downpayment_amount' => round($minimumDownpayment, 2),
+                    'remaining_balance' => round(max(0, $total - $customerDownpayment), 2),
+                ];
+            }
+        }
 
         return view('bookings.index', [
             'meta' => [
@@ -63,6 +140,8 @@ class BookingController extends Controller
             'spaces' => $spaces,
             'paymentSetting' => $paymentSetting,
             'rates' => $rateCards->map(fn (HyveRate $rate): array => $rate->toDisplayArray())->all(),
+            'memberBookings' => $memberBookings,
+            'oldScheduleSummary' => $oldScheduleSummary,
             'user' => $user,
         ]);
     }
@@ -185,28 +264,90 @@ class BookingController extends Controller
     {
         $user = $request->user();
         $validated = $request->validated();
-        $room = HyveRoom::query()->active()->findOrFail($validated['hyve_room_id']);
-        $space = $this->spaceForRoom($room);
-        $quote = $this->pricing->quoteForRoom($room, $validated['booking_date'], $validated['start_time'], $validated['end_time']);
+        $isScheduleMode = ($validated['booking_mode'] ?? 'room') === 'schedule';
+        $bookingItems = [];
+        $grandTotal = 0.0;
 
-        if (! $this->isTimeRangeAvailable($room, $validated['booking_date'], $validated['start_time'], $validated['end_time'])) {
-            return back()
-                ->withInput()
-                ->withErrors([
-                    'end_time' => 'The selected booking range is no longer available. Please choose a different start and end time.',
-                ]);
-        }
+        if ($isScheduleMode) {
+            $unavailableItems = [];
 
-        if (! $quote) {
-            return back()
-                ->withInput()
-                ->withErrors([
-                    'hyve_room_id' => 'No active pricing is configured for the selected room yet.',
-                ]);
+            foreach ((array) ($validated['selected_schedule_items'] ?? []) as $item) {
+                $room = HyveRoom::query()->active()->findOrFail((int) $item['hyve_room_id']);
+                $space = $this->spaceForRoom($room);
+                $quote = $this->pricing->quoteForRoom($room, $item['booking_date'], $item['start_time'], $item['end_time']);
+
+                if (! $this->isTimeRangeAvailable($room, $item['booking_date'], $item['start_time'], $item['end_time'])) {
+                    $unavailableItems[] = sprintf(
+                        '%s - %s - %s to %s',
+                        $room->room_name,
+                        Carbon::parse($item['booking_date'])->format('F j, Y'),
+                        Carbon::createFromFormat('H:i', $item['start_time'])->format('g:i A'),
+                        Carbon::createFromFormat('H:i', $item['end_time'])->format('g:i A'),
+                    );
+
+                    continue;
+                }
+
+                if (! $quote) {
+                    return back()
+                        ->withInput()
+                        ->withErrors([
+                            'selected_schedule_items' => 'One of the selected rooms does not have active pricing yet.',
+                        ]);
+                }
+
+                $bookingItems[] = [
+                    'room' => $room,
+                    'space' => $space,
+                    'quote' => $quote,
+                    'booking_date' => $item['booking_date'],
+                    'start_time' => $item['start_time'],
+                    'end_time' => $item['end_time'],
+                ];
+                $grandTotal += (float) $quote['total_amount'];
+            }
+
+            if ($unavailableItems !== []) {
+                return back()
+                    ->withInput()
+                    ->withErrors([
+                        'selected_schedule_items' => 'These schedule slots are no longer available: '.implode('; ', $unavailableItems).'. Please remove them and choose another time.',
+                    ]);
+            }
+        } else {
+            $room = HyveRoom::query()->active()->findOrFail($validated['hyve_room_id']);
+            $space = $this->spaceForRoom($room);
+            $quote = $this->pricing->quoteForRoom($room, $validated['booking_date'], $validated['start_time'], $validated['end_time']);
+
+            if (! $this->isTimeRangeAvailable($room, $validated['booking_date'], $validated['start_time'], $validated['end_time'])) {
+                return back()
+                    ->withInput()
+                    ->withErrors([
+                        'end_time' => 'The selected booking range is no longer available. Please choose a different start and end time.',
+                    ]);
+            }
+
+            if (! $quote) {
+                return back()
+                    ->withInput()
+                    ->withErrors([
+                        'hyve_room_id' => 'No active pricing is configured for the selected room yet.',
+                    ]);
+            }
+
+            $bookingItems[] = [
+                'room' => $room,
+                'space' => $space,
+                'quote' => $quote,
+                'booking_date' => $validated['booking_date'],
+                'start_time' => $validated['start_time'],
+                'end_time' => $validated['end_time'],
+            ];
+            $grandTotal = (float) $quote['total_amount'];
         }
 
         $customerDownpayment = round((float) $validated['downpayment_amount'], 2);
-        $remainingBalance = round(max(0, (float) $quote['total_amount'] - $customerDownpayment), 2);
+        $remainingBalance = round(max(0, $grandTotal - $customerDownpayment), 2);
 
         $paymentProofPath = $request->file('payment_proof')?->store('booking-payments', 'public');
         $paymentProofName = $request->file('payment_proof')?->getClientOriginalName();
@@ -216,7 +357,7 @@ class BookingController extends Controller
                 'user_id' => $user->id,
                 'customer_name' => trim($user->first_name.' '.$user->last_name),
                 'email' => $user->email,
-                'phone' => $user->phone ?? '',
+                'phone' => $user->number ?? $user->phone ?? '',
                 'booking_type' => BookingHeader::TYPE_MEMBER,
             ]
             : [
@@ -226,7 +367,7 @@ class BookingController extends Controller
                 'booking_type' => BookingHeader::TYPE_GUEST,
             ];
 
-        $header = $this->database->transaction(function () use ($contactDetails, $validated, $space, $room, $quote, $paymentProofPath, $paymentProofName, $customerDownpayment, $remainingBalance): BookingHeader {
+        $header = $this->database->transaction(function () use ($contactDetails, $validated, $bookingItems, $grandTotal, $paymentProofPath, $paymentProofName, $customerDownpayment, $remainingBalance): BookingHeader {
             $header = BookingHeader::query()->create([
                 'reference_no' => $this->generateReferenceNumber(),
                 'source' => BookingHeader::SOURCE_WEB,
@@ -234,7 +375,7 @@ class BookingController extends Controller
                 'payment_status' => 'pending_verification',
                 'payment_proof_path' => $paymentProofPath,
                 'payment_proof_name' => $paymentProofName,
-                'total_amount' => $quote['total_amount'],
+                'total_amount' => round($grandTotal, 2),
                 'downpayment_amount' => $customerDownpayment,
                 'balance_amount' => $remainingBalance,
                 'notes' => $validated['notes'] ?? null,
@@ -242,21 +383,30 @@ class BookingController extends Controller
                 ...$contactDetails,
             ]);
 
-            $header->details()->create([
-                'space_id' => $space->id,
-                'hyve_room_id' => $room->id,
-                'booking_date' => $validated['booking_date'],
-                'start_time' => $validated['start_time'],
-                'end_time' => $validated['end_time'],
-                'charge_period' => $quote['charge_period'],
-                'duration_hours' => $quote['duration_hours'],
-                'billed_hours' => $quote['billed_hours'],
-                'guests' => $validated['guests'],
-                'rate_name' => $quote['rate_name'],
-                'rate_amount' => $quote['succeeding_hour_rate'],
-                'subtotal' => $quote['total_amount'],
-                'status' => BookingDetail::STATUS_PENDING,
-            ]);
+            foreach ($bookingItems as $bookingItem) {
+                /** @var Space $space */
+                $space = $bookingItem['space'];
+                /** @var HyveRoom $room */
+                $room = $bookingItem['room'];
+                /** @var array $quote */
+                $quote = $bookingItem['quote'];
+
+                $header->details()->create([
+                    'space_id' => $space->id,
+                    'hyve_room_id' => $room->id,
+                    'booking_date' => $bookingItem['booking_date'],
+                    'start_time' => $bookingItem['start_time'],
+                    'end_time' => $bookingItem['end_time'],
+                    'charge_period' => $quote['charge_period'],
+                    'duration_hours' => $quote['duration_hours'],
+                    'billed_hours' => $quote['billed_hours'],
+                    'guests' => $validated['guests'],
+                    'rate_name' => $quote['rate_name'],
+                    'rate_amount' => $quote['succeeding_hour_rate'],
+                    'subtotal' => $quote['total_amount'],
+                    'status' => BookingDetail::STATUS_PENDING,
+                ]);
+            }
 
             return $header;
         });
@@ -292,8 +442,8 @@ class BookingController extends Controller
         $endTimes = $selectedStartTime
             ? $this->availableEndTimesForRoom($blockedRanges, $bookingDate, $selectedStartTime, $effectiveStart, $dayEnd, $minimumDuration)
             : collect();
-        $availableWindows = $this->availableWindowsForLayout($blockedRanges, $effectiveStart, $dayEnd, $minimumDuration);
-        $bookedWindows = $blockedRanges->map(fn (array $range): array => $this->windowPayload($range['start'], $range['end']));
+        $availableWindows = $this->hourlyWindowsForLayout($blockedRanges, $effectiveStart, $dayEnd, false);
+        $bookedWindows = $this->hourlyWindowsForLayout($blockedRanges, $effectiveStart, $dayEnd, true);
 
         $status = 'available';
 
@@ -605,6 +755,62 @@ class BookingController extends Controller
         }
 
         return $windows;
+    }
+
+    /**
+     * @param Collection<int, array{start: Carbon, end: Carbon}> $blockedRanges
+     * @return Collection<int, array{value: string, label: string, end_time: string}>
+     */
+    private function hourlyWindowsForLayout(Collection $blockedRanges, Carbon $effectiveStart, Carbon $dayEnd, bool $booked): Collection
+    {
+        $slotMinutes = 60;
+        $windows = collect();
+
+        if ($booked) {
+            foreach ($blockedRanges as $range) {
+                $cursor = $range['start']->copy();
+
+                while ($cursor->copy()->addMinutes($slotMinutes)->lte($range['end'])) {
+                    $end = $cursor->copy()->addMinutes($slotMinutes);
+
+                    if ($end->gt($effectiveStart) && $cursor->lt($dayEnd)) {
+                        $windows->push($this->windowPayload($cursor, $end));
+                    }
+
+                    $cursor->addMinutes($slotMinutes);
+                }
+            }
+
+            return $windows->values();
+        }
+
+        $cursor = $effectiveStart->copy();
+
+        foreach ($blockedRanges as $range) {
+            if ($range['end']->lte($cursor)) {
+                continue;
+            }
+
+            $windowEnd = $range['start']->copy();
+
+            while ($cursor->copy()->addMinutes($slotMinutes)->lte($windowEnd)) {
+                $end = $cursor->copy()->addMinutes($slotMinutes);
+                $windows->push($this->windowPayload($cursor, $end));
+                $cursor->addMinutes($slotMinutes);
+            }
+
+            if ($range['end']->gt($cursor)) {
+                $cursor = $range['end']->copy();
+            }
+        }
+
+        while ($cursor->copy()->addMinutes($slotMinutes)->lte($dayEnd)) {
+            $end = $cursor->copy()->addMinutes($slotMinutes);
+            $windows->push($this->windowPayload($cursor, $end));
+            $cursor->addMinutes($slotMinutes);
+        }
+
+        return $windows->values();
     }
 
     /**

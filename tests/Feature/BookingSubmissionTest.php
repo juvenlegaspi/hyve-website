@@ -77,7 +77,7 @@ class BookingSubmissionTest extends TestCase
             'first_name' => 'Juan',
             'last_name' => 'Dela Cruz',
             'email' => 'juan@example.com',
-            'phone' => '+639171234567',
+            'number' => '+639171234567',
         ]);
 
         $response = $this
@@ -134,6 +134,176 @@ class BookingSubmissionTest extends TestCase
             'total_amount' => 1598,
             'minimum_downpayment_amount' => 500,
         ]);
+    }
+
+    public function test_guest_users_can_submit_a_full_schedule_booking_with_multiple_room_slots(): void
+    {
+        Storage::fake('public');
+
+        $roomOne = HyveRoom::query()->where('room_name', 'Room 1')->firstOrFail();
+        $roomTwo = HyveRoom::query()->where('room_name', 'Room 2')->firstOrFail();
+
+        $response = $this->post(route('bookings.store'), [
+            'booking_mode' => 'schedule',
+            'selected_schedule_items' => json_encode([
+                [
+                    'hyve_room_id' => $roomOne->id,
+                    'booking_date' => now()->addDay()->toDateString(),
+                    'start_time' => '08:00',
+                    'end_time' => '09:00',
+                ],
+                [
+                    'hyve_room_id' => $roomTwo->id,
+                    'booking_date' => now()->addDay()->toDateString(),
+                    'start_time' => '09:00',
+                    'end_time' => '10:00',
+                ],
+            ], JSON_THROW_ON_ERROR),
+            'guests' => 2,
+            'downpayment_amount' => 299,
+            'payment_method' => 'gcash',
+            'payment_proof' => UploadedFile::fake()->create('proof.png', 120, 'image/png'),
+            'full_name' => 'Schedule Guest',
+            'email' => 'schedule@example.com',
+            'phone' => '+639181234567',
+            'notes' => 'Testing full schedule checkout.',
+        ]);
+
+        $response->assertRedirect(route('bookings.index'));
+        $response->assertSessionHas('booking_success');
+
+        $header = BookingHeader::query()->latest('id')->firstOrFail();
+
+        $this->assertSame(2, $header->details()->count());
+        $this->assertDatabaseHas('booking_headers', [
+            'id' => $header->id,
+            'booking_type' => 'guest',
+            'payment_method' => 'gcash',
+            'downpayment_amount' => 299,
+            'status' => 'pending',
+        ]);
+    }
+
+    public function test_guest_users_can_submit_a_full_schedule_booking_with_adjacent_hours_in_the_same_room(): void
+    {
+        Storage::fake('public');
+
+        $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+
+        $response = $this->post(route('bookings.store'), [
+            'booking_mode' => 'schedule',
+            'selected_schedule_items' => json_encode([
+                [
+                    'hyve_room_id' => $room->id,
+                    'booking_date' => now()->addDay()->toDateString(),
+                    'start_time' => '08:00',
+                    'end_time' => '09:00',
+                ],
+                [
+                    'hyve_room_id' => $room->id,
+                    'booking_date' => now()->addDay()->toDateString(),
+                    'start_time' => '09:00',
+                    'end_time' => '10:00',
+                ],
+            ], JSON_THROW_ON_ERROR),
+            'guests' => 2,
+            'downpayment_amount' => 500,
+            'payment_method' => 'gcash',
+            'payment_proof' => UploadedFile::fake()->create('proof.png', 120, 'image/png'),
+            'full_name' => 'Schedule Guest',
+            'email' => 'schedule@example.com',
+            'phone' => '+639181234567',
+            'notes' => 'Testing adjacent hours in same room.',
+        ]);
+
+        $response->assertRedirect(route('bookings.index'));
+        $response->assertSessionHas('booking_success');
+
+        $header = BookingHeader::query()->latest('id')->firstOrFail();
+        $this->assertSame(2, $header->details()->count());
+    }
+
+    public function test_full_schedule_booking_preserves_selected_slots_after_validation_error(): void
+    {
+        Storage::fake('public');
+
+        $roomOne = HyveRoom::query()->where('room_name', 'Room 1')->firstOrFail();
+        $roomTwo = HyveRoom::query()->where('room_name', 'Room 2')->firstOrFail();
+
+        $response = $this
+            ->from(route('bookings.index'))
+            ->post(route('bookings.store'), [
+                'booking_mode' => 'schedule',
+                'selected_schedule_items' => json_encode([
+                    [
+                        'hyve_room_id' => $roomOne->id,
+                        'booking_date' => now()->addDay()->toDateString(),
+                        'start_time' => '08:00',
+                        'end_time' => '09:00',
+                    ],
+                    [
+                        'hyve_room_id' => $roomTwo->id,
+                        'booking_date' => now()->addDays(2)->toDateString(),
+                        'start_time' => '09:00',
+                        'end_time' => '10:00',
+                    ],
+                ], JSON_THROW_ON_ERROR),
+                'guests' => 2,
+                'downpayment_amount' => 10,
+                'payment_method' => 'gcash',
+                'payment_proof' => UploadedFile::fake()->create('proof.png', 120, 'image/png'),
+                'full_name' => 'Schedule Guest',
+                'email' => 'schedule@example.com',
+                'phone' => '+639181234567',
+                'notes' => 'Testing full schedule validation restore.',
+            ]);
+
+        $response->assertRedirect(route('bookings.index'));
+        $response->assertSessionHasErrors('downpayment_amount');
+        $this->assertSame('schedule', session()->getOldInput('booking_mode'));
+        $oldScheduleItems = session()->getOldInput('selected_schedule_items');
+        $decodedScheduleItems = is_string($oldScheduleItems) ? json_decode($oldScheduleItems, true) : $oldScheduleItems;
+        $this->assertIsArray($decodedScheduleItems);
+        $this->assertCount(2, $decodedScheduleItems);
+    }
+
+    public function test_full_schedule_booking_rejects_expired_current_day_slots_with_a_specific_message(): void
+    {
+        Storage::fake('public');
+        Carbon::setTestNow('2026-06-17 08:58:00');
+
+        try {
+            $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+
+            $response = $this
+                ->from(route('bookings.index'))
+                ->post(route('bookings.store'), [
+                    'booking_mode' => 'schedule',
+                    'selected_schedule_items' => json_encode([
+                        [
+                            'hyve_room_id' => $room->id,
+                            'booking_date' => now()->toDateString(),
+                            'start_time' => '08:00',
+                            'end_time' => '09:00',
+                        ],
+                    ], JSON_THROW_ON_ERROR),
+                    'guests' => 1,
+                    'downpayment_amount' => 500,
+                    'payment_method' => 'gcash',
+                    'payment_proof' => UploadedFile::fake()->create('proof.png', 120, 'image/png'),
+                    'full_name' => 'Expired Slot Guest',
+                    'email' => 'expired@example.com',
+                    'phone' => '+639181234567',
+                    'notes' => 'Testing expired current-day schedule slot.',
+                ]);
+
+            $response->assertRedirect(route('bookings.index'));
+            $response->assertSessionHasErrors([
+                'selected_schedule_items' => 'These schedule slots are no longer available: Conference Room - June 17, 2026 - 8:00 AM to 9:00 AM. Please remove them and choose another time.',
+            ]);
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     public function test_quote_endpoint_uses_half_of_total_for_bookings_up_to_one_thousand(): void
@@ -337,6 +507,41 @@ class BookingSubmissionTest extends TestCase
         ]);
     }
 
+    public function test_guest_users_can_upload_supported_payment_proof_image_types(): void
+    {
+        Storage::fake('public');
+
+        $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+
+        foreach ([
+            UploadedFile::fake()->image('proof.gif'),
+        ] as $paymentProof) {
+            try {
+                $response = $this->post(route('bookings.store'), [
+                    'full_name' => 'Maria Santos',
+                    'email' => 'maria@example.com',
+                    'phone' => '+639181112222',
+                    'hyve_room_id' => $room->id,
+                    'booking_date' => now()->addDay()->toDateString(),
+                    'start_time' => '08:00',
+                    'end_time' => '10:00',
+                    'guests' => 6,
+                    'downpayment_amount' => 500,
+                    'payment_method' => 'gcash',
+                    'payment_proof' => $paymentProof,
+                    'notes' => 'Testing supported image uploads.',
+                ]);
+
+                $response->assertRedirect(route('bookings.index'));
+                $response->assertSessionHas('booking_success');
+            } catch (\Throwable $throwable) {
+                $this->fail("Upload type failed for {$paymentProof->getClientOriginalName()}: {$throwable->getMessage()}");
+            }
+        }
+
+        $this->assertDatabaseCount('booking_headers', 1);
+    }
+
     public function test_room_layout_endpoint_returns_room_statuses_and_slots(): void
     {
         $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
@@ -371,6 +576,27 @@ class BookingSubmissionTest extends TestCase
             'room_name' => 'Conference Room',
             'status' => 'booked',
         ]);
+    }
+
+    public function test_today_room_layout_only_returns_current_and_future_hourly_slots(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 6, 9, 16, 3, 0));
+
+        try {
+            $response = $this->getJson(route('bookings.room-layout', [
+                'booking_date' => '2026-06-09',
+            ]));
+
+            $response->assertOk();
+            $response->assertJsonMissing([
+                'label' => '4:00 PM - 5:00 PM',
+            ]);
+            $response->assertJsonFragment([
+                'label' => '4:30 PM - 5:30 PM',
+            ]);
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     public function test_today_availability_only_shows_future_half_hour_slots(): void

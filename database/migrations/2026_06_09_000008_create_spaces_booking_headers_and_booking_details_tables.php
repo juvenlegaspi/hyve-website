@@ -26,7 +26,7 @@ return new class extends Migration
 
         Schema::create('booking_headers', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('user_id')->nullable()->constrained()->nullOnDelete();
+            $table->unsignedBigInteger('user_id')->nullable();
             $table->string('reference_no')->unique();
             $table->string('customer_name');
             $table->string('email');

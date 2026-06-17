@@ -1,120 +1,199 @@
-const setupNavState = () => {
+const setupNav = () => {
+    const shell = document.querySelector('[data-home-shell]');
     const nav = document.getElementById('site-nav');
-
-    if (!nav) {
-        return;
-    }
-
-    const updateNav = () => {
-        if (window.scrollY > 24) {
-            nav.classList.add('bg-[#f5efe7]/88', 'backdrop-blur-xl', 'shadow-lg', 'shadow-black/5');
-        } else {
-            nav.classList.remove('bg-[#f5efe7]/88', 'backdrop-blur-xl', 'shadow-lg', 'shadow-black/5');
-        }
-    };
-
-    updateNav();
-    window.addEventListener('scroll', updateNav, { passive: true });
-};
-
-const setupMobileMenu = () => {
     const toggle = document.getElementById('menu-toggle');
     const menu = document.getElementById('mobile-menu');
+    const links = [...document.querySelectorAll('.nav-link[href^="#"]')];
+    const sections = [...document.querySelectorAll('section[id]')];
+    const homeTriggers = [...document.querySelectorAll('[data-nav-mode="home"]')];
+    const spacesTriggers = [...document.querySelectorAll('[data-nav-mode="spaces"]')];
+    const anchorTriggers = [...document.querySelectorAll('[data-nav-anchor]')];
+
+    const setPageMode = (mode) => {
+        if (!shell) {
+            return;
+        }
+
+        shell.setAttribute('data-page-mode', mode);
+    };
+
+    const closeMenu = () => {
+        if (!toggle || !menu) {
+            return;
+        }
+
+        menu.classList.add('hidden');
+        toggle.setAttribute('aria-expanded', 'false');
+    };
+
+    const scrollToTarget = (selector) => {
+        const target = document.querySelector(selector);
+
+        if (!target) {
+            return;
+        }
+
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+
+    if (nav) {
+        const onScroll = () => {
+            nav.classList.toggle('site-nav--scrolled', window.scrollY > 24);
+        };
+
+        onScroll();
+        window.addEventListener('scroll', onScroll, { passive: true });
+    }
+
+    homeTriggers.forEach((trigger) => {
+        trigger.addEventListener('click', (event) => {
+            event.preventDefault();
+            setPageMode('home');
+            closeMenu();
+            window.setTimeout(() => scrollToTarget('#overview'), 30);
+        });
+    });
+
+    spacesTriggers.forEach((trigger) => {
+        trigger.addEventListener('click', (event) => {
+            event.preventDefault();
+            setPageMode('spaces');
+            closeMenu();
+            window.setTimeout(() => scrollToTarget('#spaces-view'), 30);
+        });
+    });
+
+    anchorTriggers.forEach((trigger) => {
+        trigger.addEventListener('click', () => {
+            const href = trigger.getAttribute('href') || '';
+
+            if (href !== '#why-hyve' && href !== '#contact') {
+                setPageMode('home');
+            }
+
+            closeMenu();
+        });
+    });
+
+    if (links.length && sections.length) {
+        const setActive = (id) => {
+            links.forEach((link) => {
+                link.classList.toggle('is-active', link.getAttribute('href') === `#${id}`);
+            });
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            const visible = entries
+                .filter((entry) => entry.isIntersecting)
+                .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+
+            if (visible?.target?.id) {
+                setActive(visible.target.id);
+            }
+        }, {
+            rootMargin: '-35% 0px -45% 0px',
+            threshold: [0.2, 0.45, 0.7],
+        });
+
+        sections.forEach((section) => observer.observe(section));
+    }
 
     if (!toggle || !menu) {
         return;
     }
 
-    const closeMenu = () => {
-        menu.classList.add('hidden');
-        toggle.setAttribute('aria-expanded', 'false');
-    };
-
     toggle.addEventListener('click', () => {
         const isOpen = !menu.classList.contains('hidden');
-
-        if (isOpen) {
-            closeMenu();
-            return;
-        }
-
-        menu.classList.remove('hidden');
-        toggle.setAttribute('aria-expanded', 'true');
+        menu.classList.toggle('hidden', isOpen);
+        toggle.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
     });
 
-    menu.querySelectorAll('a[href^="#"]').forEach((link) => {
+    menu.querySelectorAll('a').forEach((link) => {
         link.addEventListener('click', closeMenu);
     });
-
-    window.addEventListener('resize', () => {
-        if (window.innerWidth >= 768) {
-            closeMenu();
-        }
-    });
 };
 
-const setupSmoothScroll = () => {
-    document.querySelectorAll('a[href^="#"]').forEach((anchor) => {
-        anchor.addEventListener('click', (event) => {
-            const targetId = anchor.getAttribute('href');
+const setupSpacesBrowser = () => {
+    const filter = document.querySelector('[data-spaces-filter]');
+    const cards = [...document.querySelectorAll('[data-space-card]')];
+    const count = document.querySelector('[data-space-count]');
 
-            if (!targetId || targetId === '#') {
-                return;
-            }
-
-            const target = document.querySelector(targetId);
-
-            if (!target) {
-                return;
-            }
-
-            event.preventDefault();
-            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        });
-    });
-};
-
-const setupActiveSection = () => {
-    const sections = [...document.querySelectorAll('section[id]')];
-    const links = [...document.querySelectorAll('.nav-link')];
-
-    if (!sections.length || !links.length) {
+    if (!filter || !cards.length || !count) {
         return;
     }
 
-    const setActive = (id) => {
-        links.forEach((link) => {
-            const isActive = link.getAttribute('href') === `#${id}`;
-            link.classList.toggle('is-active', isActive);
-        });
+    const search = filter.querySelector('[data-space-search]');
+    const category = filter.querySelector('[data-space-category]');
+    const capacity = filter.querySelector('[data-space-capacity]');
+
+    if (!search || !category || !capacity) {
+        return;
+    }
+
+    const matchesCapacity = (cardCapacity, selected) => {
+        if (!selected) {
+            return true;
+        }
+
+        const numeric = Number(cardCapacity);
+
+        if (selected === '1-2') {
+            return numeric >= 1 && numeric <= 2;
+        }
+
+        if (selected === '3-4') {
+            return numeric >= 3 && numeric <= 4;
+        }
+
+        if (selected === '5+') {
+            return numeric >= 5;
+        }
+
+        return true;
     };
 
-    const observer = new IntersectionObserver((entries) => {
-        const visibleEntry = entries
-            .filter((entry) => entry.isIntersecting)
-            .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+    const applyFilters = () => {
+        const searchValue = search.value.trim().toLowerCase();
+        const categoryValue = category.value.trim().toLowerCase();
+        const capacityValue = capacity.value;
+        let visibleCount = 0;
 
-        if (visibleEntry?.target?.id) {
-            setActive(visibleEntry.target.id);
-        }
-    }, {
-        rootMargin: '-35% 0px -45% 0px',
-        threshold: [0.2, 0.45, 0.7],
+        cards.forEach((card) => {
+            const title = card.getAttribute('data-space-title') || '';
+            const cardCategory = card.getAttribute('data-space-category') || '';
+            const cardCapacity = card.getAttribute('data-space-capacity') || '';
+
+            const visible = (!searchValue || title.includes(searchValue))
+                && (!categoryValue || cardCategory === categoryValue)
+                && matchesCapacity(cardCapacity, capacityValue);
+
+            card.classList.toggle('hidden', !visible);
+
+            if (visible) {
+                visibleCount += 1;
+            }
+        });
+
+        count.textContent = String(visibleCount);
+    };
+
+    filter.addEventListener('submit', (event) => {
+        event.preventDefault();
+        applyFilters();
     });
 
-    sections.forEach((section) => observer.observe(section));
+    [search, category, capacity].forEach((field) => {
+        field.addEventListener('input', applyFilters);
+        field.addEventListener('change', applyFilters);
+    });
 };
 
 const setupReveal = () => {
-    const elements = document.querySelectorAll('.reveal');
+    const items = document.querySelectorAll('.reveal');
 
-    if (!elements.length) {
+    if (!items.length) {
         return;
     }
-
-    elements.forEach((element) => {
-        element.classList.add('translate-y-6', 'opacity-0', 'transition', 'duration-700');
-    });
 
     const observer = new IntersectionObserver((entries) => {
         entries.forEach((entry) => {
@@ -122,903 +201,2045 @@ const setupReveal = () => {
                 return;
             }
 
-            entry.target.classList.remove('translate-y-6', 'opacity-0');
-            entry.target.classList.add('translate-y-0', 'opacity-100');
+            entry.target.classList.add('is-visible');
             observer.unobserve(entry.target);
         });
-    }, { threshold: 0.2 });
+    }, { threshold: 0.15 });
 
-    elements.forEach((element) => observer.observe(element));
+    items.forEach((item) => observer.observe(item));
 };
 
-const setupRatePanels = () => {
-    const toggles = [...document.querySelectorAll('[data-rate-toggle]')];
-
-    if (!toggles.length) {
-        return;
-    }
-
-    toggles.forEach((toggle) => {
-        toggle.addEventListener('click', () => {
-            const panelId = toggle.getAttribute('aria-controls');
-            const panel = panelId ? document.getElementById(panelId) : null;
-            const icon = toggle.querySelector('[data-rate-icon]');
-
-            if (!panel) {
-                return;
-            }
-
-            const isOpen = toggle.getAttribute('aria-expanded') === 'true';
-
-            toggles.forEach((otherToggle) => {
-                const otherPanelId = otherToggle.getAttribute('aria-controls');
-                const otherPanel = otherPanelId ? document.getElementById(otherPanelId) : null;
-                const otherIcon = otherToggle.querySelector('[data-rate-icon]');
-
-                otherToggle.setAttribute('aria-expanded', 'false');
-                otherPanel?.classList.add('hidden');
-                otherIcon?.classList.remove('rotate-180', 'bg-[#c49c5b]', 'text-[#18130f]');
-                otherIcon?.classList.add('bg-[#163129]', 'text-white');
-            });
-
-            if (isOpen) {
-                return;
-            }
-
-            toggle.setAttribute('aria-expanded', 'true');
-            panel.classList.remove('hidden');
-            icon?.classList.add('rotate-180', 'bg-[#c49c5b]', 'text-[#18130f]');
-            icon?.classList.remove('bg-[#163129]', 'text-white');
-        });
-    });
-};
-
-const setupBookingAvailability = () => {
+const setupBookingPage = () => {
+    const page = document.querySelector('[data-booking-page]');
     const form = document.querySelector('[data-booking-form]');
-    const layout = document.querySelector('[data-room-layout]');
-    const modal = document.querySelector('[data-room-modal]');
-    const bookingModal = document.querySelector('[data-booking-modal]');
 
-    if (!form || !layout || !modal || !bookingModal) {
+    if (!page || !form) {
         return;
     }
 
-    const availabilityUrl = form.getAttribute('data-availability-url');
-    const unavailableDatesUrl = form.getAttribute('data-unavailable-dates-url');
-    const quoteUrl = form.getAttribute('data-quote-url');
-    const layoutUrl = layout.getAttribute('data-layout-url');
+    const availabilityUrl = form.dataset.availabilityUrl;
+    const unavailableDatesUrl = form.dataset.unavailableDatesUrl;
+    const quoteUrl = form.dataset.quoteUrl;
+    const minimumDuration = Number(form.dataset.minimumDuration || '60');
+    const horizonDays = Number(form.dataset.unavailableDatesHorizon || '30');
+
     const roomSelect = form.querySelector('[data-room-select]');
     const bookingDateInput = form.querySelector('[data-booking-date]');
-    const startTimeSelect = form.querySelector('[data-start-time-select]');
-    const endTimeSelect = form.querySelector('[data-end-time-select]');
+    const startSelect = form.querySelector('[data-start-time-select]');
+    const endSelect = form.querySelector('[data-end-time-select]');
+    const bookingPicker = form.querySelector('[data-booking-picker]');
+    const bookingCheckout = form.querySelector('[data-booking-checkout]');
+    const checkoutBack = form.querySelector('[data-checkout-back]');
     const durationDisplay = form.querySelector('[data-duration-display]');
     const downpaymentInput = form.querySelector('[data-downpayment-input]');
-    const paymentMethodSelect = form.querySelector('[data-payment-method]');
+    const paymentMethod = form.querySelector('[data-payment-method]');
+    const paymentMethodCards = [...form.querySelectorAll('[data-payment-choice]')];
+    const roomMeta = form.querySelector('[data-selected-room-meta]');
+    const messageBody = form.querySelector('[data-availability-message-body]');
     const quoteTotal = form.querySelector('[data-quote-total]');
-    const quoteMinimumDownpayment = form.querySelector('[data-quote-minimum-downpayment]');
+    const quoteMinimum = form.querySelector('[data-quote-minimum-downpayment]');
     const quoteBalance = form.querySelector('[data-quote-balance]');
     const quoteMeta = form.querySelector('[data-quote-meta]');
     const paymentGcash = form.querySelector('[data-payment-gcash]');
     const paymentBank = form.querySelector('[data-payment-bank]');
     const paymentInstructions = form.querySelector('[data-payment-instructions]');
-    const roomMeta = form.querySelector('[data-selected-room-meta]');
-    const message = form.querySelector('[data-availability-message]');
-    const messageBody = form.querySelector('[data-availability-message-body]');
-    const spinner = form.querySelector('[data-availability-spinner]');
-    const unavailableDatesMessage = form.querySelector('[data-unavailable-dates-message]');
-    const unavailableDatesList = form.querySelector('[data-unavailable-dates-list]');
-    const unavailableDatesHorizon = Number(form.getAttribute('data-unavailable-dates-horizon') || '14');
-    const minimumDurationMinutes = Number(form.getAttribute('data-minimum-duration') || '60');
-    const layoutDateInput = layout.querySelector('[data-layout-date]');
-    const roomButtons = [...layout.querySelectorAll('[data-layout-room]')];
-    const bookingOpenButtons = [...document.querySelectorAll('[data-booking-open]')];
-    const bookingClose = bookingModal.querySelector('[data-booking-close]');
-    const modalClose = modal.querySelector('[data-room-modal-close]');
-    const roomDetailName = modal.querySelector('[data-room-detail-name]');
-    const roomDetailType = modal.querySelector('[data-room-detail-type]');
-    const roomDetailMeta = modal.querySelector('[data-room-detail-meta]');
-    const roomDetailStatus = modal.querySelector('[data-room-detail-status]');
-    const roomDetailNextSlot = modal.querySelector('[data-room-detail-next-slot]');
-    const roomDetailAvailableCount = modal.querySelector('[data-room-detail-available-count]');
-    const roomDetailBookedCount = modal.querySelector('[data-room-detail-booked-count]');
-    const roomDetailAvailable = modal.querySelector('[data-room-detail-available]');
-    const roomDetailBooked = modal.querySelector('[data-room-detail-booked]');
-    const roomDetailTimeline = modal.querySelector('[data-room-detail-timeline]');
+    const roomCards = [...form.querySelectorAll('[data-room-card]')];
+    const roomRail = form.querySelector('[data-room-cards]');
+    const roomScrollPrev = form.querySelector('[data-room-scroll-prev]');
+    const roomScrollNext = form.querySelector('[data-room-scroll-next]');
+    const calendarTitle = form.querySelector('[data-calendar-title]');
+    const calendarDays = form.querySelector('[data-calendar-days]');
+    const calendarPrev = form.querySelector('[data-calendar-prev]');
+    const calendarNext = form.querySelector('[data-calendar-next]');
+    const slotDateTitle = form.querySelector('[data-slot-date-title]');
+    const slotContinue = form.querySelector('[data-slot-continue]');
+    const selectedRoomName = form.querySelector('[data-selected-room-name]');
+    const selectedRoomSpace = form.querySelector('[data-selected-room-space]');
+    const selectedRoomRate = form.querySelector('[data-selected-room-rate]');
+    const startSlots = form.querySelector('[data-start-slots]');
+    const endSlots = form.querySelector('[data-end-slots]');
+    const startStep = form.querySelector('[data-start-step]');
+    const startSummary = form.querySelector('[data-start-summary]');
+    const startSummaryTime = form.querySelector('[data-start-summary-time]');
+    const startSummaryChange = form.querySelector('[data-start-summary-change]');
+    const inlineSummary = form.querySelector('[data-inline-summary]');
+    const summaryDate = form.querySelector('[data-summary-date]');
+    const summaryStart = form.querySelector('[data-summary-start]');
+    const summaryEnd = form.querySelector('[data-summary-end]');
+    const summaryDuration = form.querySelector('[data-summary-duration]');
+    const summaryRate = form.querySelector('[data-summary-rate]');
+    const summaryTotal = form.querySelector('[data-summary-total]');
+    const checkoutRoom = form.querySelector('[data-checkout-room]');
+    const checkoutDate = form.querySelector('[data-checkout-date]');
+    const checkoutStart = form.querySelector('[data-checkout-start]');
+    const checkoutEnd = form.querySelector('[data-checkout-end]');
+    const checkoutDuration = form.querySelector('[data-checkout-duration]');
+    const checkoutStandardSummary = form.querySelector('[data-checkout-standard-summary]');
+    const checkoutScheduleCount = form.querySelector('[data-checkout-schedule-count]');
+    const checkoutScheduleList = form.querySelector('[data-checkout-schedule-list]');
+    const checkoutSubmit = form.querySelector('[data-checkout-submit]');
+    const shouldShowCheckout = form.dataset.showCheckout === 'true';
+    const initialStartTime = startSelect.value;
+    const initialEndTime = endSelect.value;
 
-    if (!availabilityUrl || !unavailableDatesUrl || !quoteUrl || !layoutUrl || !roomSelect || !bookingDateInput || !startTimeSelect || !endTimeSelect || !durationDisplay || !downpaymentInput || !paymentMethodSelect || !quoteTotal || !quoteMinimumDownpayment || !quoteBalance || !quoteMeta || !paymentGcash || !paymentBank || !paymentInstructions || !roomMeta || !message || !messageBody || !spinner || !unavailableDatesMessage || !unavailableDatesList || !layoutDateInput || !roomButtons.length || !bookingOpenButtons.length || !bookingClose || !modalClose || !roomDetailName || !roomDetailType || !roomDetailMeta || !roomDetailStatus || !roomDetailNextSlot || !roomDetailAvailableCount || !roomDetailBookedCount || !roomDetailAvailable || !roomDetailBooked || !roomDetailTimeline) {
+    if (!roomSelect || !bookingDateInput || !startSelect || !endSelect || !bookingPicker || !bookingCheckout || !checkoutBack || !durationDisplay || !downpaymentInput || !paymentMethod || !paymentMethodCards.length || !roomMeta || !messageBody || !quoteTotal || !quoteMinimum || !quoteBalance || !quoteMeta || !quoteMinimum || !paymentGcash || !paymentBank || !paymentInstructions || !roomCards.length || !roomRail || !calendarTitle || !calendarDays || !calendarPrev || !calendarNext || !slotDateTitle || !slotContinue || !selectedRoomName || !selectedRoomSpace || !selectedRoomRate || !startSlots || !endSlots || !startStep || !startSummary || !startSummaryTime || !startSummaryChange || !inlineSummary || !summaryDate || !summaryStart || !summaryEnd || !summaryDuration || !summaryRate || !summaryTotal || !checkoutRoom || !checkoutDate || !checkoutStart || !checkoutEnd || !checkoutDuration || !checkoutSubmit) {
         return;
     }
 
-    let roomMap = new Map();
-    let unavailableDates = new Set();
+    let blockedDates = new Set();
     let currentQuote = null;
+    let currentMonth = (() => {
+        const base = bookingDateInput.value ? new Date(`${bookingDateInput.value}T00:00:00`) : new Date();
+        return new Date(base.getFullYear(), base.getMonth(), 1);
+    })();
 
-    const syncBodyScrollLock = () => {
-        const shouldLock = bookingModal.getAttribute('aria-hidden') === 'false' || modal.getAttribute('aria-hidden') === 'false';
-        document.body.classList.toggle('overflow-hidden', shouldLock);
-    };
-
-    const setLoading = (isLoading) => {
-        spinner.classList.toggle('hidden', !isLoading);
-    };
-
-    const formatDateLabel = (value) => {
-        if (!value) {
-            return '';
-        }
-
-        const parsedDate = new Date(`${value}T00:00:00`);
-
-        return Number.isNaN(parsedDate.getTime())
-            ? value
-            : new Intl.DateTimeFormat('en-PH', {
-                month: 'long',
-                day: 'numeric',
-                year: 'numeric',
-            }).format(parsedDate);
-    };
+    const today = new Date();
+    const todayValue = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const currentMinutes = (today.getHours() * 60) + today.getMinutes();
 
     const formatCurrency = (value) => `Php ${Number(value || 0).toLocaleString('en-PH', {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
     })}`;
 
-    const parseTimeToMinutes = (value) => {
-        if (!value || !value.includes(':')) {
-            return null;
-        }
-
-        const [hour, minute] = value.split(':').map((part) => Number(part));
-
-        if (Number.isNaN(hour) || Number.isNaN(minute)) {
-            return null;
-        }
-
-        return (hour * 60) + minute;
-    };
-
-    const humanizeDuration = (startValue, endValue) => {
-        const startMinutes = parseTimeToMinutes(startValue);
-        const endMinutesBase = parseTimeToMinutes(endValue);
-
-        if (startMinutes === null || endMinutesBase === null) {
+    const formatDate = (value) => {
+        if (!value) {
             return '';
         }
 
-        let endMinutes = endMinutesBase;
+        const date = new Date(`${value}T00:00:00`);
 
-        if (endMinutes <= startMinutes) {
-            endMinutes += 24 * 60;
+        if (Number.isNaN(date.getTime())) {
+            return value;
         }
 
-        const totalMinutes = endMinutes - startMinutes;
-        const hours = Math.floor(totalMinutes / 60);
-        const minutes = totalMinutes % 60;
+        return new Intl.DateTimeFormat('en-PH', {
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric',
+        }).format(date);
+    };
+
+    const formatMonthTitle = (date) => new Intl.DateTimeFormat('en-PH', {
+        month: 'long',
+        year: 'numeric',
+    }).format(date);
+
+    const durationLabel = (startValue, endValue) => {
+        if (!startValue || !endValue) {
+            return '';
+        }
+
+        const [startHour, startMinute] = startValue.split(':').map(Number);
+        const [endHour, endMinute] = endValue.split(':').map(Number);
+
+        if ([startHour, startMinute, endHour, endMinute].some(Number.isNaN)) {
+            return '';
+        }
+
+        let startTotal = (startHour * 60) + startMinute;
+        let endTotal = (endHour * 60) + endMinute;
+
+        if (endTotal <= startTotal) {
+            endTotal += 24 * 60;
+        }
+
+        const diff = endTotal - startTotal;
+        const hours = Math.floor(diff / 60);
+        const minutes = diff % 60;
         const parts = [];
 
-        if (hours > 0) {
+        if (hours) {
             parts.push(`${hours} ${hours === 1 ? 'hour' : 'hours'}`);
         }
 
-        if (minutes > 0) {
+        if (minutes) {
             parts.push(`${minutes} mins`);
         }
 
         return parts.join(' ');
     };
 
-    const setMessage = (text, tone = 'neutral') => {
-        messageBody.textContent = text;
-        message.classList.remove(
-            'text-red-700',
-            'bg-red-500/10',
-            'border-red-400/30',
-            'text-emerald-700',
-            'bg-emerald-500/10',
-            'border-emerald-400/30',
-            'text-[#5f5449]',
-            'bg-[#f7f2eb]',
-            'border-[#163129]/8',
-        );
-
-        message.classList.add('border');
-
-        if (tone === 'error') {
-            message.classList.add('text-red-700', 'bg-red-500/10', 'border-red-400/30');
+    const timeValueToMinutes = (value) => {
+        if (!value || !value.includes(':')) {
+            return null;
         }
 
-        if (tone === 'success') {
-            message.classList.add('text-emerald-700', 'bg-emerald-500/10', 'border-emerald-400/30');
+        const [hour, minute] = value.split(':').map(Number);
+
+        if ([hour, minute].some(Number.isNaN)) {
+            return null;
         }
 
-        if (tone === 'neutral') {
-            message.classList.add('text-[#5f5449]', 'bg-[#f7f2eb]', 'border-[#163129]/8');
-        }
+        return (hour * 60) + minute;
     };
 
-    const resetStartTimes = (placeholder) => {
-        startTimeSelect.innerHTML = '';
-        const option = document.createElement('option');
-        option.value = '';
-        option.textContent = placeholder;
-        startTimeSelect.append(option);
-        startTimeSelect.disabled = true;
-        startTimeSelect.dataset.previousValue = '';
-    };
+    const currentScheduleCutoffMinutes = () => {
+        const now = new Date();
+        const minutes = (now.getHours() * 60) + now.getMinutes();
 
-    const resetEndTimes = (placeholder) => {
-        endTimeSelect.innerHTML = '';
-        const option = document.createElement('option');
-        option.value = '';
-        option.textContent = placeholder;
-        endTimeSelect.append(option);
-        endTimeSelect.disabled = true;
-        endTimeSelect.dataset.previousValue = '';
-    };
-
-    const resetDuration = (text = `Choose a start and end time of at least ${minimumDurationMinutes / 60} hour to see the total duration.`) => {
-        durationDisplay.value = text;
-    };
-
-    const resetQuote = (text = 'Choose a room, date, start time, and end time first to load your live rate summary.') => {
-        quoteTotal.textContent = 'Php 0.00';
-        quoteMinimumDownpayment.textContent = 'Php 0.00';
-        quoteBalance.textContent = 'Php 0.00';
-        quoteMeta.textContent = text;
-        currentQuote = null;
-    };
-
-    const updateBalanceFromInput = () => {
-        if (!currentQuote) {
-            quoteBalance.textContent = 'Php 0.00';
-            return;
+        if (minutes % 30 === 0) {
+            return minutes;
         }
 
-        const totalAmount = Number(currentQuote.total_amount || 0);
-        const minimumAmount = Number(currentQuote.minimum_downpayment_amount || 0);
-        let enteredAmount = Number(downpaymentInput.value || 0);
-
-        if (Number.isNaN(enteredAmount) || enteredAmount < minimumAmount) {
-            enteredAmount = minimumAmount;
-        }
-
-        if (enteredAmount > totalAmount) {
-            enteredAmount = totalAmount;
-        }
-
-        quoteBalance.textContent = formatCurrency(Math.max(0, totalAmount - enteredAmount));
+        return minutes + (30 - (minutes % 30));
     };
 
-    const updatePaymentDestination = () => {
-        const method = paymentMethodSelect.value;
+    const minutesToTimeValue = (minutes) => {
+        const normalized = ((minutes % (24 * 60)) + (24 * 60)) % (24 * 60);
+        const hour = Math.floor(normalized / 60);
+        const minute = normalized % 60;
 
-        paymentGcash.classList.toggle('hidden', method !== 'gcash');
-        paymentBank.classList.toggle('hidden', method !== 'bank_transfer');
+        return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
     };
 
-    const updateDurationDisplay = () => {
-        const selectedEndOption = endTimeSelect.options[endTimeSelect.selectedIndex];
-
-        if (!startTimeSelect.value || !endTimeSelect.value) {
-            resetDuration();
-            return;
+    const filterPastStartTimes = (items) => {
+        if (bookingDateInput.value !== todayValue) {
+            return items;
         }
 
-        const durationLabel = selectedEndOption?.dataset.durationLabel || humanizeDuration(startTimeSelect.value, endTimeSelect.value);
-        const rangeLabel = selectedEndOption?.dataset.rangeLabel || `${startTimeSelect.value} to ${endTimeSelect.value}`;
-        durationDisplay.value = `${durationLabel} booking window | ${rangeLabel}`;
-    };
+        return items.filter((item) => {
+            const minutes = timeValueToMinutes(item.value);
 
-    const fetchQuote = async () => {
-        const roomId = roomSelect.value;
-        const bookingDate = bookingDateInput.value;
-        const startTime = startTimeSelect.value;
-        const endTime = endTimeSelect.value;
-
-        if (!roomId || !bookingDate || !startTime || !endTime) {
-            resetQuote();
-            return;
-        }
-
-        try {
-            const response = await fetch(`${quoteUrl}?hyve_room_id=${encodeURIComponent(roomId)}&booking_date=${encodeURIComponent(bookingDate)}&start_time=${encodeURIComponent(startTime)}&end_time=${encodeURIComponent(endTime)}`, {
-                headers: {
-                    Accept: 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest',
-                },
-            });
-
-            if (!response.ok) {
-                throw new Error('Failed to load the booking quote.');
+            if (minutes === null) {
+                return true;
             }
 
-            const data = await response.json();
-            currentQuote = data;
-            quoteTotal.textContent = formatCurrency(data.total_amount);
-            quoteMinimumDownpayment.textContent = formatCurrency(data.minimum_downpayment_amount);
-            downpaymentInput.min = String(data.minimum_downpayment_amount);
-            if (!downpaymentInput.value || Number(downpaymentInput.value) < Number(data.minimum_downpayment_amount)) {
-                downpaymentInput.value = String(data.minimum_downpayment_amount);
-            }
-            updateBalanceFromInput();
-            quoteMeta.textContent = `${data.rate_name} | ${data.charge_period_label} | ${data.duration_hours} scheduled hour(s) | ${data.billed_hours} billed hour(s).`;
-            paymentInstructions.textContent = data.payment?.instructions || 'Send the downpayment first, then upload your payment proof for verification.';
-        } catch (error) {
-            resetQuote('Unable to load the payment quote right now. Please keep your booking details selected and try again.');
-        }
-    };
-
-    const renderChips = (container, slots, tone) => {
-        container.innerHTML = '';
-
-        if (!slots.length) {
-            const emptyState = document.createElement('span');
-            emptyState.className = 'rounded-full border border-white/12 px-3 py-2 text-xs uppercase tracking-[0.16em] text-white/72';
-            emptyState.textContent = tone === 'available' ? 'No open windows' : 'No blocked windows';
-            container.append(emptyState);
-            return;
-        }
-
-        slots.forEach((slot) => {
-            const chip = document.createElement('span');
-            chip.className = tone === 'available'
-                ? 'rounded-full border border-emerald-400/25 bg-emerald-500/12 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-100'
-                : 'rounded-full border border-red-400/20 bg-red-500/12 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-red-100';
-            chip.textContent = slot.label;
-            container.append(chip);
+            return minutes >= currentMinutes;
         });
     };
 
-    const renderTimeline = (items) => {
-        roomDetailTimeline.innerHTML = '';
+    const updatePaymentDestination = () => {
+        paymentGcash.classList.toggle('hidden', paymentMethod.value !== 'gcash');
+        paymentBank.classList.toggle('hidden', paymentMethod.value !== 'bank_transfer');
+        paymentMethodCards.forEach((card) => {
+            card.classList.toggle('is-active', card.dataset.paymentChoice === paymentMethod.value);
+        });
+    };
+
+    const showCheckout = () => {
+        bookingPicker.classList.add('hidden');
+        bookingCheckout.classList.remove('hidden');
+    };
+
+    const showPicker = () => {
+        bookingCheckout.classList.add('hidden');
+        bookingPicker.classList.remove('hidden');
+    };
+
+    const updateCheckoutSummary = () => {
+        const roomCard = getSelectedRoomCard();
+        checkoutRoom.textContent = roomCard
+            ? `${roomCard.dataset.roomName || 'Choose a room'} · ${roomCard.dataset.roomSpace || ''}`.trim()
+            : 'Choose a room';
+        checkoutDate.textContent = formatDate(bookingDateInput.value || todayValue);
+        checkoutStart.textContent = startSelect.selectedOptions[0]?.textContent ?? startSelect.value ?? '--:--';
+        checkoutEnd.textContent = endSelect.selectedOptions[0]?.textContent ?? endSelect.value ?? '--:--';
+        checkoutDuration.textContent = durationLabel(startSelect.value, endSelect.value) || '--';
+    };
+
+    const updateBalance = () => {
+        if (!currentQuote) {
+            quoteBalance.textContent = 'Php 0.00';
+            checkoutSubmit.textContent = 'Confirm & Pay Php 0.00';
+            return;
+        }
+
+        const total = Number(currentQuote.total_amount || 0);
+        const minimum = Number(currentQuote.minimum_downpayment_amount || 0);
+        let current = Number(downpaymentInput.value || 0);
+
+        if (Number.isNaN(current) || current < minimum) {
+            current = minimum;
+        }
+
+        if (current > total) {
+            current = total;
+        }
+
+        quoteBalance.textContent = formatCurrency(total - current);
+        checkoutSubmit.textContent = `Confirm & Pay ${formatCurrency(current)}`;
+    };
+
+    const hideInlineSummary = () => {
+        inlineSummary.classList.add('hidden');
+        summaryDate.textContent = formatDate(bookingDateInput.value || todayValue);
+        summaryStart.textContent = '--:--';
+        summaryEnd.textContent = '--:--';
+        summaryDuration.textContent = '--';
+        summaryRate.textContent = '--';
+        summaryTotal.textContent = 'Php 0.00';
+    };
+
+    const hideStartSummary = () => {
+        startSummary.classList.add('hidden');
+        startSummaryTime.textContent = '--:--';
+        startStep.classList.remove('hidden');
+    };
+
+    const showStartSummary = () => {
+        const startLabel = startSelect.selectedOptions[0]?.textContent ?? startSelect.value ?? '--:--';
+        startSummaryTime.textContent = startLabel;
+        startSummary.classList.remove('hidden');
+        startStep.classList.add('hidden');
+    };
+
+    const resetQuote = () => {
+        currentQuote = null;
+        quoteTotal.textContent = 'Php 0.00';
+        quoteMinimum.textContent = 'Php 0.00';
+        quoteBalance.textContent = 'Php 0.00';
+        quoteMeta.textContent = 'Choose a room, date, start time, and end time first to load your live rate summary.';
+        hideInlineSummary();
+        slotContinue.textContent = 'Pick a time to continue';
+        slotContinue.disabled = true;
+        checkoutSubmit.textContent = 'Confirm & Pay Php 0.00';
+    };
+
+    const resetSlots = (message = 'Select a room and date first. Available times will appear here.') => {
+        scheduleRangeStart = null;
+        startSelect.innerHTML = '';
+        endSelect.innerHTML = '';
+        startSlots.innerHTML = '<span class="booking-slot-empty">No start times loaded yet.</span>';
+        endSlots.innerHTML = '<span class="booking-slot-empty">Select a start time first.</span>';
+        durationDisplay.textContent = 'Choose a start time first to continue.';
+        messageBody.textContent = message;
+        hideStartSummary();
+        hideInlineSummary();
+        updateCheckoutSummary();
+    };
+
+    const getSelectedRoomCard = () => roomCards.find((card) => card.dataset.roomId === roomSelect.value);
+
+    const updateRoomMeta = () => {
+        const roomCard = getSelectedRoomCard();
+
+        if (!roomCard) {
+            roomMeta.textContent = 'Choose the exact room first, then pick an available date and start time.';
+            selectedRoomName.textContent = 'Choose a room';
+            selectedRoomSpace.textContent = '';
+            selectedRoomRate.textContent = 'Ask HYVE';
+            checkoutRoom.textContent = 'Choose a room';
+            return;
+        }
+
+        roomMeta.textContent = `${roomCard.dataset.roomDescription} | ${roomCard.dataset.roomSpace}`;
+        selectedRoomName.textContent = roomCard.dataset.roomName || 'Choose a room';
+        selectedRoomSpace.textContent = roomCard.dataset.roomSpace || '';
+        selectedRoomRate.textContent = roomCard.dataset.roomRate || 'Ask HYVE';
+        checkoutRoom.textContent = `${roomCard.dataset.roomName || 'Choose a room'} · ${roomCard.dataset.roomSpace || ''}`.trim();
+    };
+
+    const updateSlotHeading = () => {
+        slotDateTitle.textContent = formatDate(bookingDateInput.value || todayValue);
+        checkoutDate.textContent = formatDate(bookingDateInput.value || todayValue);
+    };
+
+    const setActiveRoom = (roomId) => {
+        roomSelect.value = roomId;
+        roomCards.forEach((card) => {
+            card.classList.toggle('is-active', card.dataset.roomId === roomId);
+        });
+        updateRoomMeta();
+    };
+
+    const renderCalendar = () => {
+        calendarTitle.textContent = formatMonthTitle(currentMonth);
+        calendarDays.innerHTML = '';
+
+        const firstDay = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
+        const lastDay = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0);
+        const leading = firstDay.getDay();
+
+        for (let i = 0; i < leading; i += 1) {
+            const filler = document.createElement('span');
+            filler.className = 'booking-calendar-day is-filler';
+            calendarDays.append(filler);
+        }
+
+        for (let day = 1; day <= lastDay.getDate(); day += 1) {
+            const date = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day);
+            const value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'booking-calendar-day';
+            button.textContent = String(day);
+
+            const isPast = value < todayValue;
+            const isBooked = blockedDates.has(value);
+            const isSelected = bookingDateInput.value === value;
+            const isToday = value === todayValue;
+
+            if (isToday) {
+                button.classList.add('is-today');
+            }
+
+            if (isSelected) {
+                button.classList.add('is-selected');
+            }
+
+            if (isBooked) {
+                button.classList.add('is-booked');
+            }
+
+            if (isPast || isBooked) {
+                button.disabled = true;
+            }
+
+            button.addEventListener('click', async () => {
+                bookingDateInput.value = value;
+                updateSlotHeading();
+                renderCalendar();
+
+                try {
+                    await fetchStartTimes();
+                } catch (error) {
+                    messageBody.textContent = 'Unable to load date availability right now. Please try again.';
+                }
+            });
+
+            calendarDays.append(button);
+        }
+    };
+
+    const renderSlotButtons = (container, items, type) => {
+        container.innerHTML = '';
 
         if (!items.length) {
-            const emptyState = document.createElement('div');
-            emptyState.className = 'rounded-[1rem] border border-white/10 px-4 py-3 text-sm text-white/72';
-            emptyState.textContent = 'No booking details found for this date.';
-            roomDetailTimeline.append(emptyState);
+            const empty = document.createElement('span');
+            empty.className = 'booking-slot-empty';
+            empty.textContent = type === 'start' ? 'No available start times for this date.' : 'Select a start time first.';
+            container.append(empty);
             return;
         }
 
         items.forEach((item) => {
-            const row = document.createElement('div');
-            row.className = 'flex items-center justify-between gap-3 rounded-[1rem] border border-white/10 bg-white/5 px-4 py-3';
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'booking-slot-pill';
+            button.innerHTML = `<strong>${item.label}</strong>${item.duration_label ? `<small>${item.duration_label}</small>` : ''}`;
 
-            const label = document.createElement('p');
-            label.className = 'text-sm font-medium text-white';
-            label.textContent = item.label;
-
-            const badge = document.createElement('span');
-            badge.className = item.type === 'available'
-                ? 'rounded-full border border-emerald-400/25 bg-emerald-500/12 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-100'
-                : 'rounded-full border border-red-400/20 bg-red-500/12 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-red-100';
-            badge.textContent = item.type === 'available' ? 'Available' : 'Booked';
-
-            row.append(label, badge);
-            roomDetailTimeline.append(row);
-        });
-    };
-
-    const statusLabel = (status) => {
-        if (status === 'occupied') {
-            return 'Occupied';
-        }
-
-        if (status === 'booked') {
-            return 'Booked';
-        }
-
-        return 'Available';
-    };
-
-    const compactStatusLabel = (status) => {
-        if (status === 'occupied') {
-            return 'Full';
-        }
-
-        if (status === 'booked') {
-            return 'Booked';
-        }
-
-        return 'Open';
-    };
-
-    const roomTypeLabel = (room) => {
-        if (room.room_name === 'Conference Room') {
-            return 'Conference Room';
-        }
-
-        if (room.room_name.startsWith('Room ')) {
-            return 'Private Room';
-        }
-
-        return 'Shared Table Seat';
-    };
-
-    const statusClasses = {
-        available: ['border-emerald-400/25', 'bg-emerald-500/10', 'text-emerald-700'],
-        booked: ['border-amber-400/25', 'bg-amber-500/10', 'text-amber-700'],
-        occupied: ['border-red-400/25', 'bg-red-500/10', 'text-red-700'],
-    };
-
-    const updateRoomButton = (button, room) => {
-        button.classList.remove(
-            'border-emerald-400/25', 'bg-emerald-500/10',
-            'border-amber-400/25', 'bg-amber-500/10',
-            'border-red-400/25', 'bg-red-500/10',
-        );
-
-        const stateLabel = button.querySelector('[data-layout-room-state]');
-        const isSharedSeat = room.room_name.includes('-');
-        stateLabel.textContent = isSharedSeat ? compactStatusLabel(room.status) : statusLabel(room.status);
-
-        (statusClasses[room.status] || statusClasses.available).forEach((className) => {
-            button.classList.add(className);
-        });
-    };
-
-    const updateRoomMeta = () => {
-        const selectedOption = roomSelect.options[roomSelect.selectedIndex];
-
-        if (!selectedOption || !roomSelect.value) {
-            roomMeta.textContent = 'Choose the exact room, conference room, or shared table seat that you want to book.';
-            return;
-        }
-
-        const room = roomMap.get(String(roomSelect.value));
-        roomMeta.textContent = room
-            ? `${room.description} | ${room.space_label}`
-            : selectedOption.textContent;
-    };
-
-    const renderModal = (room) => {
-        const availableSlots = room.available_slots || [];
-        const bookedSlots = room.booked_slots || [];
-        const bookingDetails = room.booking_details || [];
-
-        roomDetailName.textContent = room.room_name;
-        roomDetailType.textContent = roomTypeLabel(room);
-        roomDetailMeta.textContent = `${room.description} | ${room.space_label}`;
-        roomDetailStatus.textContent = `${statusLabel(room.status)} on ${formatDateLabel(layoutDateInput.value) || 'selected date'}`;
-        roomDetailNextSlot.textContent = availableSlots.length ? availableSlots[0].label : 'No open windows left';
-        roomDetailAvailableCount.textContent = `${availableSlots.length} ${availableSlots.length === 1 ? 'open window' : 'open windows'}`;
-        roomDetailBookedCount.textContent = `${bookedSlots.length} ${bookedSlots.length === 1 ? 'reserved window' : 'reserved windows'}`;
-        renderChips(roomDetailAvailable, availableSlots, 'available');
-        renderChips(roomDetailBooked, bookedSlots, 'booked');
-        renderTimeline(bookingDetails);
-    };
-
-    const openModal = () => {
-        modal.classList.remove('hidden');
-        modal.classList.add('flex');
-        modal.setAttribute('aria-hidden', 'false');
-        syncBodyScrollLock();
-    };
-
-    const closeModal = () => {
-        modal.classList.add('hidden');
-        modal.classList.remove('flex');
-        modal.setAttribute('aria-hidden', 'true');
-        syncBodyScrollLock();
-    };
-
-    const openBookingModal = () => {
-        if (!bookingDateInput.value && layoutDateInput.value) {
-            bookingDateInput.value = layoutDateInput.value;
-        }
-
-        bookingModal.classList.remove('hidden');
-        bookingModal.classList.add('flex');
-        bookingModal.setAttribute('aria-hidden', 'false');
-        syncBodyScrollLock();
-
-        window.setTimeout(() => {
-            const firstField = form.querySelector('input, select, textarea');
-
-            if (firstField) {
-                firstField.focus();
+            if ((type === 'start' && startSelect.value === item.value) || (type === 'end' && endSelect.value === item.value)) {
+                button.classList.add('is-active');
             }
-        }, 50);
-    };
 
-    const closeBookingModal = () => {
-        bookingModal.classList.add('hidden');
-        bookingModal.classList.remove('flex');
-        bookingModal.setAttribute('aria-hidden', 'true');
-        syncBodyScrollLock();
-    };
+            button.addEventListener('click', async () => {
+                if (type === 'start') {
+                    startSelect.value = item.value;
+                    endSelect.value = '';
+                    showStartSummary();
+                    hideInlineSummary();
 
-    const renderUnavailableDates = (dates) => {
-        unavailableDatesList.innerHTML = '';
-        unavailableDates = new Set(dates.map((date) => date.value));
+                    try {
+                        await fetchEndTimes();
+                    } catch (error) {
+                        messageBody.textContent = 'Unable to load end time options right now. Please try again.';
+                    }
 
-        if (!roomSelect.value) {
-            unavailableDatesMessage.textContent = `Select a room first to load fully booked dates for the next ${unavailableDatesHorizon} days.`;
-            return;
-        }
+                    return;
+                }
 
-        if (!dates.length) {
-            unavailableDatesMessage.textContent = `No fully booked dates found for this room in the next ${unavailableDatesHorizon} days.`;
-            return;
-        }
+                endSelect.value = item.value;
+                durationDisplay.textContent = `${item.duration_label} | ${item.range_label}`;
 
-        unavailableDatesMessage.textContent = `These dates are already fully booked for the next ${unavailableDatesHorizon} days.`;
+                try {
+                    await fetchQuote();
+                    renderSlotButtons(container, items, 'end');
+                } catch (error) {
+                    messageBody.textContent = 'Unable to load the booking quote right now. Please try again.';
+                }
+            });
 
-        dates.forEach((date) => {
-            const badge = document.createElement('span');
-            badge.className = 'rounded-full border border-red-400/25 bg-red-500/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-red-700';
-            badge.textContent = date.label;
-            unavailableDatesList.append(badge);
+            container.append(button);
         });
+    };
+
+    const fetchJson = async (url) => {
+        const response = await fetch(url, {
+            headers: {
+                Accept: 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+        });
+
+        if (!response.ok) {
+            throw new Error('Request failed.');
+        }
+
+        return response.json();
     };
 
     const fetchUnavailableDates = async () => {
         if (!roomSelect.value) {
-            unavailableDates = new Set();
-            unavailableDatesList.innerHTML = '';
-            unavailableDatesMessage.textContent = `Select a room first to load fully booked dates for the next ${unavailableDatesHorizon} days.`;
-            bookingDateInput.setCustomValidity('');
+            blockedDates = new Set();
+            renderCalendar();
             return;
         }
 
-        unavailableDatesMessage.textContent = 'Loading fully booked dates for this room...';
-        unavailableDatesList.innerHTML = '';
-
-        try {
-            const response = await fetch(`${unavailableDatesUrl}?hyve_room_id=${encodeURIComponent(roomSelect.value)}&horizon_days=${encodeURIComponent(unavailableDatesHorizon)}`, {
-                headers: {
-                    Accept: 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest',
-                },
-            });
-
-            if (!response.ok) {
-                throw new Error('Failed to load unavailable dates.');
-            }
-
-            const data = await response.json();
-            renderUnavailableDates(Array.isArray(data.unavailable_dates) ? data.unavailable_dates : []);
-        } catch (error) {
-            unavailableDates = new Set();
-            unavailableDatesList.innerHTML = '';
-            unavailableDatesMessage.textContent = 'Unable to load fully booked dates right now. You may still continue by checking a specific date below.';
-        }
+        const data = await fetchJson(`${unavailableDatesUrl}?hyve_room_id=${encodeURIComponent(roomSelect.value)}&horizon_days=${encodeURIComponent(horizonDays)}`);
+        blockedDates = new Set((Array.isArray(data.unavailable_dates) ? data.unavailable_dates : []).map((item) => item.value));
+        renderCalendar();
     };
 
-    const populateStartTimes = (startTimes) => {
-        startTimeSelect.innerHTML = '';
+    const setHiddenOptions = (select, items) => {
+        select.innerHTML = '';
 
-        const defaultOption = document.createElement('option');
-        defaultOption.value = '';
-        defaultOption.textContent = `Select a start time${startTimes.length ? ` (${startTimes.length} open)` : ''}`;
-        startTimeSelect.append(defaultOption);
-
-        const previousValue = startTimeSelect.dataset.previousValue || startTimeSelect.getAttribute('data-old-value') || '';
-
-        startTimes.forEach((slot) => {
+        items.forEach((item) => {
             const option = document.createElement('option');
-            option.value = slot.value;
-            option.textContent = slot.label;
+            option.value = item.value;
+            option.textContent = item.label;
 
-            if (previousValue && previousValue === slot.value) {
-                option.selected = true;
+            if (item.range_label) {
+                option.dataset.rangeLabel = item.range_label;
             }
 
-            startTimeSelect.append(option);
-        });
-
-        startTimeSelect.disabled = false;
-    };
-
-    const populateEndTimes = (endTimes) => {
-        endTimeSelect.innerHTML = '';
-
-        const defaultOption = document.createElement('option');
-        defaultOption.value = '';
-        defaultOption.textContent = `Select an end time${endTimes.length ? ` (${endTimes.length} open)` : ''}`;
-        endTimeSelect.append(defaultOption);
-
-        const previousValue = endTimeSelect.dataset.previousValue || endTimeSelect.getAttribute('data-old-value') || '';
-
-        endTimes.forEach((slot) => {
-            const option = document.createElement('option');
-            option.value = slot.value;
-            option.textContent = `${slot.label} | ${slot.duration_label}`;
-            option.dataset.rangeLabel = slot.range_label;
-            option.dataset.durationLabel = slot.duration_label;
-
-            if (previousValue && previousValue === slot.value) {
-                option.selected = true;
+            if (item.duration_label) {
+                option.dataset.durationLabel = item.duration_label;
             }
 
-            endTimeSelect.append(option);
+            select.append(option);
         });
-
-        endTimeSelect.disabled = false;
-        updateDurationDisplay();
     };
 
     const fetchStartTimes = async () => {
-        const roomId = roomSelect.value;
-        const bookingDate = bookingDateInput.value;
-        const room = roomMap.get(String(roomId));
-        const readableDate = formatDateLabel(bookingDate);
-
-        if (!roomId || !bookingDate) {
-            resetStartTimes('Select a room and date first');
-            resetEndTimes('Select a start time first');
-            resetDuration();
+        if (!roomSelect.value || !bookingDateInput.value) {
+            resetSlots();
             resetQuote();
-            setLoading(false);
-            bookingDateInput.setCustomValidity('');
-            setMessage('Select a room and date first. Available start and end times will appear here.');
             return;
         }
 
-        if (unavailableDates.has(bookingDate)) {
-            resetStartTimes('Fully booked for this date');
-            resetEndTimes('Select another date first');
-            resetDuration();
+        if (blockedDates.has(bookingDateInput.value)) {
+            resetSlots('This room is fully booked for the selected date. Please choose another day.');
             resetQuote();
-            setLoading(false);
-            bookingDateInput.setCustomValidity('This date is already fully booked for the selected room.');
-            setMessage(`${room?.room_name ?? 'This room'} is already fully booked${readableDate ? ` on ${readableDate}` : ''}. Please choose another date or another room.`, 'error');
             return;
         }
 
-        bookingDateInput.setCustomValidity('');
-        setLoading(true);
-        setMessage(`Checking available start times for ${room?.room_name ?? 'selected room'}${readableDate ? ` on ${readableDate}` : ''}...`);
+        const data = await fetchJson(`${availabilityUrl}?hyve_room_id=${encodeURIComponent(roomSelect.value)}&booking_date=${encodeURIComponent(bookingDateInput.value)}`);
+        const startTimes = filterPastStartTimes(Array.isArray(data.start_times) ? data.start_times : []);
 
-        try {
-            const response = await fetch(`${availabilityUrl}?hyve_room_id=${encodeURIComponent(roomId)}&booking_date=${encodeURIComponent(bookingDate)}`, {
-                headers: {
-                    Accept: 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest',
-                },
-            });
+        setHiddenOptions(startSelect, startTimes);
+        endSelect.innerHTML = '';
+        endSlots.innerHTML = '<span class="booking-slot-empty">Select a start time first.</span>';
+        durationDisplay.textContent = 'Choose a start time first to continue.';
+        hideStartSummary();
+        hideInlineSummary();
+        resetQuote();
+        renderSlotButtons(startSlots, startTimes, 'start');
 
-            if (!response.ok) {
-                throw new Error('Failed to load available start times.');
-            }
-
-            const data = await response.json();
-            const startTimes = Array.isArray(data.start_times) ? data.start_times : [];
-
-            if (!startTimes.length) {
-                resetStartTimes('Fully booked for this date');
-                resetEndTimes('Select another date first');
-                resetDuration();
-                resetQuote();
-                setLoading(false);
-                setMessage(`${room?.room_name ?? 'This room'} is fully booked${readableDate ? ` on ${readableDate}` : ''}. Please choose another date or another room.`, 'error');
-                return;
-            }
-
-            populateStartTimes(startTimes);
-            resetEndTimes('Select a start time first');
-            resetDuration();
-            resetQuote();
-            setLoading(false);
-            setMessage(`${startTimes.length} available ${startTimes.length === 1 ? 'start time is' : 'start times are'} ready for ${room?.room_name ?? 'selected room'}${readableDate ? ` on ${readableDate}` : ''}. Choose when you want your booking to begin.`, 'success');
-
-            if (startTimeSelect.value) {
-                await fetchEndTimes();
-            }
-        } catch (error) {
-            resetStartTimes('Unable to load start times');
-            resetEndTimes('Unable to load end times');
-            resetDuration();
-            resetQuote();
-            setLoading(false);
-            setMessage('Unable to check availability right now. Please try again.', 'error');
+        if (!startTimes.length) {
+            messageBody.textContent = bookingDateInput.value === todayValue
+                ? 'No more booking windows are available for the rest of today.'
+                : 'No booking windows are available for that room on the selected date.';
+            return;
         }
+
+        messageBody.textContent = `${startTimes.length} start ${startTimes.length === 1 ? 'time is' : 'times are'} available on ${formatDate(bookingDateInput.value)}.`;
     };
 
     const fetchEndTimes = async () => {
-        const roomId = roomSelect.value;
-        const bookingDate = bookingDateInput.value;
-        const startTime = startTimeSelect.value;
-        const room = roomMap.get(String(roomId));
-        const readableDate = formatDateLabel(bookingDate);
-
-        if (!roomId || !bookingDate || !startTime) {
-            resetEndTimes('Select a start time first');
-            resetDuration();
+        if (!roomSelect.value || !bookingDateInput.value || !startSelect.value) {
+            endSelect.innerHTML = '';
+            endSlots.innerHTML = '<span class="booking-slot-empty">Select a start time first.</span>';
+            durationDisplay.textContent = 'Choose a start time first to continue.';
             resetQuote();
             return;
         }
 
-        setLoading(true);
-        setMessage(`Checking available end times for ${room?.room_name ?? 'selected room'} starting at ${startTimeSelect.options[startTimeSelect.selectedIndex]?.textContent ?? startTime}${readableDate ? ` on ${readableDate}` : ''}...`);
+        const data = await fetchJson(`${availabilityUrl}?hyve_room_id=${encodeURIComponent(roomSelect.value)}&booking_date=${encodeURIComponent(bookingDateInput.value)}&start_time=${encodeURIComponent(startSelect.value)}`);
+        const endTimes = Array.isArray(data.end_times) ? data.end_times : [];
 
-        try {
-            const response = await fetch(`${availabilityUrl}?hyve_room_id=${encodeURIComponent(roomId)}&booking_date=${encodeURIComponent(bookingDate)}&start_time=${encodeURIComponent(startTime)}`, {
-                headers: {
-                    Accept: 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest',
-                },
-            });
+        setHiddenOptions(endSelect, endTimes);
+        showStartSummary();
+        renderSlotButtons(
+            startSlots,
+            Array.from(startSelect.options).map((option) => ({ value: option.value, label: option.textContent })).filter((item) => item.value),
+            'start',
+        );
+        renderSlotButtons(endSlots, endTimes, 'end');
 
-            if (!response.ok) {
-                throw new Error('Failed to load available end times.');
-            }
-
-            const data = await response.json();
-            const endTimes = Array.isArray(data.end_times) ? data.end_times : [];
-
-            if (!endTimes.length) {
-                resetEndTimes('No end times available');
-                resetDuration();
-                resetQuote();
-                setLoading(false);
-                setMessage(`No valid booking duration is available for this start time. Please choose another start time for ${room?.room_name ?? 'this room'}.`, 'error');
-                return;
-            }
-
-            populateEndTimes(endTimes);
-            await fetchQuote();
-            setLoading(false);
-            setMessage(`Choose how long you want to stay. ${endTimes.length} possible end ${endTimes.length === 1 ? 'time is' : 'times are'} open for this start.`, 'success');
-        } catch (error) {
-            resetEndTimes('Unable to load end times');
-            resetDuration();
+        if (!endTimes.length) {
+            durationDisplay.textContent = `Minimum booking is ${minimumDuration / 60} hour.`;
             resetQuote();
-            setLoading(false);
-            setMessage('Unable to load end time options right now. Please try again.', 'error');
-        }
-    };
-
-    const fetchLayout = async () => {
-        const bookingDate = layoutDateInput.value;
-
-        if (!bookingDate) {
+            messageBody.textContent = 'No valid end time is available for that start time. Please choose another start time.';
             return;
         }
+
+        messageBody.textContent = 'Choose how long you want to stay. The available end times are ready below.';
+    };
+
+    const fetchQuote = async () => {
+        if (!roomSelect.value || !bookingDateInput.value || !startSelect.value || !endSelect.value) {
+            resetQuote();
+            return;
+        }
+
+        const data = await fetchJson(`${quoteUrl}?hyve_room_id=${encodeURIComponent(roomSelect.value)}&booking_date=${encodeURIComponent(bookingDateInput.value)}&start_time=${encodeURIComponent(startSelect.value)}&end_time=${encodeURIComponent(endSelect.value)}`);
+
+        currentQuote = data;
+        quoteTotal.textContent = formatCurrency(data.total_amount);
+        quoteMinimum.textContent = formatCurrency(data.minimum_downpayment_amount);
+        quoteMeta.textContent = `${data.rate_name} | ${data.charge_period_label} | ${data.duration_hours} scheduled hour(s) | ${data.billed_hours} billed hour(s).`;
+        paymentInstructions.textContent = data.payment?.instructions || paymentInstructions.textContent;
+
+        downpaymentInput.min = String(data.minimum_downpayment_amount);
+
+        if (!downpaymentInput.value || Number(downpaymentInput.value) < Number(data.minimum_downpayment_amount)) {
+            downpaymentInput.value = String(data.minimum_downpayment_amount);
+        }
+
+        durationDisplay.textContent = endSelect.selectedOptions[0]?.dataset.durationLabel
+            ? `${endSelect.selectedOptions[0].dataset.durationLabel} | ${endSelect.selectedOptions[0].dataset.rangeLabel}`
+            : durationLabel(startSelect.value, endSelect.value);
+
+        summaryDate.textContent = formatDate(bookingDateInput.value || todayValue);
+        summaryStart.textContent = startSelect.selectedOptions[0]?.textContent ?? startSelect.value;
+        summaryEnd.textContent = endSelect.selectedOptions[0]?.textContent ?? endSelect.value;
+        summaryDuration.textContent = data.duration_hours === 1 ? '1 hour' : `${data.duration_hours} hours`;
+        summaryRate.textContent = `${data.rate_name} - ${data.charge_period_label}`;
+        summaryTotal.textContent = formatCurrency(data.total_amount);
+        inlineSummary.classList.remove('hidden');
+        checkoutStart.textContent = startSelect.selectedOptions[0]?.textContent ?? startSelect.value;
+        checkoutEnd.textContent = endSelect.selectedOptions[0]?.textContent ?? endSelect.value;
+        checkoutDuration.textContent = data.duration_hours === 1 ? '1 hour' : `${data.duration_hours} hours`;
+
+        updateBalance();
+        messageBody.textContent = 'Your booking window and quote are ready. Review the payment details before submitting.';
+        slotContinue.textContent = 'Continue to checkout ->';
+        slotContinue.disabled = false;
+    };
+
+    roomCards.forEach((card) => {
+        card.addEventListener('click', async () => {
+            setActiveRoom(card.dataset.roomId || '');
+
+            try {
+                await fetchUnavailableDates();
+                await fetchStartTimes();
+            } catch (error) {
+                messageBody.textContent = 'Unable to load room availability right now. Please try again.';
+            }
+        });
+    });
+
+    paymentMethodCards.forEach((card) => {
+        card.addEventListener('click', () => {
+            paymentMethod.value = card.dataset.paymentChoice || '';
+            updatePaymentDestination();
+        });
+    });
+    paymentMethod.addEventListener('change', updatePaymentDestination);
+    downpaymentInput.addEventListener('input', updateBalance);
+    roomScrollPrev?.addEventListener('click', () => {
+        roomRail.scrollBy({ left: -320, behavior: 'smooth' });
+    });
+    roomScrollNext?.addEventListener('click', () => {
+        roomRail.scrollBy({ left: 320, behavior: 'smooth' });
+    });
+    startSummaryChange.addEventListener('click', async () => {
+        endSelect.innerHTML = '';
+        endSlots.innerHTML = '<span class="booking-slot-empty">Select a new start time.</span>';
+        startSelect.value = '';
+        durationDisplay.textContent = 'Choose a start time first to continue.';
+        hideStartSummary();
+        resetQuote();
 
         try {
-            const response = await fetch(`${layoutUrl}?booking_date=${encodeURIComponent(bookingDate)}`, {
-                headers: {
-                    Accept: 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest',
-                },
-            });
-
-            if (!response.ok) {
-                throw new Error('Failed to load room layout.');
-            }
-
-            const data = await response.json();
-            const rooms = Array.isArray(data.rooms) ? data.rooms : [];
-            roomMap = new Map(rooms.map((room) => [String(room.id), room]));
-
-            roomButtons.forEach((button) => {
-                const room = roomMap.get(button.dataset.roomId);
-
-                if (room) {
-                    updateRoomButton(button, room);
-                }
-            });
-
-            updateRoomMeta();
+            await fetchStartTimes();
         } catch (error) {
-            setMessage('Unable to load the room layout right now. Please try again.', 'error');
-        }
-    };
-
-    roomButtons.forEach((button) => {
-        button.addEventListener('click', () => {
-            const room = roomMap.get(button.dataset.roomId);
-
-            if (!room) {
-                return;
-            }
-
-            renderModal(room);
-            openModal();
-        });
-    });
-
-    bookingOpenButtons.forEach((button) => {
-        button.addEventListener('click', () => {
-            openBookingModal();
-        });
-    });
-
-    bookingClose.addEventListener('click', closeBookingModal);
-    bookingModal.addEventListener('click', (event) => {
-        if (event.target === bookingModal) {
-            closeBookingModal();
+            messageBody.textContent = 'Unable to reload start times right now. Please try again.';
         }
     });
-
-    modalClose.addEventListener('click', closeModal);
-    modal.addEventListener('click', (event) => {
-        if (event.target === modal) {
-            closeModal();
-        }
-    });
-
-    document.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape' && bookingModal.getAttribute('aria-hidden') === 'false') {
-            closeBookingModal();
+    slotContinue.addEventListener('click', () => {
+        if (slotContinue.disabled) {
             return;
         }
 
-        if (event.key === 'Escape' && modal.getAttribute('aria-hidden') === 'false') {
-            closeModal();
-        }
+        updateCheckoutSummary();
+        showCheckout();
+    });
+    checkoutBack.addEventListener('click', () => {
+        showPicker();
     });
 
-    roomSelect.addEventListener('change', async () => {
-        updateRoomMeta();
-        await fetchUnavailableDates();
-        resetEndTimes('Select a start time first');
-        resetDuration();
-        resetQuote();
-        await fetchStartTimes();
+    calendarPrev.addEventListener('click', () => {
+        currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1);
+        renderCalendar();
     });
 
-    bookingDateInput.addEventListener('change', async () => {
-        await fetchUnavailableDates();
-        resetEndTimes('Select a start time first');
-        resetDuration();
-        resetQuote();
-        await fetchStartTimes();
+    calendarNext.addEventListener('click', () => {
+        currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1);
+        renderCalendar();
     });
 
-    layoutDateInput.addEventListener('change', fetchLayout);
-
-    startTimeSelect.addEventListener('change', async () => {
-        startTimeSelect.dataset.previousValue = startTimeSelect.value;
-        endTimeSelect.dataset.previousValue = '';
-        resetDuration();
-        resetQuote();
-        await fetchEndTimes();
-    });
-
-    endTimeSelect.addEventListener('change', async () => {
-        endTimeSelect.dataset.previousValue = endTimeSelect.value;
-        updateDurationDisplay();
-        await fetchQuote();
-
-        if (startTimeSelect.value && endTimeSelect.value) {
-            const durationLabel = endTimeSelect.options[endTimeSelect.selectedIndex]?.dataset.durationLabel || humanizeDuration(startTimeSelect.value, endTimeSelect.value);
-            setMessage(`Your selected booking window is ${durationLabel}. Review your details, then submit when ready.`, 'success');
-        }
-    });
-
-    paymentMethodSelect.addEventListener('change', updatePaymentDestination);
-    downpaymentInput.addEventListener('input', updateBalanceFromInput);
-
-    startTimeSelect.dataset.previousValue = startTimeSelect.value;
-    endTimeSelect.dataset.previousValue = endTimeSelect.value;
-    fetchLayout();
-    updateRoomMeta();
     updatePaymentDestination();
-    syncBodyScrollLock();
+    updateSlotHeading();
+    updateRoomMeta();
+    updateCheckoutSummary();
+    renderCalendar();
+    resetSlots();
+    resetQuote();
 
     if (roomSelect.value) {
-        fetchUnavailableDates().then(fetchStartTimes);
-    } else {
-        resetStartTimes('Select a room and date first');
-        resetEndTimes('Select a start time first');
-        resetDuration();
-        resetQuote();
-        setMessage('Select a room and date first. Available start and end times will appear here.');
+        setActiveRoom(roomSelect.value);
+        fetchUnavailableDates()
+            .then(fetchStartTimes)
+            .then(async () => {
+                if (!initialStartTime) {
+                    return;
+                }
+
+                startSelect.value = initialStartTime;
+                showStartSummary();
+                await fetchEndTimes();
+
+                if (!initialEndTime) {
+                    return;
+                }
+
+                endSelect.value = initialEndTime;
+                await fetchQuote();
+            })
+            .catch(() => {
+                messageBody.textContent = 'Unable to load saved booking values right now. Please reselect your details.';
+            });
     }
 
-    if (bookingModal.dataset.openOnLoad === 'true') {
-        openBookingModal();
+    if (shouldShowCheckout) {
+        showCheckout();
     }
 };
 
+const setupBookingPageV2 = () => {
+    const page = document.querySelector('[data-booking-page]');
+    const form = document.querySelector('[data-booking-form]');
+
+    if (!page || !form) {
+        return;
+    }
+
+    const availabilityUrl = form.dataset.availabilityUrl;
+    const unavailableDatesUrl = form.dataset.unavailableDatesUrl;
+    const quoteUrl = form.dataset.quoteUrl;
+    const layoutUrl = form.dataset.layoutUrl;
+    const minimumDuration = Number(form.dataset.minimumDuration || '60');
+    const horizonDays = Number(form.dataset.unavailableDatesHorizon || '30');
+
+    const modeTriggers = [...form.querySelectorAll('[data-booking-mode-trigger]')];
+    const modePanels = [...form.querySelectorAll('[data-booking-mode-panel]')];
+    const roomSelect = form.querySelector('[data-room-select]');
+    const bookingDateInput = form.querySelector('[data-booking-date]');
+    const bookingModeInput = form.querySelector('[data-booking-mode-input]');
+    const scheduleItemsInput = form.querySelector('[data-schedule-items-input]');
+    const startSelect = form.querySelector('[data-start-time-select]');
+    const endSelect = form.querySelector('[data-end-time-select]');
+    const bookingPicker = form.querySelector('[data-booking-picker]');
+    const bookingCheckout = form.querySelector('[data-booking-checkout]');
+    const checkoutBack = form.querySelector('[data-checkout-back]');
+    const durationDisplay = form.querySelector('[data-duration-display]');
+    const downpaymentInput = form.querySelector('[data-downpayment-input]');
+    const paymentMethod = form.querySelector('[data-payment-method]');
+    const paymentMethodCards = [...form.querySelectorAll('[data-payment-choice]')];
+    const roomMeta = form.querySelector('[data-selected-room-meta]');
+    const messageBody = form.querySelector('[data-availability-message-body]');
+    const quoteTotal = form.querySelector('[data-quote-total]');
+    const quoteMinimum = form.querySelector('[data-quote-minimum-downpayment]');
+    const quoteBalance = form.querySelector('[data-quote-balance]');
+    const quoteMeta = form.querySelector('[data-quote-meta]');
+    const paymentGcash = form.querySelector('[data-payment-gcash]');
+    const paymentBank = form.querySelector('[data-payment-bank]');
+    const paymentInstructions = form.querySelector('[data-payment-instructions]');
+    const roomCards = [...form.querySelectorAll('[data-room-card]')];
+    const roomRail = form.querySelector('[data-room-cards]');
+    const roomScrollPrev = form.querySelector('[data-room-scroll-prev]');
+    const roomScrollNext = form.querySelector('[data-room-scroll-next]');
+    const calendarTitle = form.querySelector('[data-calendar-title]');
+    const calendarDays = form.querySelector('[data-calendar-days]');
+    const calendarPrev = form.querySelector('[data-calendar-prev]');
+    const calendarNext = form.querySelector('[data-calendar-next]');
+    const slotDateTitle = form.querySelector('[data-slot-date-title]');
+    const slotContinue = form.querySelector('[data-slot-continue]');
+    const selectedRoomName = form.querySelector('[data-selected-room-name]');
+    const selectedRoomSpace = form.querySelector('[data-selected-room-space]');
+    const selectedRoomRate = form.querySelector('[data-selected-room-rate]');
+    const startSlots = form.querySelector('[data-start-slots]');
+    const endSlots = form.querySelector('[data-end-slots]');
+    const startStep = form.querySelector('[data-start-step]');
+    const startSummary = form.querySelector('[data-start-summary]');
+    const startSummaryTime = form.querySelector('[data-start-summary-time]');
+    const startSummaryChange = form.querySelector('[data-start-summary-change]');
+    const inlineSummary = form.querySelector('[data-inline-summary]');
+    const summaryDate = form.querySelector('[data-summary-date]');
+    const summaryStart = form.querySelector('[data-summary-start]');
+    const summaryEnd = form.querySelector('[data-summary-end]');
+    const summaryDuration = form.querySelector('[data-summary-duration]');
+    const summaryRate = form.querySelector('[data-summary-rate]');
+    const summaryTotal = form.querySelector('[data-summary-total]');
+    const checkoutRoom = form.querySelector('[data-checkout-room]');
+    const checkoutDate = form.querySelector('[data-checkout-date]');
+    const checkoutStart = form.querySelector('[data-checkout-start]');
+    const checkoutEnd = form.querySelector('[data-checkout-end]');
+    const checkoutDuration = form.querySelector('[data-checkout-duration]');
+    const checkoutStandardSummary = form.querySelector('[data-checkout-standard-summary]');
+    const checkoutScheduleCount = form.querySelector('[data-checkout-schedule-count]');
+    const checkoutScheduleList = form.querySelector('[data-checkout-schedule-list]');
+    const checkoutSubmit = form.querySelector('[data-checkout-submit]');
+    const guestFirstName = form.querySelector('[data-guest-first-name]');
+    const guestLastName = form.querySelector('[data-guest-last-name]');
+    const guestFullName = form.querySelector('[data-guest-full-name]');
+    const scheduleDateTitle = form.querySelector('[data-schedule-date-title]');
+    const schedulePrev = form.querySelector('[data-schedule-prev]');
+    const scheduleNext = form.querySelector('[data-schedule-next]');
+    const scheduleTopScroll = form.querySelector('[data-schedule-top-scroll]');
+    const scheduleTopScrollInner = form.querySelector('[data-schedule-top-scroll-inner]');
+    const scheduleTableWrap = form.querySelector('[data-schedule-table-wrap]');
+    const scheduleHead = form.querySelector('[data-schedule-head]');
+    const scheduleBody = form.querySelector('[data-schedule-body]');
+    const scheduleSelectionEmpty = form.querySelector('[data-schedule-selection-empty]');
+    const scheduleSelectionFilled = form.querySelector('[data-schedule-selection-filled]');
+    const scheduleSelectionRoom = form.querySelector('[data-schedule-selection-room]');
+    const scheduleSelectionMeta = form.querySelector('[data-schedule-selection-meta]');
+    const scheduleSelectionTotal = form.querySelector('[data-schedule-selection-total]');
+    const scheduleContinue = form.querySelector('[data-schedule-continue]');
+    const scheduleCartPanel = form.querySelector('[data-schedule-cart-panel]');
+    const scheduleCartList = form.querySelector('[data-schedule-cart-list]');
+    const scheduleCartCount = form.querySelector('[data-schedule-cart-count]');
+    const shouldShowCheckout = form.dataset.showCheckout === 'true';
+    const initialStartTime = startSelect.value;
+    const initialEndTime = endSelect.value;
+
+    if (!roomSelect || !bookingDateInput || !bookingModeInput || !scheduleItemsInput || !startSelect || !endSelect || !bookingPicker || !bookingCheckout || !checkoutBack || !durationDisplay || !downpaymentInput || !paymentMethod || !paymentMethodCards.length || !roomMeta || !messageBody || !quoteTotal || !quoteMinimum || !quoteBalance || !quoteMeta || !paymentGcash || !paymentBank || !paymentInstructions || !roomCards.length || !roomRail || !calendarTitle || !calendarDays || !calendarPrev || !calendarNext || !slotDateTitle || !slotContinue || !selectedRoomName || !selectedRoomSpace || !selectedRoomRate || !startSlots || !endSlots || !startStep || !startSummary || !startSummaryTime || !startSummaryChange || !inlineSummary || !summaryDate || !summaryStart || !summaryEnd || !summaryDuration || !summaryRate || !summaryTotal || !checkoutRoom || !checkoutDate || !checkoutStart || !checkoutEnd || !checkoutDuration || !checkoutStandardSummary || !checkoutScheduleCount || !checkoutScheduleList || !checkoutSubmit || !scheduleDateTitle || !schedulePrev || !scheduleNext || !scheduleHead || !scheduleBody || !scheduleSelectionEmpty || !scheduleSelectionFilled || !scheduleSelectionRoom || !scheduleSelectionMeta || !scheduleSelectionTotal || !scheduleContinue || !scheduleCartPanel || !scheduleCartList || !scheduleCartCount) {
+        return;
+    }
+
+    let blockedDates = new Set();
+    let currentQuote = null;
+    let bookingMode = bookingModeInput.value || 'room';
+    let scheduleCart = [];
+    let currentMonth = (() => {
+        const base = bookingDateInput.value ? new Date(`${bookingDateInput.value}T00:00:00`) : new Date();
+        return new Date(base.getFullYear(), base.getMonth(), 1);
+    })();
+
+    const today = new Date();
+    const todayValue = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const currentMinutes = (today.getHours() * 60) + today.getMinutes();
+
+    const formatCurrency = (value) => `Php ${Number(value || 0).toLocaleString('en-PH', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    })}`;
+
+    const formatDate = (value) => {
+        if (!value) {
+            return '';
+        }
+
+        const date = new Date(`${value}T00:00:00`);
+
+        if (Number.isNaN(date.getTime())) {
+            return value;
+        }
+
+        return new Intl.DateTimeFormat('en-PH', {
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric',
+        }).format(date);
+    };
+
+    const formatMonthTitle = (date) => new Intl.DateTimeFormat('en-PH', {
+        month: 'long',
+        year: 'numeric',
+    }).format(date);
+
+    const formatScheduleDate = (value) => new Intl.DateTimeFormat('en-PH', {
+        weekday: 'short',
+        month: 'long',
+        day: 'numeric',
+    }).format(new Date(`${value}T00:00:00`));
+
+    const durationLabel = (startValue, endValue) => {
+        if (!startValue || !endValue) {
+            return '';
+        }
+
+        const [startHour, startMinute] = startValue.split(':').map(Number);
+        const [endHour, endMinute] = endValue.split(':').map(Number);
+
+        if ([startHour, startMinute, endHour, endMinute].some(Number.isNaN)) {
+            return '';
+        }
+
+        let startTotal = (startHour * 60) + startMinute;
+        let endTotal = (endHour * 60) + endMinute;
+
+        if (endTotal <= startTotal) {
+            endTotal += 24 * 60;
+        }
+
+        const diff = endTotal - startTotal;
+        const hours = Math.floor(diff / 60);
+        const minutes = diff % 60;
+        const parts = [];
+
+        if (hours) {
+            parts.push(`${hours} ${hours === 1 ? 'hour' : 'hours'}`);
+        }
+
+        if (minutes) {
+            parts.push(`${minutes} mins`);
+        }
+
+        return parts.join(' ');
+    };
+
+    const timeValueToMinutes = (value) => {
+        if (!value || !value.includes(':')) {
+            return null;
+        }
+
+        const [hour, minute] = value.split(':').map(Number);
+
+        if ([hour, minute].some(Number.isNaN)) {
+            return null;
+        }
+
+        return (hour * 60) + minute;
+    };
+
+    const currentScheduleCutoffMinutes = () => {
+        const now = new Date();
+        const minutes = (now.getHours() * 60) + now.getMinutes();
+
+        if (minutes % 30 === 0) {
+            return minutes;
+        }
+
+        return minutes + (30 - (minutes % 30));
+    };
+
+    const slotLabelToMinutes = (label) => {
+        const [start] = (label || '').split(' - ');
+        const match = start?.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+
+        if (!match) {
+            return Number.MAX_SAFE_INTEGER;
+        }
+
+        let hour = Number(match[1]);
+        const minute = Number(match[2]);
+        const period = match[3].toUpperCase();
+
+        if (period === 'PM' && hour !== 12) {
+            hour += 12;
+        }
+
+        if (period === 'AM' && hour === 12) {
+            hour = 0;
+        }
+
+        return (hour * 60) + minute;
+    };
+
+    const isPastScheduleLabelForToday = (label, bookingDate) => {
+        if (bookingDate !== todayValue) {
+            return false;
+        }
+
+        const labelMinutes = slotLabelToMinutes(label);
+
+        if (!Number.isFinite(labelMinutes)) {
+            return false;
+        }
+
+        return labelMinutes < currentMinutes;
+    };
+
+    const setSelectOptions = (select, items, selectedValue = '') => {
+        select.innerHTML = '';
+
+        items.forEach((item) => {
+            const option = document.createElement('option');
+            option.value = item.value;
+            option.textContent = item.label;
+
+            if (item.range_label) {
+                option.dataset.rangeLabel = item.range_label;
+            }
+
+            if (item.duration_label) {
+                option.dataset.durationLabel = item.duration_label;
+            }
+
+            select.append(option);
+        });
+
+        if (selectedValue) {
+            select.value = selectedValue;
+        }
+    };
+
+    const minimumDownpaymentForTotal = (total) => (total <= 1000 ? total / 2 : 500);
+
+    const scheduleItemKey = (item) => [
+        item.hyve_room_id,
+        item.booking_date,
+        item.start_time,
+        item.end_time,
+    ].join('|');
+
+    const syncGuestFullName = () => {
+        if (!guestFullName) {
+            return;
+        }
+
+        const fullName = [guestFirstName?.value || '', guestLastName?.value || '']
+            .map((value) => value.trim())
+            .filter(Boolean)
+            .join(' ');
+
+        guestFullName.value = fullName;
+    };
+
+    const syncScheduleScrollbars = () => {
+        if (!scheduleTopScroll || !scheduleTopScrollInner || !scheduleTableWrap) {
+            return;
+        }
+
+        const targetWidth = scheduleTableWrap.scrollWidth;
+        const visibleWidth = scheduleTableWrap.clientWidth;
+        scheduleTopScrollInner.style.width = `${targetWidth}px`;
+        scheduleTopScroll.classList.toggle('hidden', targetWidth <= visibleWidth + 2);
+        scheduleTopScroll.scrollLeft = scheduleTableWrap.scrollLeft;
+    };
+
+    const syncScheduleItemsInput = () => {
+        scheduleItemsInput.value = JSON.stringify(scheduleCart.map((item) => ({
+            hyve_room_id: item.hyve_room_id,
+            booking_date: item.booking_date,
+            start_time: item.start_time,
+            end_time: item.end_time,
+            room_name: item.room_name,
+            room_space: item.room_space,
+            label: item.label,
+            total_amount: item.total_amount,
+        })));
+    };
+
+    const summarizeScheduleCart = () => {
+        const total = scheduleCart.reduce((sum, item) => sum + Number(item.total_amount || 0), 0);
+        const roomCount = new Set(scheduleCart.map((item) => item.hyve_room_id)).size;
+        const dateCount = new Set(scheduleCart.map((item) => item.booking_date)).size;
+        return {
+            total,
+            roomCount,
+            dateCount,
+            slotCount: scheduleCart.length,
+            minimumDownpayment: scheduleCart.length ? minimumDownpaymentForTotal(total) : 0,
+        };
+    };
+
+    const hydrateScheduleCartFromInput = async () => {
+        try {
+            const parsed = JSON.parse(scheduleItemsInput.value || '[]');
+
+            if (!Array.isArray(parsed) || !parsed.length) {
+                scheduleCart = [];
+                return;
+            }
+
+            scheduleCart = parsed
+                .filter((item) => item && typeof item === 'object')
+                .map((item) => {
+                    const roomCard = roomCards.find((card) => card.dataset.roomId === String(item.hyve_room_id));
+
+                    return {
+                        hyve_room_id: Number(item.hyve_room_id),
+                        booking_date: item.booking_date,
+                        start_time: item.start_time,
+                        end_time: item.end_time,
+                        room_name: item.room_name || roomCard?.dataset.roomName || 'Room',
+                        room_space: item.room_space || roomCard?.dataset.roomSpace || '',
+                        label: item.label || `${item.start_time} - ${item.end_time}`,
+                        total_amount: Number(item.total_amount || 0),
+                    };
+                });
+            syncScheduleItemsInput();
+        } catch (error) {
+            scheduleCart = [];
+        }
+    };
+
+    const getSelectedRoomCard = () => roomCards.find((card) => card.dataset.roomId === roomSelect.value);
+
+    const setBookingMode = (mode) => {
+        bookingMode = mode;
+        bookingModeInput.value = mode;
+        modeTriggers.forEach((trigger) => {
+            trigger.classList.toggle('booking-calendar-tab--active', trigger.dataset.bookingModeValue === mode);
+        });
+        modePanels.forEach((panel) => {
+            panel.classList.toggle('hidden', panel.dataset.bookingModePanel !== mode);
+        });
+    };
+
+    const filterPastStartTimes = (items) => {
+        if (bookingDateInput.value !== todayValue) {
+            return items;
+        }
+
+        return items.filter((item) => {
+            const minutes = timeValueToMinutes(item.value);
+
+            if (minutes === null) {
+                return true;
+            }
+
+            return minutes >= currentMinutes;
+        });
+    };
+
+    const updatePaymentDestination = () => {
+        paymentGcash.classList.toggle('hidden', paymentMethod.value !== 'gcash');
+        paymentBank.classList.toggle('hidden', paymentMethod.value !== 'bank_transfer');
+        paymentMethodCards.forEach((card) => {
+            card.classList.toggle('is-active', card.dataset.paymentChoice === paymentMethod.value);
+        });
+    };
+
+    const showCheckout = () => {
+        bookingPicker.classList.add('hidden');
+        bookingCheckout.classList.remove('hidden');
+    };
+
+    const showPicker = () => {
+        bookingCheckout.classList.add('hidden');
+        bookingPicker.classList.remove('hidden');
+    };
+
+    const updateCheckoutSummary = () => {
+        if (bookingMode === 'schedule' && scheduleCart.length) {
+            const summary = summarizeScheduleCart();
+            checkoutStandardSummary.classList.add('hidden');
+            checkoutScheduleCount.classList.remove('hidden');
+            checkoutScheduleList.classList.remove('hidden');
+            checkoutScheduleCount.textContent = `${summary.slotCount} booking${summary.slotCount === 1 ? '' : 's'}`;
+            checkoutScheduleList.innerHTML = '';
+
+            scheduleCart
+                .slice()
+                .sort((a, b) => `${a.booking_date}${a.start_time}`.localeCompare(`${b.booking_date}${b.start_time}`))
+                .forEach((item) => {
+                    const entry = document.createElement('article');
+                    entry.className = 'booking-checkout__schedule-item';
+                    entry.innerHTML = `
+                        <strong>${item.room_name} - ${item.room_space}</strong>
+                        <span>${formatDate(item.booking_date)} - ${item.label} - 1 hour</span>
+                        <em>${formatCurrency(item.total_amount)}</em>
+                    `;
+                    checkoutScheduleList.append(entry);
+                });
+            return;
+        }
+
+        checkoutStandardSummary.classList.remove('hidden');
+        checkoutScheduleCount.classList.add('hidden');
+        checkoutScheduleList.classList.add('hidden');
+        checkoutScheduleList.innerHTML = '';
+        const roomCard = getSelectedRoomCard();
+        checkoutRoom.textContent = roomCard
+            ? `${roomCard.dataset.roomName || 'Choose a room'} - ${roomCard.dataset.roomSpace || ''}`.trim()
+            : 'Choose a room';
+        checkoutDate.textContent = formatDate(bookingDateInput.value || todayValue);
+        checkoutStart.textContent = startSelect.selectedOptions[0]?.textContent ?? startSelect.value ?? '--:--';
+        checkoutEnd.textContent = endSelect.selectedOptions[0]?.textContent ?? endSelect.value ?? '--:--';
+        checkoutDuration.textContent = durationLabel(startSelect.value, endSelect.value) || '--';
+    };
+
+    const updateBalance = () => {
+        if (!currentQuote) {
+            quoteBalance.textContent = 'Php 0.00';
+            checkoutSubmit.textContent = 'Confirm & Pay Php 0.00';
+            return;
+        }
+
+        const total = Number(currentQuote.total_amount || 0);
+        const minimum = Number(currentQuote.minimum_downpayment_amount || 0);
+        let current = Number(downpaymentInput.value || 0);
+
+        if (Number.isNaN(current) || current < minimum) {
+            current = minimum;
+        }
+
+        if (current > total) {
+            current = total;
+        }
+
+        downpaymentInput.value = String(current);
+        quoteBalance.textContent = formatCurrency(total - current);
+        checkoutSubmit.textContent = `Confirm & Pay ${formatCurrency(current)}`;
+    };
+
+    const hideInlineSummary = () => {
+        inlineSummary.classList.add('hidden');
+        summaryDate.textContent = formatDate(bookingDateInput.value || todayValue);
+        summaryStart.textContent = '--:--';
+        summaryEnd.textContent = '--:--';
+        summaryDuration.textContent = '--';
+        summaryRate.textContent = '--';
+        summaryTotal.textContent = 'Php 0.00';
+    };
+
+    const hideStartSummary = () => {
+        startSummary.classList.add('hidden');
+        startSummaryTime.textContent = '--:--';
+        startStep.classList.remove('hidden');
+    };
+
+    const showStartSummary = () => {
+        const startLabel = startSelect.selectedOptions[0]?.textContent ?? startSelect.value ?? '--:--';
+        startSummaryTime.textContent = startLabel;
+        startSummary.classList.remove('hidden');
+        startStep.classList.add('hidden');
+    };
+
+    const removeScheduleItem = (key) => {
+        scheduleCart = scheduleCart.filter((item) => scheduleItemKey(item) !== key);
+        syncScheduleItemsInput();
+        updateScheduleSelection();
+        updateCheckoutSummary();
+    };
+
+    const pruneExpiredScheduleItems = () => {
+        if (!scheduleCart.length) {
+            return false;
+        }
+
+        const cutoffMinutes = currentScheduleCutoffMinutes();
+        const nextCart = scheduleCart.filter((item) => {
+            if (item.booking_date !== todayValue) {
+                return true;
+            }
+
+            const startMinutes = timeValueToMinutes(item.start_time);
+
+            return startMinutes === null || startMinutes >= cutoffMinutes;
+        });
+
+        if (nextCart.length === scheduleCart.length) {
+            return false;
+        }
+
+        scheduleCart = nextCart;
+        syncScheduleItemsInput();
+        updateScheduleSelection();
+        updateCheckoutSummary();
+        messageBody.textContent = 'Some selected current-day schedule slots already started or expired, so they were removed from your cart. Please review your booking again.';
+
+        return true;
+    };
+
+    const renderScheduleCart = () => {
+        scheduleCartList.innerHTML = '';
+        scheduleCartPanel.classList.toggle('hidden', scheduleCart.length === 0);
+        scheduleCartCount.textContent = `${scheduleCart.length} item${scheduleCart.length === 1 ? '' : 's'}`;
+
+        if (!scheduleCart.length) {
+            return;
+        }
+
+        scheduleCart
+            .slice()
+            .sort((a, b) => `${a.booking_date}${a.start_time}`.localeCompare(`${b.booking_date}${b.start_time}`))
+            .forEach((item) => {
+                const row = document.createElement('div');
+                row.className = 'booking-schedule__cart-item';
+                row.innerHTML = `
+                    <div class="booking-schedule__cart-copy">
+                        <strong>${item.room_name} - ${item.room_space}</strong>
+                        <span>${formatDate(item.booking_date)} - ${item.label} - 1 hour</span>
+                    </div>
+                    <div class="booking-schedule__cart-meta">
+                        <strong>${formatCurrency(item.total_amount)}</strong>
+                        <button type="button" class="booking-schedule__cart-remove" aria-label="Remove schedule item">&times;</button>
+                    </div>
+                `;
+
+                row.querySelector('button')?.addEventListener('click', async () => {
+                    removeScheduleItem(scheduleItemKey(item));
+
+                    if (bookingMode === 'schedule') {
+                        await renderSchedule();
+                    }
+                });
+
+                scheduleCartList.append(row);
+            });
+    };
+
+    const updateScheduleSelection = () => {
+        syncScheduleItemsInput();
+        renderScheduleCart();
+
+        if (bookingMode !== 'schedule') {
+            return;
+        }
+
+        if (!scheduleCart.length) {
+            scheduleSelectionEmpty.classList.remove('hidden');
+            scheduleSelectionFilled.classList.add('hidden');
+            scheduleSelectionRoom.textContent = '0 slots selected';
+            scheduleSelectionMeta.textContent = 'Pick an available hour to continue.';
+            scheduleSelectionTotal.textContent = 'Php 0.00';
+            scheduleContinue.disabled = true;
+            currentQuote = null;
+            quoteTotal.textContent = 'Php 0.00';
+            quoteMinimum.textContent = 'Php 0.00';
+            quoteBalance.textContent = 'Php 0.00';
+            quoteMeta.textContent = 'Choose one or more schedule slots first to load your live rate summary.';
+            checkoutSubmit.textContent = 'Confirm & Pay Php 0.00';
+            return;
+        }
+
+        const summary = summarizeScheduleCart();
+        currentQuote = {
+            total_amount: summary.total,
+            minimum_downpayment_amount: summary.minimumDownpayment,
+        };
+
+        scheduleSelectionEmpty.classList.add('hidden');
+        scheduleSelectionFilled.classList.remove('hidden');
+        scheduleSelectionRoom.textContent = `${summary.slotCount} selected slot${summary.slotCount === 1 ? '' : 's'} across ${summary.roomCount} room${summary.roomCount === 1 ? '' : 's'}`;
+        scheduleSelectionMeta.textContent = summary.dateCount === 1
+            ? `Booking date: ${formatDate(scheduleCart[0].booking_date)}`
+            : `${summary.dateCount} booking dates selected`;
+        scheduleSelectionTotal.textContent = formatCurrency(summary.total);
+        quoteTotal.textContent = formatCurrency(summary.total);
+        quoteMinimum.textContent = formatCurrency(summary.minimumDownpayment);
+        quoteMeta.textContent = `Full schedule cart | ${summary.slotCount} hour slot(s) | ${summary.roomCount} room(s).`;
+
+        if (!downpaymentInput.value || Number(downpaymentInput.value) < summary.minimumDownpayment) {
+            downpaymentInput.value = String(summary.minimumDownpayment);
+        }
+
+        downpaymentInput.min = String(summary.minimumDownpayment);
+        updateBalance();
+        scheduleContinue.disabled = false;
+    };
+
+    const resetQuote = () => {
+        currentQuote = null;
+        quoteTotal.textContent = 'Php 0.00';
+        quoteMinimum.textContent = 'Php 0.00';
+        quoteBalance.textContent = 'Php 0.00';
+        quoteMeta.textContent = 'Choose a room, date, start time, and end time first to load your live rate summary.';
+        hideInlineSummary();
+        slotContinue.textContent = 'Pick a time to continue';
+        slotContinue.disabled = true;
+        checkoutSubmit.textContent = 'Confirm & Pay Php 0.00';
+        updateScheduleSelection();
+    };
+
+    const resetSlots = (message = 'Select a room and date first. Available times will appear here.') => {
+        startSelect.innerHTML = '';
+        endSelect.innerHTML = '';
+        startSlots.innerHTML = '<span class="booking-slot-empty">No start times loaded yet.</span>';
+        endSlots.innerHTML = '<span class="booking-slot-empty">Select a start time first.</span>';
+        durationDisplay.textContent = 'Choose a start time first to continue.';
+        messageBody.textContent = message;
+        hideStartSummary();
+        hideInlineSummary();
+        updateCheckoutSummary();
+        updateScheduleSelection();
+    };
+
+    const updateRoomMeta = () => {
+        const roomCard = getSelectedRoomCard();
+
+        if (!roomCard) {
+            roomMeta.textContent = 'Choose the exact room first, then pick an available date and start time.';
+            selectedRoomName.textContent = 'Choose a room';
+            selectedRoomSpace.textContent = '';
+            selectedRoomRate.textContent = 'Ask HYVE';
+            checkoutRoom.textContent = 'Choose a room';
+            return;
+        }
+
+        roomMeta.textContent = `${roomCard.dataset.roomDescription} | ${roomCard.dataset.roomSpace}`;
+        selectedRoomName.textContent = roomCard.dataset.roomName || 'Choose a room';
+        selectedRoomSpace.textContent = roomCard.dataset.roomSpace || '';
+        selectedRoomRate.textContent = roomCard.dataset.roomRate || 'Ask HYVE';
+        checkoutRoom.textContent = `${roomCard.dataset.roomName || 'Choose a room'} - ${roomCard.dataset.roomSpace || ''}`.trim();
+    };
+
+    const updateSlotHeading = () => {
+        slotDateTitle.textContent = formatDate(bookingDateInput.value || todayValue);
+        checkoutDate.textContent = formatDate(bookingDateInput.value || todayValue);
+        scheduleDateTitle.textContent = formatScheduleDate(bookingDateInput.value || todayValue);
+        schedulePrev.disabled = (bookingDateInput.value || todayValue) <= todayValue;
+    };
+
+    const setActiveRoom = (roomId) => {
+        roomSelect.value = roomId;
+        roomCards.forEach((card) => {
+            card.classList.toggle('is-active', card.dataset.roomId === roomId);
+        });
+        updateRoomMeta();
+        updateScheduleSelection();
+    };
+
+    const renderCalendar = () => {
+        calendarTitle.textContent = formatMonthTitle(currentMonth);
+        calendarDays.innerHTML = '';
+
+        const firstDay = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
+        const lastDay = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0);
+        const leading = firstDay.getDay();
+
+        for (let i = 0; i < leading; i += 1) {
+            const filler = document.createElement('span');
+            filler.className = 'booking-calendar-day is-filler';
+            calendarDays.append(filler);
+        }
+
+        for (let day = 1; day <= lastDay.getDate(); day += 1) {
+            const date = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day);
+            const value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'booking-calendar-day';
+            button.textContent = String(day);
+
+            if (value === todayValue) {
+                button.classList.add('is-today');
+            }
+
+            if (bookingDateInput.value === value) {
+                button.classList.add('is-selected');
+            }
+
+            if (blockedDates.has(value)) {
+                button.classList.add('is-booked');
+            }
+
+            if (value < todayValue || blockedDates.has(value)) {
+                button.disabled = true;
+            }
+
+            button.addEventListener('click', async () => {
+                bookingDateInput.value = value;
+                updateSlotHeading();
+                renderCalendar();
+
+                try {
+                    await fetchStartTimes();
+
+                    if (bookingMode === 'schedule') {
+                        await renderSchedule();
+                    }
+                } catch (error) {
+                    messageBody.textContent = 'Unable to load date availability right now. Please try again.';
+                }
+            });
+
+            calendarDays.append(button);
+        }
+    };
+
+    const renderSlotButtons = (container, items, type) => {
+        container.innerHTML = '';
+
+        if (!items.length) {
+            const empty = document.createElement('span');
+            empty.className = 'booking-slot-empty';
+            empty.textContent = type === 'start' ? 'No available start times for this date.' : 'Select a start time first.';
+            container.append(empty);
+            return;
+        }
+
+        items.forEach((item) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'booking-slot-pill';
+            button.innerHTML = `<strong>${item.label}</strong>${item.duration_label ? `<small>${item.duration_label}</small>` : ''}`;
+
+            if ((type === 'start' && startSelect.value === item.value) || (type === 'end' && endSelect.value === item.value)) {
+                button.classList.add('is-active');
+            }
+
+            button.addEventListener('click', async () => {
+                if (type === 'start') {
+                    startSelect.value = item.value;
+                    endSelect.innerHTML = '';
+                    showStartSummary();
+                    hideInlineSummary();
+                    resetQuote();
+
+                    try {
+                        await fetchEndTimes();
+                    } catch (error) {
+                        messageBody.textContent = 'Unable to load end time options right now. Please try again.';
+                    }
+
+                    return;
+                }
+
+                endSelect.value = item.value;
+                durationDisplay.textContent = `${item.duration_label} | ${item.range_label}`;
+
+                try {
+                    await fetchQuote();
+                    renderSlotButtons(container, items, 'end');
+                } catch (error) {
+                    messageBody.textContent = 'Unable to load the booking quote right now. Please try again.';
+                }
+            });
+
+            container.append(button);
+        });
+    };
+
+    const fetchJson = async (url) => {
+        const response = await fetch(url, {
+            headers: {
+                Accept: 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+        });
+
+        if (!response.ok) {
+            throw new Error('Request failed.');
+        }
+
+        return response.json();
+    };
+
+    const fetchUnavailableDates = async () => {
+        if (!roomSelect.value) {
+            blockedDates = new Set();
+            renderCalendar();
+            return;
+        }
+
+        const data = await fetchJson(`${unavailableDatesUrl}?hyve_room_id=${encodeURIComponent(roomSelect.value)}&horizon_days=${encodeURIComponent(horizonDays)}`);
+        blockedDates = new Set((Array.isArray(data.unavailable_dates) ? data.unavailable_dates : []).map((item) => item.value));
+        renderCalendar();
+    };
+
+    const fetchStartTimes = async () => {
+        if (!roomSelect.value || !bookingDateInput.value) {
+            resetSlots();
+            resetQuote();
+            return;
+        }
+
+        if (blockedDates.has(bookingDateInput.value)) {
+            resetSlots('This room is fully booked for the selected date. Please choose another day.');
+            resetQuote();
+            return;
+        }
+
+        const data = await fetchJson(`${availabilityUrl}?hyve_room_id=${encodeURIComponent(roomSelect.value)}&booking_date=${encodeURIComponent(bookingDateInput.value)}`);
+        const startTimes = filterPastStartTimes(Array.isArray(data.start_times) ? data.start_times : []);
+
+        setSelectOptions(startSelect, startTimes);
+        endSelect.innerHTML = '';
+        endSlots.innerHTML = '<span class="booking-slot-empty">Select a start time first.</span>';
+        durationDisplay.textContent = 'Choose a start time first to continue.';
+        hideStartSummary();
+        hideInlineSummary();
+        resetQuote();
+        renderSlotButtons(startSlots, startTimes, 'start');
+
+        if (!startTimes.length) {
+            messageBody.textContent = bookingDateInput.value === todayValue
+                ? 'No more booking windows are available for the rest of today.'
+                : 'No booking windows are available for that room on the selected date.';
+            return;
+        }
+
+        messageBody.textContent = `${startTimes.length} start ${startTimes.length === 1 ? 'time is' : 'times are'} available on ${formatDate(bookingDateInput.value)}.`;
+    };
+
+    const fetchEndTimes = async () => {
+        if (!roomSelect.value || !bookingDateInput.value || !startSelect.value) {
+            endSelect.innerHTML = '';
+            endSlots.innerHTML = '<span class="booking-slot-empty">Select a start time first.</span>';
+            durationDisplay.textContent = 'Choose a start time first to continue.';
+            resetQuote();
+            return;
+        }
+
+        const data = await fetchJson(`${availabilityUrl}?hyve_room_id=${encodeURIComponent(roomSelect.value)}&booking_date=${encodeURIComponent(bookingDateInput.value)}&start_time=${encodeURIComponent(startSelect.value)}`);
+        const endTimes = Array.isArray(data.end_times) ? data.end_times : [];
+
+        setSelectOptions(endSelect, endTimes);
+        showStartSummary();
+        renderSlotButtons(
+            startSlots,
+            Array.from(startSelect.options).map((option) => ({ value: option.value, label: option.textContent })).filter((item) => item.value),
+            'start',
+        );
+        renderSlotButtons(endSlots, endTimes, 'end');
+
+        if (!endTimes.length) {
+            durationDisplay.textContent = `Minimum booking is ${minimumDuration / 60} hour.`;
+            resetQuote();
+            messageBody.textContent = 'No valid end time is available for that start time. Please choose another start time.';
+            return;
+        }
+
+        messageBody.textContent = 'Choose how long you want to stay. The available end times are ready below.';
+    };
+
+    const fetchQuote = async () => {
+        if (!roomSelect.value || !bookingDateInput.value || !startSelect.value || !endSelect.value) {
+            resetQuote();
+            return;
+        }
+
+        const data = await fetchJson(`${quoteUrl}?hyve_room_id=${encodeURIComponent(roomSelect.value)}&booking_date=${encodeURIComponent(bookingDateInput.value)}&start_time=${encodeURIComponent(startSelect.value)}&end_time=${encodeURIComponent(endSelect.value)}`);
+
+        currentQuote = data;
+        quoteTotal.textContent = formatCurrency(data.total_amount);
+        quoteMinimum.textContent = formatCurrency(data.minimum_downpayment_amount);
+        quoteMeta.textContent = `${data.rate_name} | ${data.charge_period_label} | ${data.duration_hours} scheduled hour(s) | ${data.billed_hours} billed hour(s).`;
+        paymentInstructions.textContent = data.payment?.instructions || paymentInstructions.textContent;
+        downpaymentInput.min = String(data.minimum_downpayment_amount);
+
+        if (!downpaymentInput.value || Number(downpaymentInput.value) < Number(data.minimum_downpayment_amount)) {
+            downpaymentInput.value = String(data.minimum_downpayment_amount);
+        }
+
+        durationDisplay.textContent = endSelect.selectedOptions[0]?.dataset.durationLabel
+            ? `${endSelect.selectedOptions[0].dataset.durationLabel} | ${endSelect.selectedOptions[0].dataset.rangeLabel}`
+            : durationLabel(startSelect.value, endSelect.value);
+
+        summaryDate.textContent = formatDate(bookingDateInput.value || todayValue);
+        summaryStart.textContent = startSelect.selectedOptions[0]?.textContent ?? startSelect.value;
+        summaryEnd.textContent = endSelect.selectedOptions[0]?.textContent ?? endSelect.value;
+        summaryDuration.textContent = data.duration_hours === 1 ? '1 hour' : `${data.duration_hours} hours`;
+        summaryRate.textContent = `${data.rate_name} - ${data.charge_period_label}`;
+        summaryTotal.textContent = formatCurrency(data.total_amount);
+        inlineSummary.classList.remove('hidden');
+        checkoutStart.textContent = startSelect.selectedOptions[0]?.textContent ?? startSelect.value;
+        checkoutEnd.textContent = endSelect.selectedOptions[0]?.textContent ?? endSelect.value;
+        checkoutDuration.textContent = data.duration_hours === 1 ? '1 hour' : `${data.duration_hours} hours`;
+
+        updateBalance();
+        updateCheckoutSummary();
+        updateScheduleSelection();
+        messageBody.textContent = 'Your booking window and quote are ready. Review the payment details before submitting.';
+        slotContinue.textContent = 'Continue to checkout ->';
+        slotContinue.disabled = false;
+    };
+
+    const syncScheduleSelection = async (room, startSlot, bookingDate, finalEndTime) => {
+        setActiveRoom(String(room.id));
+        bookingDateInput.value = bookingDate;
+        currentMonth = new Date(`${bookingDate}T00:00:00`);
+        updateSlotHeading();
+        renderCalendar();
+        await fetchUnavailableDates();
+        await fetchStartTimes();
+
+        startSelect.value = startSlot.value;
+        renderSlotButtons(
+            startSlots,
+            Array.from(startSelect.options).map((option) => ({ value: option.value, label: option.textContent })).filter((item) => item.value),
+            'start',
+        );
+        showStartSummary();
+
+        await fetchEndTimes();
+        endSelect.value = finalEndTime;
+        renderSlotButtons(
+            endSlots,
+            Array.from(endSelect.options).map((option) => ({
+                value: option.value,
+                label: option.textContent,
+                range_label: option.dataset.rangeLabel,
+                duration_label: option.dataset.durationLabel,
+            })).filter((item) => item.value),
+            'end',
+        );
+        await fetchQuote();
+    };
+
+    const renderSchedule = async ({ showLoading = true } = {}) => {
+        updateSlotHeading();
+        scheduleHead.innerHTML = '';
+        scheduleBody.innerHTML = '';
+
+        if (showLoading) {
+            scheduleBody.innerHTML = '<tr><td class="booking-schedule__loading" colspan="99">Loading full schedule...</td></tr>';
+        }
+
+        const data = await fetchJson(`${layoutUrl}?booking_date=${encodeURIComponent(bookingDateInput.value)}`);
+        const rooms = Array.isArray(data.rooms) ? data.rooms : [];
+        const roomSlotMaps = new Map();
+        const rows = [...new Set(
+            rooms.flatMap((room) => [
+                ...(Array.isArray(room.available_slots) ? room.available_slots.map((slot) => slot.label) : []),
+                ...(Array.isArray(room.booked_slots) ? room.booked_slots.map((slot) => slot.label) : []),
+            ]),
+        )]
+            .filter((label) => !isPastScheduleLabelForToday(label, data.booking_date))
+            .sort((a, b) => slotLabelToMinutes(a) - slotLabelToMinutes(b));
+
+        const headRow = document.createElement('tr');
+        headRow.innerHTML = '<th>Time</th>';
+
+        rooms.forEach((room) => {
+            const roomCard = roomCards.find((card) => card.dataset.roomId === String(room.id));
+            const image = roomCard?.querySelector('img')?.getAttribute('src') || '';
+            const header = document.createElement('th');
+            header.innerHTML = `
+                <div class="booking-schedule__room-head">
+                    ${image ? `<img src="${image}" alt="${room.room_name}">` : ''}
+                    <strong>${room.room_name}</strong>
+                    <small>${room.space_label || ''}</small>
+                </div>
+            `;
+            headRow.append(header);
+        });
+
+        scheduleHead.append(headRow);
+        scheduleBody.innerHTML = '';
+
+        if (!rows.length) {
+            scheduleBody.innerHTML = '<tr><td class="booking-schedule__loading" colspan="99">No booking windows are available for this day yet.</td></tr>';
+            updateScheduleSelection();
+            syncScheduleScrollbars();
+            return;
+        }
+
+        rooms.forEach((room) => {
+            const availableSlots = Array.isArray(room.available_slots) ? room.available_slots : [];
+            roomSlotMaps.set(String(room.id), new Map(
+                availableSlots.map((slot) => [slot.value, slot]),
+            ));
+        });
+
+        rows.forEach((label) => {
+            const tr = document.createElement('tr');
+            const th = document.createElement('th');
+            th.textContent = label;
+            tr.append(th);
+
+            rooms.forEach((room) => {
+                const td = document.createElement('td');
+                const availableSlot = Array.isArray(room.available_slots)
+                    ? room.available_slots.find((slot) => slot.label === label)
+                    : null;
+                const isPastCurrentDaySlot = isPastScheduleLabelForToday(label, data.booking_date);
+
+                if (availableSlot && !isPastCurrentDaySlot) {
+                    const button = document.createElement('button');
+                    const roomCard = roomCards.find((card) => card.dataset.roomId === String(room.id));
+                    const itemKey = scheduleItemKey({
+                        hyve_room_id: room.id,
+                        booking_date: data.booking_date,
+                        start_time: availableSlot.value,
+                        end_time: availableSlot.end_time,
+                    });
+                    const isSelected = scheduleCart.some((item) => scheduleItemKey(item) === itemKey);
+
+                    button.type = 'button';
+                    button.className = `booking-schedule__slot is-available${isSelected ? ' is-selected' : ''}`;
+                    button.innerHTML = `
+                        <span class="booking-schedule__slot-dot">${isSelected ? '&#10003;' : ''}</span>
+                        <strong class="booking-schedule__slot-price">${roomCard?.dataset.roomRate || 'Available'}</strong>
+                    `;
+                    button.addEventListener('click', async () => {
+                        try {
+                            if (isSelected) {
+                                removeScheduleItem(itemKey);
+                                await renderSchedule({ showLoading: false });
+                                return;
+                            }
+
+                            const quote = await fetchJson(`${quoteUrl}?hyve_room_id=${encodeURIComponent(room.id)}&booking_date=${encodeURIComponent(data.booking_date)}&start_time=${encodeURIComponent(availableSlot.value)}&end_time=${encodeURIComponent(availableSlot.end_time)}`);
+
+                            scheduleCart.push({
+                                hyve_room_id: room.id,
+                                booking_date: data.booking_date,
+                                start_time: availableSlot.value,
+                                end_time: availableSlot.end_time,
+                                room_name: room.room_name,
+                                room_space: room.space_label || '',
+                                label: availableSlot.label,
+                                total_amount: Number(quote.total_amount || 0),
+                            });
+
+                            syncScheduleItemsInput();
+                            updateScheduleSelection();
+                            updateCheckoutSummary();
+                            await renderSchedule({ showLoading: false });
+                        } catch (error) {
+                            messageBody.textContent = 'Unable to load the selected schedule slot right now. Please try again.';
+                        }
+                    });
+                    td.append(button);
+                } else {
+                    const blocked = document.createElement('span');
+                    blocked.className = 'booking-schedule__slot is-unavailable';
+                    blocked.innerHTML = `
+                        <span class="booking-schedule__slot-dot">&times;</span>
+                        <strong class="booking-schedule__slot-price">Booked</strong>
+                    `;
+                    td.append(blocked);
+                }
+
+                tr.append(td);
+            });
+
+            scheduleBody.append(tr);
+        });
+
+        updateScheduleSelection();
+        syncScheduleScrollbars();
+    };
+
+    const shiftScheduleDate = async (days) => {
+        const date = new Date(`${bookingDateInput.value}T00:00:00`);
+        date.setDate(date.getDate() + days);
+        const nextValue = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+        if (nextValue < todayValue) {
+            return;
+        }
+
+        bookingDateInput.value = nextValue;
+        currentMonth = new Date(date.getFullYear(), date.getMonth(), 1);
+        updateSlotHeading();
+        renderCalendar();
+
+        try {
+            await fetchUnavailableDates();
+            await fetchStartTimes();
+            await renderSchedule();
+        } catch (error) {
+            scheduleBody.innerHTML = '<tr><td class="booking-schedule__loading" colspan="99">Unable to load the full schedule right now.</td></tr>';
+        }
+    };
+
+    roomCards.forEach((card) => {
+        card.addEventListener('click', async () => {
+            setActiveRoom(card.dataset.roomId || '');
+
+            try {
+                await fetchUnavailableDates();
+                await fetchStartTimes();
+
+                if (bookingMode === 'schedule') {
+                    await renderSchedule();
+                }
+            } catch (error) {
+                messageBody.textContent = 'Unable to load room availability right now. Please try again.';
+            }
+        });
+    });
+
+    modeTriggers.forEach((trigger) => {
+        trigger.addEventListener('click', async () => {
+            const mode = trigger.dataset.bookingModeValue || 'room';
+            setBookingMode(mode);
+
+            if (mode === 'schedule') {
+                try {
+                    await renderSchedule();
+                } catch (error) {
+                    scheduleBody.innerHTML = '<tr><td class="booking-schedule__loading" colspan="99">Unable to load the full schedule right now.</td></tr>';
+                }
+            }
+        });
+    });
+
+    paymentMethodCards.forEach((card) => {
+        card.addEventListener('click', () => {
+            paymentMethod.value = card.dataset.paymentChoice || '';
+            updatePaymentDestination();
+        });
+    });
+
+    paymentMethod.addEventListener('change', updatePaymentDestination);
+    downpaymentInput.addEventListener('input', updateBalance);
+
+    if (scheduleTopScroll && scheduleTableWrap) {
+        let syncingScheduleScroll = false;
+
+        scheduleTopScroll.addEventListener('scroll', () => {
+            if (syncingScheduleScroll) {
+                return;
+            }
+
+            syncingScheduleScroll = true;
+            scheduleTableWrap.scrollLeft = scheduleTopScroll.scrollLeft;
+            syncingScheduleScroll = false;
+        });
+
+        scheduleTableWrap.addEventListener('scroll', () => {
+            if (syncingScheduleScroll) {
+                return;
+            }
+
+            syncingScheduleScroll = true;
+            scheduleTopScroll.scrollLeft = scheduleTableWrap.scrollLeft;
+            syncingScheduleScroll = false;
+        });
+
+        window.addEventListener('resize', syncScheduleScrollbars);
+    }
+
+    if (guestFirstName) {
+        guestFirstName.addEventListener('input', syncGuestFullName);
+    }
+
+    if (guestLastName) {
+        guestLastName.addEventListener('input', syncGuestFullName);
+    }
+    roomScrollPrev?.addEventListener('click', () => {
+        roomRail.scrollBy({ left: -320, behavior: 'smooth' });
+    });
+    roomScrollNext?.addEventListener('click', () => {
+        roomRail.scrollBy({ left: 320, behavior: 'smooth' });
+    });
+    startSummaryChange.addEventListener('click', async () => {
+        endSelect.innerHTML = '';
+        endSlots.innerHTML = '<span class="booking-slot-empty">Select a new start time.</span>';
+        startSelect.value = '';
+        durationDisplay.textContent = 'Choose a start time first to continue.';
+        hideStartSummary();
+        resetQuote();
+
+        try {
+            await fetchStartTimes();
+
+            if (bookingMode === 'schedule') {
+                await renderSchedule();
+            }
+        } catch (error) {
+            messageBody.textContent = 'Unable to reload start times right now. Please try again.';
+        }
+    });
+    slotContinue.addEventListener('click', () => {
+        if (slotContinue.disabled) {
+            return;
+        }
+
+        updateCheckoutSummary();
+        showCheckout();
+    });
+    scheduleContinue.addEventListener('click', () => {
+        if (scheduleContinue.disabled) {
+            return;
+        }
+
+        const removedExpiredSlots = pruneExpiredScheduleItems();
+
+        if (removedExpiredSlots) {
+            return;
+        }
+
+        updateCheckoutSummary();
+        showCheckout();
+    });
+
+    form.addEventListener('submit', async (event) => {
+        if (bookingMode !== 'schedule') {
+            return;
+        }
+
+        const removedExpiredSlots = pruneExpiredScheduleItems();
+
+        if (!removedExpiredSlots) {
+            return;
+        }
+
+        event.preventDefault();
+        showPicker();
+        await renderSchedule();
+    });
+    checkoutBack.addEventListener('click', () => {
+        showPicker();
+    });
+
+    calendarPrev.addEventListener('click', () => {
+        currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1);
+        renderCalendar();
+    });
+
+    calendarNext.addEventListener('click', () => {
+        currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1);
+        renderCalendar();
+    });
+
+    schedulePrev.addEventListener('click', async () => {
+        await shiftScheduleDate(-1);
+    });
+
+    scheduleNext.addEventListener('click', async () => {
+        await shiftScheduleDate(1);
+    });
+
+    setBookingMode(bookingMode);
+    updatePaymentDestination();
+    syncGuestFullName();
+    updateSlotHeading();
+    updateRoomMeta();
+    updateCheckoutSummary();
+    updateScheduleSelection();
+    renderCalendar();
+    resetSlots();
+    resetQuote();
+
+    if (roomSelect.value) {
+        setActiveRoom(roomSelect.value);
+        fetchUnavailableDates()
+            .then(fetchStartTimes)
+            .then(async () => {
+                if (!initialStartTime) {
+                    return;
+                }
+
+                startSelect.value = initialStartTime;
+                showStartSummary();
+                await fetchEndTimes();
+
+                if (!initialEndTime) {
+                    return;
+                }
+
+                endSelect.value = initialEndTime;
+                await fetchQuote();
+            })
+            .catch(() => {
+                messageBody.textContent = 'Unable to load saved booking values right now. Please reselect your details.';
+            });
+    }
+
+    if (shouldShowCheckout) {
+        showCheckout();
+    }
+
+    hydrateScheduleCartFromInput().then(async () => {
+        updateScheduleSelection();
+        updateCheckoutSummary();
+
+        if (bookingMode === 'schedule') {
+            try {
+                await renderSchedule();
+            } catch (error) {
+                scheduleBody.innerHTML = '<tr><td class="booking-schedule__loading" colspan="99">Unable to load the full schedule right now.</td></tr>';
+            }
+        }
+    });
+};
+
 document.addEventListener('DOMContentLoaded', () => {
-    setupNavState();
-    setupMobileMenu();
-    setupSmoothScroll();
-    setupActiveSection();
+    setupNav();
+    setupSpacesBrowser();
     setupReveal();
-    setupRatePanels();
-    setupBookingAvailability();
+    setupBookingPageV2();
 });

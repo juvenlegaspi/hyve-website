@@ -27,6 +27,17 @@
                     Register only if you want a HYVE monthly-member account. For one-time bookings and regular space reservations, you can still submit a booking directly without creating an account.
                 </p>
 
+                @if ($errors->any())
+                    <div class="mt-6 rounded-[1.5rem] border border-red-400/30 bg-red-500/10 p-5 text-sm leading-7 text-red-700">
+                        <p class="font-semibold uppercase tracking-[0.18em] text-red-800">Please review your registration details.</p>
+                        <ul class="mt-3 space-y-1">
+                            @foreach ($errors->all() as $error)
+                                <li>{{ $error }}</li>
+                            @endforeach
+                        </ul>
+                    </div>
+                @endif
+
                 <form action="{{ route('register.store') }}" method="POST" class="mt-8 grid gap-5 sm:grid-cols-2">
                     @csrf
                     <label class="block">
@@ -40,6 +51,7 @@
                     <label class="block">
                         <span class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[#163129]">Phone Number</span>
                         <input type="text" name="phone" value="{{ old('phone') }}" class="w-full rounded-2xl border border-[#163129]/12 bg-white px-4 py-3 text-[#18130f] outline-none transition focus:border-[#c49c5b]" placeholder="+63 9xx xxx xxxx">
+                        <span class="mt-2 block text-xs leading-6 text-[#74675a]">Use digits plus optional `+`, spaces, dashes, or parentheses.</span>
                         @error('phone')
                             <span class="mt-2 block text-sm text-red-600">{{ $message }}</span>
                         @enderror
@@ -72,6 +84,7 @@
                     <label class="block">
                         <span class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[#163129]">Password</span>
                         <input type="password" name="password" class="w-full rounded-2xl border border-[#163129]/12 bg-white px-4 py-3 text-[#18130f] outline-none transition focus:border-[#c49c5b]" placeholder="At least 8 characters">
+                        <span class="mt-2 block text-xs leading-6 text-[#74675a]">Use at least 8 characters with both letters and numbers.</span>
                         @error('password')
                             <span class="mt-2 block text-sm text-red-600">{{ $message }}</span>
                         @enderror

@@ -27,12 +27,11 @@ class UserFactory extends Factory
         $lastName = fake()->lastName();
 
         return [
-            'name' => trim($firstName.' '.$lastName),
             'username' => fake()->unique()->userName(),
             'first_name' => $firstName,
             'last_name' => $lastName,
             'email' => fake()->unique()->safeEmail(),
-            'phone' => fake()->numerify('+639#########'),
+            'number' => fake()->numerify('+639#########'),
             'status' => 0,
             'password' => static::$password ??= Hash::make('password'),
         ];

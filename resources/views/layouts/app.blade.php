@@ -11,10 +11,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ $pageMeta['title'] }}</title>
     <meta name="description" content="{{ $pageMeta['description'] }}">
-    <meta name="theme-color" content="#163129">
+    <meta name="theme-color" content="#11342c">
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
-<body class="hyve-body text-stone-900 antialiased">
+<body class="hyve-body">
     @yield('content')
 </body>
 </html>

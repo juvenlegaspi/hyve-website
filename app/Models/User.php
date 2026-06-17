@@ -10,11 +10,21 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
-#[Fillable(['name', 'username', 'first_name', 'last_name', 'email', 'phone', 'password', 'status'])]
+#[Fillable([
+    'username',
+    'first_name',
+    'last_name',
+    'email',
+    'number',
+    'password',
+    'status',
+])]
 class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable;
+
+    protected $table = 'booking_users';
 
     protected $hidden = [
         'password',
@@ -48,5 +58,10 @@ class User extends Authenticatable
     public function getNameAttribute(): string
     {
         return trim($this->first_name.' '.$this->last_name);
+    }
+
+    public function getPhoneAttribute(): string
+    {
+        return (string) ($this->number ?? '');
     }
 }
