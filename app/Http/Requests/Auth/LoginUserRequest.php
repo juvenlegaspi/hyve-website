@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Auth;
 
+use App\Models\User;
 use Illuminate\Auth\Events\Lockout;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Auth;
@@ -44,6 +45,12 @@ class LoginUserRequest extends FormRequest
             throw ValidationException::withMessages([
                 'login' => 'These credentials do not match our records.',
             ]);
+        }
+
+        $user = $this->user();
+
+        if ($user && empty($user->role)) {
+            $user->forceFill(['role' => User::ROLE_MEMBER])->save();
         }
 
         RateLimiter::clear($this->throttleKey());

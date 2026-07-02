@@ -4,9 +4,12 @@
     </video>
     <div class="hero-overlay"></div>
 
-    <div class="hero-content reveal">
+    <div class="hero-content hero-content--workspace reveal">
         <p class="hero-location">Mandaue City, Cebu</p>
-        <h1 class="hero-title hero-title--video">HYVE WORKSPACE</h1>
+        <h1 class="hero-title hero-title--video hero-title--workspace">
+            <span class="hero-title__line">HYVE</span>
+            <span class="hero-title__line">WORKSPACE</span>
+        </h1>
         <p class="hero-copy hero-copy--video">
             Professional rooms, focused desks, and meeting-ready spaces for modern teams and independent professionals.
         </p>
@@ -15,16 +18,5 @@
             <a href="{{ route('bookings.index') }}" class="button button--light">Reserve a Slot</a>
             <a href="#spaces" class="button button--outline-light">Browse Spaces</a>
         </div>
-    </div>
-
-    
-
-    <div class="hero-facts">
-        @foreach ($quickFacts as $fact)
-            <article class="hero-fact">
-                <span>{{ $fact['label'] }}</span>
-                <strong>{{ $fact['value'] }}</strong>
-            </article>
-        @endforeach
     </div>
 </section>

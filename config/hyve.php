@@ -1,6 +1,9 @@
 <?php
 
 return [
+    'website' => [
+        'public_url' => 'https://hyvecoworkingspace.com/',
+    ],
     'meta' => [
         'title' => 'HYVE | Workspaces for Focus and Connection',
         'description' => 'HYVE offers polished workspaces, private offices, and meeting rooms in Mandaue City for professionals who want to work well, meet well, and build stronger connections.',
@@ -24,7 +27,7 @@ return [
         'opening_time' => '00:00',
         'closing_time' => '24:00',
         'slot_interval_minutes' => 30,
-        'minimum_duration_minutes' => 60,
+        'minimum_duration_minutes' => 120,
         'blocked_statuses' => ['pending', 'confirmed'],
     ],
     'spaces' => [
@@ -32,6 +35,7 @@ return [
             'title' => 'Common Area',
             'tag' => 'Open Workspace',
             'image' => 'images/about1.jpg',
+            'gallery' => ['images/about1.jpg', 'images/room.jpg', 'images/room2.jpg'],
             'description' => 'A welcoming shared workspace for independent professionals, remote workers, and students who want energy around them without losing focus.',
             'features' => ['Fast Wi-Fi', 'Drink inclusions', 'Flexible daily use'],
             'note' => 'Best for productive solo work with a social atmosphere nearby.',
@@ -40,6 +44,7 @@ return [
             'title' => 'Fortitude Office (2 Seats)',
             'tag' => 'Quiet Collaboration',
             'image' => 'images/about2.jpg',
+            'gallery' => ['images/about2.jpg', 'images/room.jpg', 'images/room2.jpg'],
             'description' => 'A private room for interviews, one-on-one meetings, focused partner work, and online calls that need a quieter setting.',
             'features' => ['Private setup', 'Low-distraction environment', 'Ideal for two'],
             'note' => 'A strong fit when privacy and clear conversation matter.',
@@ -48,6 +53,7 @@ return [
             'title' => 'Tenacity Office (4 Seats)',
             'tag' => 'Small Team Office',
             'image' => 'images/about3.jpg',
+            'gallery' => ['images/about3.jpg', 'images/room.jpg', 'images/room2.jpg'],
             'description' => 'A dedicated office for small teams that need room for planning, collaboration, and client conversations in a more composed environment.',
             'features' => ['4-seat setup', 'Daily and monthly options', 'Team-ready atmosphere'],
             'note' => 'Designed for teams that want structure without losing flexibility.',
@@ -56,6 +62,7 @@ return [
             'title' => 'Zeal Room (8 Seats)',
             'tag' => 'Conference Ready',
             'image' => 'images/office.png',
+            'gallery' => ['images/office.png', 'images/room.jpg', 'images/room2.jpg'],
             'description' => 'A larger room for presentations, strategy sessions, workshops, and meetings where the right setting helps people engage with confidence.',
             'features' => ['8-seat capacity', 'TV usage included', 'Presentation-ready setup'],
             'note' => 'Built for collaborative sessions that need presence and clarity.',

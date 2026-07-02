@@ -3,114 +3,89 @@
 @section('title', 'Register | HYVE Workspace')
 
 @section('content')
-    <div class="relative isolate overflow-hidden px-6 py-10 md:px-10">
-        <div class="pointer-events-none absolute inset-x-0 top-0 h-[24rem] bg-[radial-gradient(circle_at_top,_rgba(196,156,91,0.24),_transparent_55%)]"></div>
-        <div class="mx-auto max-w-5xl">
-            <div class="mx-auto max-w-3xl rounded-[2rem] border border-white/70 bg-white/85 p-8 shadow-[0_30px_100px_rgba(18,24,21,0.08)] backdrop-blur md:p-10">
-                <div class="flex items-center justify-between gap-4">
-                    <div class="flex items-center gap-3">
-                        <img src="{{ asset('images/logohyve.jpg') }}" alt="HYVE logo" class="h-10 w-10 rounded-full border border-[#163129]/10 bg-white object-contain p-1">
-                        <div>
-                            <p class="text-sm font-semibold uppercase tracking-[0.3em] text-[#163129]">HYVE</p>
-                            <p class="text-[10px] uppercase tracking-[0.22em] text-[#74675a]">Workspaces and Meetings</p>
-                        </div>
-                    </div>
+    @php
+        $returnTo = request('return_to') ?: url()->previous();
+    @endphp
 
-                    <a href="{{ route('home') }}" class="rounded-full border border-[#163129]/12 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#163129] transition hover:bg-white">
-                        Back to Website
-                    </a>
+    <div class="relative min-h-screen overflow-hidden bg-[#f6f1e8]">
+        <div class="absolute inset-0 bg-[url('{{ asset('images/room2.jpg') }}')] bg-cover bg-center opacity-55"></div>
+        <div class="absolute inset-0 bg-[rgba(16,20,18,0.5)] backdrop-blur-[10px]"></div>
+
+        <div class="relative flex min-h-screen items-center justify-center px-4 py-8">
+            <a href="{{ $returnTo }}" class="absolute right-5 top-5 inline-flex h-10 w-10 items-center justify-center rounded-full bg-black/30 text-[1.7rem] leading-none text-white transition hover:bg-black/45">
+                &times;
+            </a>
+
+            <div class="w-full max-w-[35rem] rounded-[1.6rem] bg-white shadow-[0_28px_80px_rgba(12,18,15,0.22)]">
+                <div class="grid grid-cols-2 border-b border-[#163129]/10 text-center text-[1rem] font-semibold">
+                    <a href="{{ route('login', ['return_to' => $returnTo]) }}" class="px-5 py-4 text-[#a3a3a3] transition hover:text-[#264f28]">Log in</a>
+                    <a href="{{ route('register', ['return_to' => $returnTo]) }}" class="border-b-2 border-[#3f7b3d] px-5 py-4 text-[#264f28]">Register</a>
                 </div>
 
-                <p class="text-sm font-semibold uppercase tracking-[0.28em] text-[#8c692c]">Monthly Membership</p>
-                <h1 class="mt-4 font-display text-4xl tracking-[-0.04em] text-[#18130f]">Create your member account.</h1>
-                <p class="mt-4 text-base leading-7 text-[#5f5449]">
-                    Register only if you want a HYVE monthly-member account. For one-time bookings and regular space reservations, you can still submit a booking directly without creating an account.
-                </p>
+                <div class="px-7 py-7 sm:px-8">
+                    <h1 class="text-[1.7rem] font-semibold tracking-[-0.04em] text-[#1d1d1d]">Create your account</h1>
+                    <p class="mt-1 text-[0.92rem] text-[#9a9a9a]">Register for your CourtSpace membership access</p>
 
-                @if ($errors->any())
-                    <div class="mt-6 rounded-[1.5rem] border border-red-400/30 bg-red-500/10 p-5 text-sm leading-7 text-red-700">
-                        <p class="font-semibold uppercase tracking-[0.18em] text-red-800">Please review your registration details.</p>
-                        <ul class="mt-3 space-y-1">
+                    @if ($errors->any())
+                        <div class="mt-4 rounded-[1rem] border border-red-200 bg-red-50 px-4 py-3 text-[0.8rem] text-red-700">
                             @foreach ($errors->all() as $error)
-                                <li>{{ $error }}</li>
+                                <p>{{ $error }}</p>
                             @endforeach
-                        </ul>
-                    </div>
-                @endif
+                        </div>
+                    @endif
 
-                <form action="{{ route('register.store') }}" method="POST" class="mt-8 grid gap-5 sm:grid-cols-2">
-                    @csrf
-                    <label class="block">
-                        <span class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[#163129]">Username</span>
-                        <input type="text" name="username" value="{{ old('username') }}" class="w-full rounded-2xl border border-[#163129]/12 bg-white px-4 py-3 text-[#18130f] outline-none transition focus:border-[#c49c5b]" placeholder="hyveclient01">
-                        @error('username')
-                            <span class="mt-2 block text-sm text-red-600">{{ $message }}</span>
-                        @enderror
-                    </label>
+                    <form action="{{ route('register.store') }}" method="POST" class="mt-6 grid gap-3.5 sm:grid-cols-2">
+                        @csrf
 
-                    <label class="block">
-                        <span class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[#163129]">Phone Number</span>
-                        <input type="text" name="phone" value="{{ old('phone') }}" class="w-full rounded-2xl border border-[#163129]/12 bg-white px-4 py-3 text-[#18130f] outline-none transition focus:border-[#c49c5b]" placeholder="+63 9xx xxx xxxx">
-                        <span class="mt-2 block text-xs leading-6 text-[#74675a]">Use digits plus optional `+`, spaces, dashes, or parentheses.</span>
-                        @error('phone')
-                            <span class="mt-2 block text-sm text-red-600">{{ $message }}</span>
-                        @enderror
-                    </label>
+                        <label class="block">
+                            <span class="mb-2 block text-[0.78rem] font-semibold uppercase tracking-[0.12em] text-[#b1aba2]">Username</span>
+                            <input type="text" name="username" value="{{ old('username') }}" class="w-full rounded-[0.95rem] border border-[#e6e0d7] bg-white px-4 py-3 text-[0.95rem] text-[#232323] outline-none transition focus:border-[#3f7b3d]" placeholder="courtspace01">
+                        </label>
 
-                    <label class="block">
-                        <span class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[#163129]">First Name</span>
-                        <input type="text" name="first_name" value="{{ old('first_name') }}" class="w-full rounded-2xl border border-[#163129]/12 bg-white px-4 py-3 text-[#18130f] outline-none transition focus:border-[#c49c5b]" placeholder="Juan">
-                        @error('first_name')
-                            <span class="mt-2 block text-sm text-red-600">{{ $message }}</span>
-                        @enderror
-                    </label>
+                        <label class="block">
+                            <span class="mb-2 block text-[0.78rem] font-semibold uppercase tracking-[0.12em] text-[#b1aba2]">Phone number</span>
+                            <input type="text" name="phone" value="{{ old('phone') }}" class="w-full rounded-[0.95rem] border border-[#e6e0d7] bg-white px-4 py-3 text-[0.95rem] text-[#232323] outline-none transition focus:border-[#3f7b3d]" placeholder="+63 9xx xxx xxxx">
+                        </label>
 
-                    <label class="block">
-                        <span class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[#163129]">Last Name</span>
-                        <input type="text" name="last_name" value="{{ old('last_name') }}" class="w-full rounded-2xl border border-[#163129]/12 bg-white px-4 py-3 text-[#18130f] outline-none transition focus:border-[#c49c5b]" placeholder="Dela Cruz">
-                        @error('last_name')
-                            <span class="mt-2 block text-sm text-red-600">{{ $message }}</span>
-                        @enderror
-                    </label>
+                        <label class="block">
+                            <span class="mb-2 block text-[0.78rem] font-semibold uppercase tracking-[0.12em] text-[#b1aba2]">First name</span>
+                            <input type="text" name="first_name" value="{{ old('first_name') }}" class="w-full rounded-[0.95rem] border border-[#e6e0d7] bg-white px-4 py-3 text-[0.95rem] text-[#232323] outline-none transition focus:border-[#3f7b3d]" placeholder="Juan">
+                        </label>
 
-                    <label class="block sm:col-span-2">
-                        <span class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[#163129]">Email Address</span>
-                        <input type="email" name="email" value="{{ old('email') }}" class="w-full rounded-2xl border border-[#163129]/12 bg-white px-4 py-3 text-[#18130f] outline-none transition focus:border-[#c49c5b]" placeholder="you@example.com">
-                        @error('email')
-                            <span class="mt-2 block text-sm text-red-600">{{ $message }}</span>
-                        @enderror
-                    </label>
+                        <label class="block">
+                            <span class="mb-2 block text-[0.78rem] font-semibold uppercase tracking-[0.12em] text-[#b1aba2]">Last name</span>
+                            <input type="text" name="last_name" value="{{ old('last_name') }}" class="w-full rounded-[0.95rem] border border-[#e6e0d7] bg-white px-4 py-3 text-[0.95rem] text-[#232323] outline-none transition focus:border-[#3f7b3d]" placeholder="Dela Cruz">
+                        </label>
 
-                    <label class="block">
-                        <span class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[#163129]">Password</span>
-                        <input type="password" name="password" class="w-full rounded-2xl border border-[#163129]/12 bg-white px-4 py-3 text-[#18130f] outline-none transition focus:border-[#c49c5b]" placeholder="At least 8 characters">
-                        <span class="mt-2 block text-xs leading-6 text-[#74675a]">Use at least 8 characters with both letters and numbers.</span>
-                        @error('password')
-                            <span class="mt-2 block text-sm text-red-600">{{ $message }}</span>
-                        @enderror
-                    </label>
+                        <label class="block sm:col-span-2">
+                            <span class="mb-2 block text-[0.78rem] font-semibold uppercase tracking-[0.12em] text-[#b1aba2]">Email</span>
+                            <input type="email" name="email" value="{{ old('email') }}" class="w-full rounded-[0.95rem] border border-[#e6e0d7] bg-white px-4 py-3 text-[0.95rem] text-[#232323] outline-none transition focus:border-[#3f7b3d]" placeholder="you@email.com">
+                        </label>
 
-                    <label class="block">
-                        <span class="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[#163129]">Confirm Password</span>
-                        <input type="password" name="password_confirmation" class="w-full rounded-2xl border border-[#163129]/12 bg-white px-4 py-3 text-[#18130f] outline-none transition focus:border-[#c49c5b]" placeholder="Repeat your password">
-                    </label>
+                        <label class="block">
+                            <span class="mb-2 block text-[0.78rem] font-semibold uppercase tracking-[0.12em] text-[#b1aba2]">Password</span>
+                            <input type="password" name="password" class="w-full rounded-[0.95rem] border border-[#e6e0d7] bg-white px-4 py-3 text-[0.95rem] text-[#232323] outline-none transition focus:border-[#3f7b3d]" placeholder="At least 8 characters">
+                        </label>
 
-                    <div class="sm:col-span-2">
-                        <button type="submit" class="inline-flex w-full items-center justify-center rounded-full bg-[#163129] px-7 py-4 text-sm font-semibold uppercase tracking-[0.22em] text-white transition hover:bg-[#10241f]">
-                            Create Account
-                        </button>
-                    </div>
-                </form>
+                        <label class="block">
+                            <span class="mb-2 block text-[0.78rem] font-semibold uppercase tracking-[0.12em] text-[#b1aba2]">Confirm password</span>
+                            <input type="password" name="password_confirmation" class="w-full rounded-[0.95rem] border border-[#e6e0d7] bg-white px-4 py-3 text-[0.95rem] text-[#232323] outline-none transition focus:border-[#3f7b3d]" placeholder="Repeat password">
+                        </label>
 
-                <p class="mt-6 text-sm leading-7 text-[#5f5449]">
-                    Just want to reserve a space without membership?
-                    <a href="{{ route('bookings.index') }}" class="font-semibold text-[#163129] underline decoration-[#c49c5b] underline-offset-4">Book directly here</a>
-                </p>
+                        <div class="sm:col-span-2">
+                            <button type="submit" class="inline-flex w-full items-center justify-center rounded-full bg-[#3f7b3d] px-6 py-3 text-[0.96rem] font-semibold text-white transition hover:bg-[#346735]">
+                                Create account
+                            </button>
+                        </div>
+                    </form>
 
-                <p class="mt-2 text-sm leading-7 text-[#5f5449]">
-                    Already a monthly member?
-                    <a href="{{ route('login') }}" class="font-semibold text-[#163129] underline decoration-[#c49c5b] underline-offset-4">Log in here</a>
-                </p>
+                    <p class="mt-6 text-center text-[0.92rem] text-[#a0a0a0]">
+                        Already have an account?
+                        <a href="{{ route('login', ['return_to' => $returnTo]) }}" class="font-semibold text-[#2f642f]">
+                            Log in ->
+                        </a>
+                    </p>
+                </div>
             </div>
         </div>
     </div>

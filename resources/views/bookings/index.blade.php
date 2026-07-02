@@ -2,19 +2,31 @@
 
 @section('content')
     @php
+        $adminMode = (bool) ($adminMode ?? false);
         $spaceImageMap = collect(config('hyve.spaces', []))->mapWithKeys(fn (array $space): array => [$space['title'] => asset($space['image'])]);
+        $spaceGalleryMap = collect(config('hyve.spaces', []))->mapWithKeys(fn (array $space): array => [
+            $space['title'] => collect($space['gallery'] ?? [$space['image']])->map(fn (string $image): string => asset($image))->values()->all(),
+        ]);
         $rateMap = collect(config('hyve.rates', []))->mapWithKeys(fn (array $rate): array => [$rate['title'] => $rate['day_use']['2 hrs min'] ?? $rate['day_use']['Daily'] ?? 'Ask HYVE']);
-        $selectedSpaceSlug = request('space');
-        $preselectedRoom = $hyveRooms->first(fn ($room) => \Illuminate\Support\Str::slug($room->mappedSpaceLabel()) === $selectedSpaceSlug);
-        $initialRoomId = (string) old('hyve_room_id', $preselectedRoom?->id ?? $hyveRooms->first()?->id ?? '');
-        $initialDate = old('booking_date', now()->toDateString());
+        $displayRooms = $hyveRooms;
+        $sharedTableRepresentativeId = $sharedTableRepresentative?->id;
+        $queryBookingMode = request()->query('mode', 'room');
+        $queryBookingDate = request()->query('date', now()->toDateString());
+        $queryBookingEndDate = request()->query('end_date', $queryBookingDate);
+        $queryStartTime = request()->query('start_time', '');
+        $queryEndTime = request()->query('end_time', '');
+        $initialRoomId = (string) old('hyve_room_id', $preselectedRoom?->id ?? $displayRooms->first()?->id ?? '');
+        $initialDate = old('booking_date', $queryBookingDate);
         $oldScheduleItems = old('selected_schedule_items', '[]');
         $oldScheduleItemsJson = is_array($oldScheduleItems)
             ? json_encode($oldScheduleItems, JSON_UNESCAPED_SLASHES)
             : (string) $oldScheduleItems;
-        $oldBookingMode = old('booking_mode', 'room');
+        $oldBookingMode = old('booking_mode', in_array($queryBookingMode, ['room', 'monthly'], true) ? $queryBookingMode : 'room');
+        $oldMonthlyPlan = (string) old('monthly_plan', '');
+        $initialEndDate = old('booking_end_date', $oldBookingMode === 'monthly' ? $queryBookingEndDate : $initialDate);
         $hasScheduleSelection = filled($oldScheduleItemsJson) && $oldScheduleItemsJson !== '[]';
-        $showCheckout = $errors->any() && ((old('start_time') && old('end_time')) || $hasScheduleSelection);
+        $hasMonthlySelection = $oldBookingMode === 'monthly' && $oldMonthlyPlan !== '' && filled($initialDate) && filled($initialEndDate);
+        $showCheckout = $errors->any() && ((old('start_time') && old('end_time')) || $hasScheduleSelection || $hasMonthlySelection);
         $scheduleSummary = $oldBookingMode === 'schedule' ? ($oldScheduleSummary ?? null) : null;
         $scheduleSummarySlotCount = (int) ($scheduleSummary['slot_count'] ?? 0);
         $scheduleSummaryDateCount = (int) ($scheduleSummary['date_count'] ?? 0);
@@ -32,6 +44,13 @@
         $scheduleCheckoutDuration = $scheduleSummarySlotCount > 0
             ? $scheduleSummarySlotCount.' hour'.($scheduleSummarySlotCount === 1 ? '' : 's').' total'
             : '--';
+        $initialDisplayRoom = $preselectedRoom ?? $displayRooms->first();
+        $initialDisplayName = ($initialDisplayRoom?->isSharedTable() ?? false)
+            ? 'Common Area'
+            : ($initialDisplayRoom?->room_name ?? 'Choose a room');
+        $initialDisplaySpace = $initialDisplayRoom?->mappedSpaceLabel() ?? '';
+        $initialDisplayRate = $rateMap[$initialDisplaySpace] ?? 'Ask HYVE';
+        $standardCheckoutRoom = $initialDisplayName.($initialDisplaySpace ? ' - '.$initialDisplaySpace : '');
         $guestFullName = trim((string) old('full_name', ''));
         $guestNameParts = preg_split('/\s+/', $guestFullName, 2) ?: ['', ''];
         $guestFirstName = $guestNameParts[0] ?? '';
@@ -44,16 +63,27 @@
                 <a href="{{ route('home') }}" class="brand-mark">
                     <span>
                         <strong>HYVE Workspace</strong>
-                        <small>Booking Desk</small>
+                        <small>{{ $adminMode ? 'Walk-In Desk' : 'Booking Desk' }}</small>
                     </span>
                 </a>
 
                 <div class="booking-topbar__actions">
-                    <a href="{{ route('home') }}" class="button button--ghost">Back Home</a>
-                    @guest
-                        <a href="{{ route('login') }}" class="nav-link nav-link--muted">Log In</a>
-                    @endguest
-                    <a href="{{ route('bookings.index') }}" class="button button--dark">Book Now</a>
+                    @if ($adminMode)
+                        <a href="{{ route('admin.bookings.index') }}" class="button button--ghost">Back to bookings</a>
+                        <a href="{{ route('admin.dashboard') }}" class="button button--dark">Admin dashboard</a>
+                    @else
+                        <a href="{{ route('home') }}" class="button button--ghost">Back Home</a>
+                        @auth
+                            <a href="{{ route('member.index') }}" class="nav-link @if (request()->routeIs('member.*')) is-active @endif">My bookings</a>
+                        @endauth
+                        @guest
+                            <a href="{{ route('login', ['return_to' => url()->full()]) }}" class="nav-link nav-link--muted">Log In</a>
+                        @endguest
+                        <a href="{{ route('bookings.index') }}" class="button button--dark">Book Now</a>
+                        @auth
+                            @include('partials.home.member-menu')
+                        @endauth
+                    @endif
                 </div>
             </div>
         </header>
@@ -61,6 +91,10 @@
         <main class="section-wrap booking-calendar-shell">
             @if (session('booking_success'))
                 <div class="flash flash--success">{{ session('booking_success') }}</div>
+            @endif
+
+            @if ($adminMode && session('admin_success'))
+                <div class="flash flash--success">{{ session('admin_success') }}</div>
             @endif
 
             @if ($errors->any())
@@ -76,7 +110,7 @@
 
             <form
                 method="POST"
-                action="{{ route('bookings.store') }}"
+                action="{{ $adminMode ? route('admin.bookings.store') : route('bookings.store') }}"
                 enctype="multipart/form-data"
                 class="booking-calendar-form"
                 data-booking-form
@@ -87,66 +121,79 @@
                 data-minimum-duration="{{ $bookingConfig['minimum_duration_minutes'] }}"
                 data-unavailable-dates-horizon="30"
                 data-show-checkout="{{ $showCheckout ? 'true' : 'false' }}"
+                data-admin-mode="{{ $adminMode ? 'true' : 'false' }}"
             >
                 @csrf
 
                 <select name="hyve_room_id" data-room-select class="hidden">
                     <option value="">Select a room</option>
-                    @foreach ($hyveRooms as $room)
-                        <option value="{{ $room->id }}" @selected($initialRoomId === (string) $room->id)>{{ $room->room_name }} - {{ $room->mappedSpaceLabel() }}</option>
+                    @foreach ($displayRooms as $room)
+                        @php($displayName = $room->isSharedTable() ? 'Common Area' : $room->room_name)
+                        <option value="{{ $room->id }}" @selected($initialRoomId === (string) $room->id)>{{ $displayName }} - {{ $room->mappedSpaceLabel() }}</option>
                     @endforeach
                 </select>
                 <input type="hidden" name="booking_date" value="{{ $initialDate }}" data-booking-date>
+                <input type="hidden" name="booking_end_date" value="{{ $initialEndDate }}" data-booking-end-date>
                 <input type="hidden" name="booking_mode" value="{{ $oldBookingMode }}" data-booking-mode-input>
+                <input type="hidden" name="monthly_plan" value="{{ $oldMonthlyPlan }}" data-monthly-plan-input>
                 <input type="hidden" name="selected_schedule_items" value="{{ $oldScheduleItemsJson }}" data-schedule-items-input>
                 <select name="start_time" data-start-time-select class="hidden">
-                    <option value="{{ old('start_time') }}">{{ old('start_time') }}</option>
+                    <option value="{{ old('start_time', $queryStartTime) }}">{{ old('start_time', $queryStartTime) }}</option>
                 </select>
                 <select name="end_time" data-end-time-select class="hidden">
-                    <option value="{{ old('end_time') }}">{{ old('end_time') }}</option>
+                    <option value="{{ old('end_time', $queryEndTime) }}">{{ old('end_time', $queryEndTime) }}</option>
                 </select>
 
                 <div data-booking-picker @class(['hidden' => $showCheckout])>
                     <section class="booking-calendar-intro reveal">
                         <p class="eyebrow">Book a Space</p>
-                        <h1 class="section-title">Book a room</h1>
-                        <p class="section-copy">Pick your date and time. Rates adjust automatically for peak hours, weekends, and holidays.</p>
+                        <h1 class="section-title">{{ $adminMode ? 'Create a walk-in booking' : 'Book a room' }}</h1>
+                        <p class="section-copy">
+                            {{ $adminMode ? 'Use the same booking flow for walk-in customers, then submit the booking from the admin desk.' : 'Pick your date and time. Rates adjust automatically for peak hours, weekends, and holidays.' }}
+                        </p>
 
                         <div class="booking-calendar-tabs">
                             <button type="button" class="booking-calendar-tab booking-calendar-tab--active" data-booking-mode-trigger data-booking-mode-value="room">Book by room</button>
                             <button type="button" class="booking-calendar-tab" data-booking-mode-trigger data-booking-mode-value="schedule">Full schedule - all rooms</button>
+                            <button type="button" class="booking-calendar-tab" data-booking-mode-trigger data-booking-mode-value="monthly">Daily / Weekly / Monthly</button>
                         </div>
                     </section>
 
-                    <div data-booking-mode-panel="room">
-                    <section class="booking-room-strip reveal">
+                    <section class="booking-room-strip reveal" data-shared-room-strip>
                         <div class="booking-room-strip__viewport">
                             <button type="button" class="booking-room-strip__nav booking-room-strip__nav--prev" data-room-scroll-prev aria-label="Scroll rooms left">&#8249;</button>
                             <div class="booking-room-strip__rail" data-room-cards>
-                                @foreach ($hyveRooms as $room)
-                                    <button
-                                        type="button"
+                                @foreach ($displayRooms as $room)
+                                    @php($displayName = $room->isSharedTable() ? 'Common Area' : $room->room_name)
+                                    @php($monthlyOptions = $monthlyPlansByRoom[$room->id] ?? [])
+                                    <div
                                         class="booking-room-card @if ($initialRoomId === (string) $room->id) is-active @endif"
+                                        role="button"
+                                        tabindex="0"
                                         data-room-card
                                         data-room-id="{{ $room->id }}"
-                                        data-room-name="{{ $room->room_name }}"
+                                        data-room-name="{{ $displayName }}"
                                         data-room-space="{{ $room->mappedSpaceLabel() }}"
-                                        data-room-description="{{ $room->description }}"
+                                        data-room-description="{{ $room->isSharedTable() ? 'A shared seating area. Your exact table will be assigned automatically based on availability.' : $room->description }}"
                                         data-room-rate="{{ $rateMap[$room->mappedSpaceLabel()] ?? 'Ask HYVE' }}"
+                                        data-room-gallery='@json($spaceGalleryMap[$room->mappedSpaceLabel()] ?? [asset('images/office.png')])'
+                                        data-room-monthly-options='@json($monthlyOptions)'
                                     >
-                                        <img src="{{ $spaceImageMap[$room->mappedSpaceLabel()] ?? asset('images/office.png') }}" alt="{{ $room->room_name }}">
+                                        <img src="{{ $spaceImageMap[$room->mappedSpaceLabel()] ?? asset('images/office.png') }}" alt="{{ $displayName }}">
                                         <span class="booking-room-card__body">
-                                            <strong>{{ $room->room_name }}</strong>
+                                            <strong>{{ $displayName }}</strong>
                                             <small>{{ $room->mappedSpaceLabel() }}</small>
+                                            <button type="button" class="booking-room-card__preview-link" data-room-preview-open>View photos</button>
                                         </span>
                                         <span class="booking-room-card__arrow">&#8250;</span>
-                                    </button>
+                                    </div>
                                 @endforeach
                             </div>
                             <button type="button" class="booking-room-strip__nav booking-room-strip__nav--next" data-room-scroll-next aria-label="Scroll rooms right">&#8250;</button>
                         </div>
                     </section>
 
+                    <div data-booking-mode-panel="room">
                     <section class="booking-calendar-grid reveal">
                         <article class="booking-calendar-panel">
                             <div class="booking-calendar-panel__head">
@@ -179,8 +226,8 @@
                         <article class="booking-slot-panel">
                             <div class="booking-slot-panel__head">
                                 <h2 data-slot-date-title>{{ \Illuminate\Support\Carbon::parse($initialDate)->format('F j, Y') }}</h2>
-                                <p><span data-selected-room-name>{{ $preselectedRoom?->room_name ?? $hyveRooms->first()?->room_name ?? 'Choose a room' }}</span> - <span data-selected-room-space>{{ $preselectedRoom?->mappedSpaceLabel() ?? $hyveRooms->first()?->mappedSpaceLabel() ?? '' }}</span> - <span data-selected-room-rate>{{ $rateMap[$preselectedRoom?->mappedSpaceLabel() ?? $hyveRooms->first()?->mappedSpaceLabel() ?? ''] ?? 'Ask HYVE' }}</span></p>
-                                <p data-selected-room-meta>Choose the exact room first, then pick an available date and start time.</p>
+                                <p><span data-selected-room-name>{{ $initialDisplayName }}</span> - <span data-selected-room-space>{{ $initialDisplaySpace }}</span> - <span data-selected-room-rate>{{ $initialDisplayRate }}</span></p>
+                                <p data-selected-room-meta>{{ $initialDisplayRoom?->isSharedTable() ? 'Choose your date and time first. Your exact table will be assigned automatically based on availability.' : 'Choose the exact room first, then pick an available date and start time.' }}</p>
                             </div>
 
                             <div class="booking-slot-panel__legend">
@@ -191,7 +238,7 @@
 
                             <div class="booking-slot-section" data-start-step>
                                 <p class="mini-title">Step 1 - Pick a start time</p>
-                                <p class="booking-slot-copy" data-availability-message-body>Select a room and date first. Available times will appear here.</p>
+                                <p class="booking-slot-copy" data-availability-message-body>Select a room and date first. Available start times will appear here. Minimum booking is 2 hours.</p>
                                 <div class="booking-slot-list" data-start-slots></div>
                             </div>
 
@@ -205,7 +252,7 @@
 
                             <div class="booking-slot-section">
                                 <p class="mini-title">Step 2 - Pick an end time</p>
-                                <p class="booking-slot-copy" data-duration-display>Choose a start time first to continue.</p>
+                                <p class="booking-slot-copy" data-duration-display>Choose a start time first to continue. Minimum booking is 2 hours.</p>
                                 <div class="booking-slot-list" data-end-slots></div>
                             </div>
 
@@ -259,7 +306,7 @@
                         <div class="booking-schedule__intro">
                             <div>
                                 <h2>Full schedule - all rooms</h2>
-                                <p>Pick from current and upcoming one-hour slots only. Past hours and booked slots cannot be selected.</p>
+                                <p>Pick from current and upcoming available 2-hour slots. You can mix rooms and time slots, but a minimum of 2 hours total is required before checkout.</p>
                             </div>
                         </div>
 
@@ -276,10 +323,10 @@
 
                         <div class="booking-schedule__selection">
                             <div class="booking-schedule__selection-copy">
-                                <p class="mini-title">Selected bookings</p>
+                                <p class="mini-title">Booking status</p>
                                 <div data-schedule-selection-empty>
                                     <strong>Tap any available hour to add it to your cart.</strong>
-                                    <p>You can mix different rooms and time slots for the same booking date.</p>
+                                    <p>You can mix different rooms and 2-hour time slots for the same booking date. A minimum of 2 total hours is required before checkout.</p>
                                 </div>
                                 <div class="hidden" data-schedule-selection-filled>
                                     <strong data-schedule-selection-room>0 slots selected</strong>
@@ -288,21 +335,114 @@
                             </div>
 
                             <div class="booking-schedule__selection-total">
-                                <span>Total</span>
+                                <span>Running total</span>
                                 <strong data-schedule-selection-total>Php 0.00</strong>
                             </div>
                         </div>
 
-                        <div class="booking-schedule__cart hidden" data-schedule-cart-panel>
+                        <div class="booking-schedule__cart" data-schedule-cart-panel>
                             <div class="booking-schedule__cart-head">
-                                <p class="mini-title">Your bookings</p>
+                                <p class="mini-title" data-schedule-cart-heading>Your bookings (0)</p>
                                 <strong data-schedule-cart-count>0 items</strong>
                             </div>
+                            <div class="booking-schedule__cart-empty" data-schedule-cart-empty>
+                                Tap any open slot above to add it here. Selected slots will show a green check in the schedule.
+                            </div>
                             <div class="booking-schedule__cart-list" data-schedule-cart-list></div>
+                            <div class="booking-schedule__cart-footer">
+                                <div class="booking-schedule__cart-total">
+                                    <span>Combined total</span>
+                                    <strong data-schedule-cart-total>Php 0.00</strong>
+                                </div>
+                                <button type="button" class="booking-slot-continue" data-schedule-continue disabled>Continue to checkout -&gt;</button>
+                            </div>
                             @error('selected_schedule_items') <small class="field-error">{{ $message }}</small> @enderror
                         </div>
+                    </section>
 
-                        <button type="button" class="booking-slot-continue" data-schedule-continue disabled>Continue to checkout -&gt;</button>
+                    <section class="booking-calendar-grid reveal hidden" data-booking-mode-panel="monthly">
+                        <article class="booking-calendar-panel">
+                            <div class="booking-calendar-panel__head">
+                                <h2 class="booking-calendar-title">Long stay dates</h2>
+                                <button type="button" class="button button--ghost booking-calendar-panel__action" data-monthly-blocked-open disabled>View blocked dates</button>
+                            </div>
+
+                            <div class="field-grid">
+                                <label>
+                                    <span>Start date</span>
+                                    <input type="date" value="{{ $initialDate }}" min="{{ now()->toDateString() }}" data-monthly-start-date>
+                                </label>
+                                <label>
+                                    <span>End date</span>
+                                    <input type="date" value="{{ $initialEndDate }}" min="{{ $initialDate }}" data-monthly-end-date>
+                                </label>
+                            </div>
+
+                            <div class="booking-calendar-panel__head booking-calendar-panel__head--compact">
+                                <h3 class="booking-calendar-title booking-calendar-title--small" data-monthly-calendar-title>{{ \Illuminate\Support\Carbon::parse($initialDate)->format('F Y') }}</h3>
+                                <div class="booking-calendar-nav">
+                                    <button type="button" data-monthly-calendar-prev aria-label="Previous month">&#8249;</button>
+                                    <button type="button" data-monthly-calendar-next aria-label="Next month">&#8250;</button>
+                                </div>
+                            </div>
+
+                            <div class="booking-calendar-weekdays">
+                                <span>Su</span>
+                                <span>Mo</span>
+                                <span>Tu</span>
+                                <span>We</span>
+                                <span>Th</span>
+                                <span>Fr</span>
+                                <span>Sa</span>
+                            </div>
+
+                            <div class="booking-calendar-days" data-monthly-calendar-days></div>
+
+                            <div class="booking-calendar-legend">
+                                <span><i class="is-selected"></i>Selected stay</span>
+                                <span><i class="is-today"></i>Today</span>
+                                <span><i class="is-booked"></i>Booked</span>
+                            </div>
+
+                            <p class="booking-slot-copy" data-monthly-blocked-note>Select a room first so HYVE can check which stay dates are already booked.</p>
+                        </article>
+
+                        <article class="booking-slot-panel">
+                            <div class="booking-slot-panel__head">
+                                <h2>Choose your stay period</h2>
+                                <p><span data-monthly-room-name>{{ $initialDisplayName }}</span> - <span data-monthly-room-space>{{ $initialDisplaySpace }}</span> - <span data-monthly-room-rate>{{ $initialDisplayRate }}</span></p>
+                                <p data-monthly-plan-description>Select a room first, then choose your start date and end date. HYVE will automatically compute the full long-stay breakdown for you.</p>
+                            </div>
+
+                            <div class="booking-inline-summary hidden" data-monthly-inline-summary>
+                                <div class="booking-inline-summary__row">
+                                    <span>Start date</span>
+                                    <strong data-monthly-summary-date>{{ \Illuminate\Support\Carbon::parse($initialDate)->format('F j, Y') }}</strong>
+                                </div>
+                                <div class="booking-inline-summary__row">
+                                    <span>End date</span>
+                                    <strong data-monthly-summary-end-date>{{ \Illuminate\Support\Carbon::parse($initialEndDate)->format('F j, Y') }}</strong>
+                                </div>
+                                <div class="booking-inline-summary__row">
+                                    <span>Plan</span>
+                                    <strong data-monthly-summary-plan>{{ $oldMonthlyPlan ?: '--' }}</strong>
+                                </div>
+                                <div class="booking-inline-summary__row">
+                                    <span>Coverage</span>
+                                    <strong data-monthly-summary-units>--</strong>
+                                </div>
+                                <div class="booking-inline-summary__row booking-inline-summary__row--total">
+                                    <span>Total</span>
+                                    <strong data-monthly-summary-total>Php 0.00</strong>
+                                </div>
+                            </div>
+
+                            @error('monthly_plan') <small class="field-error">{{ $message }}</small> @enderror
+                            @error('booking_date') <small class="field-error">{{ $message }}</small> @enderror
+                            @error('booking_end_date') <small class="field-error">{{ $message }}</small> @enderror
+
+                            <button type="button" class="booking-slot-continue" data-monthly-continue disabled>Continue to checkout -&gt;</button>
+                        </article>
                     </section>
                 </div>
 
@@ -317,7 +457,7 @@
                                 <p>Enter your details to confirm the booking.</p>
 
                                 <div class="booking-details-main">
-                                    @guest
+                                    @if ($adminMode || auth()->guest())
                                         <div class="field-grid field-grid--guest">
                                             <label>
                                                 <span>First name</span>
@@ -340,7 +480,7 @@
                                                 @error('phone') <small class="field-error">{{ $message }}</small> @enderror
                                             </label>
                                         </div>
-                                    @endguest
+                                    @endif
 
                                     <div class="booking-checkout__supporting">
                                     <div class="field-grid field-grid--booking-meta">
@@ -360,6 +500,9 @@
                                                 <option value="">Select a payment method</option>
                                                 <option value="gcash" @selected(old('payment_method') === 'gcash')>GCash</option>
                                                 <option value="bank_transfer" @selected(old('payment_method') === 'bank_transfer')>Bank Transfer</option>
+                                                @if ($adminMode)
+                                                    <option value="cash" @selected(old('payment_method') === 'cash')>Cash</option>
+                                                @endif
                                             </select>
                                             <div class="booking-checkout__methods" data-payment-method-cards>
                                                 <button type="button" class="booking-checkout__method-card" data-payment-choice="gcash">
@@ -370,28 +513,50 @@
                                                     <span class="booking-checkout__method-icon">B</span>
                                                     <strong>Bank Transfer</strong>
                                                 </button>
+                                                @if ($adminMode)
+                                                    <button type="button" class="booking-checkout__method-card" data-payment-choice="cash">
+                                                        <span class="booking-checkout__method-icon">C</span>
+                                                        <strong>Cash</strong>
+                                                    </button>
+                                                @endif
                                             </div>
                                             @error('payment_method') <small class="field-error">{{ $message }}</small> @enderror
                                         </div>
                                     </div>
 
-                                    <div class="field-grid">
+                                    <div class="field-grid" data-payment-proof-wrap>
                                         <label class="field-grid__wide">
-                                            <span>Payment Proof</span>
+                                            <span data-payment-proof-label>{{ $adminMode ? 'Payment proof / receipt photo' : 'Payment Proof' }}</span>
                                             <input type="file" name="payment_proof" accept="image/*">
                                             @error('payment_proof') <small class="field-error">{{ $message }}</small> @enderror
+                                            @if ($adminMode)
+                                                <small class="field-error" style="color:#7f857c;" data-payment-proof-hint>Optional only for cash walk-ins. Keep a receipt note below for cash payments.</small>
+                                            @endif
                                         </label>
                                     </div>
 
                                     <label>
-                                        <span>Notes</span>
-                                        <textarea name="notes" rows="4" placeholder="Tell HYVE anything important about your setup or purpose.">{{ old('notes') }}</textarea>
+                                        <span>{{ $adminMode ? 'Notes / receipt reference' : 'Notes' }}</span>
+                                        <textarea name="notes" rows="4" placeholder="{{ $adminMode ? 'For cash walk-ins, note the OR number, amount received, or front-desk remarks.' : 'Tell HYVE anything important about your setup or purpose.' }}">{{ old('notes') }}</textarea>
                                         @error('notes') <small class="field-error">{{ $message }}</small> @enderror
                                     </label>
+                                    @unless ($adminMode)
+                                        <div class="agreement-consent">
+                                            <label>
+                                                <input type="checkbox" name="rules_agreement" value="1" data-agreement-checkbox @checked(old('rules_agreement'))>
+                                                <span>
+                                                    I have read and agree to the
+                                                    <button type="button" class="agreement-link-button" data-agreement-open="booking-payment-agreement-modal">Rules &amp; Agreement</button>
+                                                    of HYVE before submitting this payment.
+                                                </span>
+                                            </label>
+                                            @error('rules_agreement') <small class="field-error">{{ $message }}</small> @enderror
+                                        </div>
+                                    @endunless
                                     </div>
                                 </div>
 
-                                <button type="submit" class="booking-checkout__submit" data-checkout-submit>Confirm &amp; Pay Php 0.00</button>
+                                <button type="submit" class="booking-checkout__submit" data-checkout-submit @unless($adminMode) data-agreement-submit disabled @endunless>Confirm &amp; Pay Php 0.00</button>
                             </div>
                         </div>
 
@@ -407,11 +572,15 @@
 
                                 <div class="booking-checkout__summary-row">
                                     <span>Room</span>
-                                    <strong data-checkout-room>{{ $oldBookingMode === 'schedule' ? $scheduleCheckoutRoom : (($preselectedRoom?->room_name ?? $hyveRooms->first()?->room_name ?? 'Choose a room').' · '.($preselectedRoom?->mappedSpaceLabel() ?? $hyveRooms->first()?->mappedSpaceLabel() ?? '')) }}</strong>
+                                    <strong data-checkout-room>{{ $oldBookingMode === 'schedule' ? $scheduleCheckoutRoom : $standardCheckoutRoom }}</strong>
                                 </div>
                                 <div class="booking-checkout__summary-row">
                                     <span>Date</span>
                                     <strong data-checkout-date>{{ $oldBookingMode === 'schedule' ? $scheduleCheckoutDate : \Illuminate\Support\Carbon::parse($initialDate)->format('F j, Y') }}</strong>
+                                </div>
+                                <div class="booking-checkout__summary-row @if ($oldBookingMode !== 'monthly') hidden @endif" data-checkout-end-date-row>
+                                    <span>End date</span>
+                                    <strong data-checkout-end-date>{{ \Illuminate\Support\Carbon::parse($initialEndDate)->format('F j, Y') }}</strong>
                                 </div>
                                 <div class="booking-checkout__summary-row">
                                     <span>Start</span>
@@ -424,6 +593,10 @@
                                 <div class="booking-checkout__summary-row">
                                     <span>Duration</span>
                                     <strong data-checkout-duration>{{ $oldBookingMode === 'schedule' ? $scheduleCheckoutDuration : '--' }}</strong>
+                                </div>
+                                <div class="booking-checkout__summary-row @if ($oldBookingMode !== 'monthly') hidden @endif" data-checkout-monthly-plan-row>
+                                    <span>Monthly plan</span>
+                                    <strong data-checkout-monthly-plan>{{ $oldMonthlyPlan ?: '--' }}</strong>
                                 </div>
                                 <div class="booking-checkout__summary-row">
                                     <span>Minimum downpayment</span>
@@ -454,11 +627,25 @@
                                     <div data-payment-gcash class="hidden">
                                         <p>{{ $paymentSetting?->gcash_account_name ?? 'HYVE Workspace' }}</p>
                                         <p>{{ $paymentSetting?->gcash_number ?? '0917 123 4567' }}</p>
+                                        @if ($paymentSetting?->gcash_qr_path)
+                                            <div style="margin-top:0.75rem;">
+                                                <img src="{{ url('storage/'.$paymentSetting->gcash_qr_path) }}" alt="GCash QR code" style="width:min(100%, 220px); border-radius:1rem; border:1px solid #dfe7d8; background:#fff; padding:0.7rem;">
+                                            </div>
+                                        @endif
                                     </div>
                                     <div data-payment-bank class="hidden">
                                         <p>{{ $paymentSetting?->bank_name ?? 'Sample Bank' }}</p>
                                         <p>{{ $paymentSetting?->bank_account_name ?? 'HYVE Workspace' }}</p>
                                         <p>{{ $paymentSetting?->bank_account_number ?? '012345678901' }}</p>
+                                        @if ($paymentSetting?->bank_qr_path)
+                                            <div style="margin-top:0.75rem;">
+                                                <img src="{{ url('storage/'.$paymentSetting->bank_qr_path) }}" alt="Bank transfer QR code" style="width:min(100%, 220px); border-radius:1rem; border:1px solid #dfe7d8; background:#fff; padding:0.7rem;">
+                                            </div>
+                                        @endif
+                                    </div>
+                                    <div data-payment-cash class="hidden">
+                                        <p>Cash payment at front desk</p>
+                                        <p>Record the receipt / OR number in notes.</p>
                                     </div>
                                     <p data-payment-instructions>{{ $paymentSetting?->instructions ?? 'Send the required downpayment first, then upload your proof for checking.' }}</p>
                                 </div>
@@ -475,6 +662,79 @@
                     </div>
                 </section>
             </form>
+            @unless ($adminMode)
+                @include('partials.payment-agreement-modal', ['modalId' => 'booking-payment-agreement-modal'])
+            @endunless
+
+            <div class="member-booking-modal hidden" data-monthly-blocked-modal>
+                <div class="member-booking-modal__backdrop" data-monthly-blocked-close></div>
+                <div class="member-booking-modal__dialog booking-availability-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="monthly-blocked-dates-title">
+                    <button type="button" class="member-booking-modal__close" data-monthly-blocked-close aria-label="Close blocked dates">&times;</button>
+                    <p class="member-booking-modal__eyebrow">Room availability</p>
+                    <h2 id="monthly-blocked-dates-title" data-monthly-blocked-title>Select a room first</h2>
+                    <p class="member-booking-modal__space" data-monthly-blocked-subtitle>Blocked dates for long-stay booking will appear here.</p>
+
+                    <div class="booking-availability-modal__summary">
+                        <span>Blocked dates</span>
+                        <strong data-monthly-blocked-count>0 dates</strong>
+                    </div>
+
+                    <div class="booking-availability-modal__body" data-monthly-blocked-body>
+                        <div class="booking-availability-modal__calendar">
+                            <div class="booking-availability-modal__calendar-head">
+                                <strong data-monthly-blocked-calendar-title>Calendar</strong>
+                                <div class="booking-calendar-nav booking-availability-modal__calendar-nav">
+                                    <button type="button" data-monthly-blocked-prev aria-label="Previous month">&#8249;</button>
+                                    <button type="button" data-monthly-blocked-next aria-label="Next month">&#8250;</button>
+                                </div>
+                            </div>
+
+                            <div class="booking-calendar-weekdays booking-availability-modal__weekdays">
+                                <span>Su</span>
+                                <span>Mo</span>
+                                <span>Tu</span>
+                                <span>We</span>
+                                <span>Th</span>
+                                <span>Fr</span>
+                                <span>Sa</span>
+                            </div>
+
+                            <div class="booking-calendar-days booking-availability-modal__days" data-monthly-blocked-calendar-days></div>
+
+                            <div class="booking-calendar-legend booking-availability-modal__legend">
+                                <span><i class="is-selected"></i>Selected range</span>
+                                <span><i class="is-booked"></i>Blocked</span>
+                            </div>
+                        </div>
+
+                        <p class="booking-availability-modal__empty" data-monthly-blocked-empty>Select a room first so HYVE can load its blocked dates.</p>
+                        <div class="booking-availability-modal__dates hidden" data-monthly-blocked-list></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="member-booking-modal hidden" data-room-preview-modal>
+                <div class="member-booking-modal__backdrop" data-room-preview-close></div>
+                <div class="member-booking-modal__dialog booking-room-preview-modal" role="dialog" aria-modal="true" aria-labelledby="room-preview-title">
+                    <button type="button" class="member-booking-modal__close" data-room-preview-close aria-label="Close room photos">&times;</button>
+                    <p class="member-booking-modal__eyebrow">Room preview</p>
+                    <h2 id="room-preview-title" data-room-preview-title>{{ $initialDisplayName }}</h2>
+                    <p class="member-booking-modal__space" data-room-preview-space>{{ $initialDisplaySpace }}</p>
+                    <p class="booking-room-preview-modal__copy" data-room-preview-description>
+                        {{ $initialDisplayRoom?->isSharedTable() ? 'A shared seating area. Your exact table will be assigned automatically based on availability.' : ($initialDisplayRoom?->description ?? 'See the selected room before continuing your booking.') }}
+                    </p>
+
+                    <div class="booking-room-preview-modal__hero">
+                        <img
+                            src="{{ ($spaceGalleryMap[$initialDisplaySpace][0] ?? asset('images/office.png')) }}"
+                            alt="{{ $initialDisplayName }}"
+                            data-room-preview-image
+                        >
+                    </div>
+
+                    <div class="booking-room-preview-modal__thumbs" data-room-preview-thumbs></div>
+                </div>
+            </div>
         </main>
     </div>
 @endsection

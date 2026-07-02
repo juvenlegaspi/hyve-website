@@ -15,7 +15,7 @@
             @foreach ($navigation as $item)
                 <a
                     href="{{ $item['href'] }}"
-                    class="nav-link"
+                    class="nav-link @if (request()->routeIs('home') && $loop->first) is-active @endif"
                     @if ($item['href'] === '#overview')
                         data-nav-mode="home"
                     @elseif ($item['href'] === '#spaces')
@@ -25,10 +25,16 @@
                     @endif
                 >{{ $item['label'] }}</a>
             @endforeach
+            @auth
+                <a href="{{ route('member.index') }}" class="nav-link @if (request()->routeIs('member.*')) is-active @endif">My bookings</a>
+            @endauth
             @guest
-                <a href="{{ route('login') }}" class="nav-link nav-link--muted">Log In</a>
+                <a href="{{ route('login', ['return_to' => url()->full()]) }}" class="nav-link nav-link--muted">Log In</a>
             @endguest
             <a href="{{ route('bookings.index') }}" class="button button--dark">Book Now</a>
+            @auth
+                @include('partials.home.member-menu')
+            @endauth
         </div>
     </nav>
 
@@ -46,6 +52,18 @@
                 @endif
             >{{ $item['label'] }}</a>
         @endforeach
+        @auth
+            <a href="{{ route('member.index') }}" class="mobile-menu__link">My bookings</a>
+        @endauth
+        @guest
+            <a href="{{ route('login', ['return_to' => url()->full()]) }}" class="mobile-menu__link">Log In</a>
+        @endguest
+        @auth
+            <form action="{{ route('logout') }}" method="POST">
+                @csrf
+                <button type="submit" class="button button--ghost button--block">Log Out</button>
+            </form>
+        @endauth
         <a href="{{ route('bookings.index') }}" class="button button--dark button--block">Book Now</a>
     </div>
 </header>

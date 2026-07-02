@@ -35,6 +35,7 @@ class BookingSubmissionTest extends TestCase
             'guests' => 6,
             'downpayment_amount' => 500,
             'payment_method' => 'gcash',
+            'rules_agreement' => '1',
             'payment_proof' => UploadedFile::fake()->create('proof.png', 120, 'image/png'),
             'notes' => 'Need the room for a client presentation.',
         ]);
@@ -90,6 +91,7 @@ class BookingSubmissionTest extends TestCase
                 'guests' => 6,
                 'downpayment_amount' => 800,
                 'payment_method' => 'bank_transfer',
+                'rules_agreement' => '1',
                 'payment_proof' => UploadedFile::fake()->create('bank-proof.jpg', 120, 'image/jpeg'),
                 'notes' => 'Need the room for a client presentation.',
             ]);
@@ -117,6 +119,63 @@ class BookingSubmissionTest extends TestCase
         ]);
     }
 
+    public function test_an_authenticated_member_reuses_the_latest_pending_header_for_new_bookings(): void
+    {
+        Storage::fake('public');
+
+        $roomOne = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+        $roomTwo = HyveRoom::query()->where('room_name', 'Room 1')->firstOrFail();
+
+        $user = User::factory()->create([
+            'username' => 'juvcruz',
+            'first_name' => 'Juven',
+            'last_name' => 'Cruz',
+            'email' => 'cruz@gmail.com',
+            'number' => '09085737384',
+        ]);
+
+        $this->actingAs($user)->post(route('bookings.store'), [
+            'hyve_room_id' => $roomOne->id,
+            'booking_date' => now()->addDay()->toDateString(),
+            'start_time' => '08:00',
+            'end_time' => '10:00',
+            'guests' => 4,
+            'downpayment_amount' => 500,
+            'payment_method' => 'gcash',
+            'rules_agreement' => '1',
+            'payment_proof' => UploadedFile::fake()->create('first-proof.png', 120, 'image/png'),
+            'notes' => 'First member booking.',
+        ])->assertRedirect(route('bookings.index'));
+
+        $firstHeader = BookingHeader::query()->where('user_id', $user->id)->firstOrFail();
+
+        $this->actingAs($user)->post(route('bookings.store'), [
+            'hyve_room_id' => $roomTwo->id,
+            'booking_date' => now()->addDays(2)->toDateString(),
+            'start_time' => '08:00',
+            'end_time' => '10:00',
+            'guests' => 2,
+            'downpayment_amount' => 149.50,
+            'payment_method' => 'gcash',
+            'rules_agreement' => '1',
+            'payment_proof' => UploadedFile::fake()->create('second-proof.png', 120, 'image/png'),
+            'notes' => 'Second member booking.',
+        ])->assertRedirect(route('bookings.index'));
+
+        $this->assertDatabaseCount('booking_headers', 1);
+
+        $header = BookingHeader::query()
+            ->with('details')
+            ->where('user_id', $user->id)
+            ->firstOrFail();
+
+        $this->assertSame($firstHeader->id, $header->id);
+        $this->assertCount(2, $header->details);
+        $this->assertSame(1897.00, (float) $header->total_amount);
+        $this->assertSame(649.50, (float) $header->downpayment_amount);
+        $this->assertSame(1247.50, (float) $header->balance_amount);
+    }
+
     public function test_quote_endpoint_returns_total_downpayment_and_balance(): void
     {
         $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
@@ -134,6 +193,125 @@ class BookingSubmissionTest extends TestCase
             'total_amount' => 1598,
             'minimum_downpayment_amount' => 500,
         ]);
+    }
+
+    public function test_quote_endpoint_returns_monthly_plan_amounts(): void
+    {
+        $room = HyveRoom::query()->where('room_name', 'Room 7')->firstOrFail();
+        $startDate = now()->addDay()->toDateString();
+        $endDate = now()->addDays(30)->toDateString();
+
+        $response = $this->getJson(route('bookings.quote', [
+            'booking_mode' => 'monthly',
+            'hyve_room_id' => $room->id,
+            'booking_date' => $startDate,
+            'booking_end_date' => $endDate,
+            'monthly_plan' => 'Monthly Rental',
+        ]));
+
+        $response->assertOk();
+        $response->assertJsonFragment([
+            'rate_name' => 'Tenacity Office (4 Seats) - Monthly Rental',
+            'monthly_plan_label' => 'Monthly Rental',
+            'total_amount' => 30000,
+            'minimum_downpayment_amount' => 500,
+            'unit_type' => 'monthly',
+            'unit_count' => 1,
+        ]);
+    }
+
+    public function test_quote_endpoint_returns_daily_plan_amounts_for_selected_date_range(): void
+    {
+        $room = HyveRoom::query()->where('room_name', 'Room 1')->firstOrFail();
+
+        $response = $this->getJson(route('bookings.quote', [
+            'booking_mode' => 'monthly',
+            'hyve_room_id' => $room->id,
+            'booking_date' => '2026-07-01',
+            'booking_end_date' => '2026-07-03',
+            'monthly_plan' => 'Daily',
+        ]));
+
+        $response->assertOk();
+        $response->assertJsonFragment([
+            'rate_name' => 'Fortitude Office (2 Seats) - Daily',
+            'unit_type' => 'daily',
+            'unit_count' => 3,
+            'total_amount' => 2247,
+        ]);
+    }
+
+    public function test_quote_endpoint_returns_weekly_plan_amounts_for_selected_date_range(): void
+    {
+        $room = HyveRoom::query()->where('room_name', 'Room 1')->firstOrFail();
+
+        $response = $this->getJson(route('bookings.quote', [
+            'booking_mode' => 'monthly',
+            'hyve_room_id' => $room->id,
+            'booking_date' => '2026-07-01',
+            'booking_end_date' => '2026-07-08',
+            'monthly_plan' => 'Weekly',
+        ]));
+
+        $response->assertOk();
+        $response->assertJsonFragment([
+            'rate_name' => 'Fortitude Office (2 Seats) - Weekly',
+            'unit_type' => 'weekly',
+            'unit_count' => 2,
+            'total_amount' => 8990,
+        ]);
+    }
+
+    public function test_guest_users_can_submit_a_monthly_booking_request(): void
+    {
+        Storage::fake('public');
+
+        $space = Space::query()->where('name', 'Tenacity Office (4 Seats)')->firstOrFail();
+        $room = HyveRoom::query()->where('room_name', 'Room 7')->firstOrFail();
+
+        $response = $this->post(route('bookings.store'), [
+            'booking_mode' => 'monthly',
+            'full_name' => 'Monthly Guest',
+            'email' => 'monthly@example.com',
+            'phone' => '+639171110000',
+            'hyve_room_id' => $room->id,
+            'booking_date' => now()->addDays(3)->toDateString(),
+            'booking_end_date' => now()->addDays(32)->toDateString(),
+            'monthly_plan' => 'Monthly Rental',
+            'guests' => 4,
+            'downpayment_amount' => 500,
+            'payment_method' => 'gcash',
+            'rules_agreement' => '1',
+            'payment_proof' => UploadedFile::fake()->create('monthly-proof.png', 120, 'image/png'),
+            'notes' => 'Need a one-month private office setup.',
+        ]);
+
+        $response->assertRedirect(route('bookings.index'));
+        $response->assertSessionHas('booking_success');
+
+        $this->assertDatabaseHas('booking_headers', [
+            'customer_name' => 'Monthly Guest',
+            'email' => 'monthly@example.com',
+            'booking_type' => 'monthly',
+            'payment_method' => 'gcash',
+            'total_amount' => 30000,
+            'downpayment_amount' => 500,
+            'balance_amount' => 29500,
+            'status' => 'pending',
+        ]);
+
+        $this->assertDatabaseHas('booking_details', [
+            'space_id' => $space->id,
+            'hyve_room_id' => $room->id,
+            'guests' => 4,
+            'rate_name' => 'Tenacity Office (4 Seats) - Monthly Rental',
+            'charge_period' => 'monthly',
+            'subtotal' => 30000,
+            'status' => 'pending',
+        ]);
+
+        $detail = BookingDetail::query()->where('hyve_room_id', $room->id)->latest('id')->firstOrFail();
+        $this->assertSame(now()->addDays(32)->toDateString(), optional($detail->booking_end_date)->toDateString());
     }
 
     public function test_guest_users_can_submit_a_full_schedule_booking_with_multiple_room_slots(): void
@@ -162,6 +340,7 @@ class BookingSubmissionTest extends TestCase
             'guests' => 2,
             'downpayment_amount' => 299,
             'payment_method' => 'gcash',
+            'rules_agreement' => '1',
             'payment_proof' => UploadedFile::fake()->create('proof.png', 120, 'image/png'),
             'full_name' => 'Schedule Guest',
             'email' => 'schedule@example.com',
@@ -172,11 +351,12 @@ class BookingSubmissionTest extends TestCase
         $response->assertRedirect(route('bookings.index'));
         $response->assertSessionHas('booking_success');
 
-        $header = BookingHeader::query()->latest('id')->firstOrFail();
+        $header = BookingHeader::query()->latest('id')->first();
 
-        $this->assertSame(2, $header->details()->count());
+        $this->assertNotNull($header);
+        $this->assertSame(2, BookingDetail::query()->where('booking_header_id', $header->id)->count());
         $this->assertDatabaseHas('booking_headers', [
-            'id' => $header->id,
+            'id' => $header?->id,
             'booking_type' => 'guest',
             'payment_method' => 'gcash',
             'downpayment_amount' => 299,
@@ -209,6 +389,7 @@ class BookingSubmissionTest extends TestCase
             'guests' => 2,
             'downpayment_amount' => 500,
             'payment_method' => 'gcash',
+            'rules_agreement' => '1',
             'payment_proof' => UploadedFile::fake()->create('proof.png', 120, 'image/png'),
             'full_name' => 'Schedule Guest',
             'email' => 'schedule@example.com',
@@ -219,8 +400,10 @@ class BookingSubmissionTest extends TestCase
         $response->assertRedirect(route('bookings.index'));
         $response->assertSessionHas('booking_success');
 
-        $header = BookingHeader::query()->latest('id')->firstOrFail();
-        $this->assertSame(2, $header->details()->count());
+        $header = BookingHeader::query()->latest('id')->first();
+
+        $this->assertNotNull($header);
+        $this->assertSame(2, BookingDetail::query()->where('booking_header_id', $header->id)->count());
     }
 
     public function test_full_schedule_booking_preserves_selected_slots_after_validation_error(): void
@@ -251,6 +434,7 @@ class BookingSubmissionTest extends TestCase
                 'guests' => 2,
                 'downpayment_amount' => 10,
                 'payment_method' => 'gcash',
+                'rules_agreement' => '1',
                 'payment_proof' => UploadedFile::fake()->create('proof.png', 120, 'image/png'),
                 'full_name' => 'Schedule Guest',
                 'email' => 'schedule@example.com',
@@ -286,10 +470,17 @@ class BookingSubmissionTest extends TestCase
                             'start_time' => '08:00',
                             'end_time' => '09:00',
                         ],
+                        [
+                            'hyve_room_id' => $room->id,
+                            'booking_date' => now()->toDateString(),
+                            'start_time' => '09:00',
+                            'end_time' => '10:00',
+                        ],
                     ], JSON_THROW_ON_ERROR),
                     'guests' => 1,
                     'downpayment_amount' => 500,
                     'payment_method' => 'gcash',
+                    'rules_agreement' => '1',
                     'payment_proof' => UploadedFile::fake()->create('proof.png', 120, 'image/png'),
                     'full_name' => 'Expired Slot Guest',
                     'email' => 'expired@example.com',
@@ -360,7 +551,7 @@ class BookingSubmissionTest extends TestCase
             'value' => '08:00',
         ]);
         $response->assertJsonFragment(['value' => '00:00']);
-        $response->assertJsonFragment(['value' => '07:00']);
+        $response->assertJsonFragment(['value' => '06:00']);
         $response->assertJsonFragment(['value' => '10:00']);
     }
 
@@ -456,6 +647,7 @@ class BookingSubmissionTest extends TestCase
             'guests' => 3,
             'downpayment_amount' => 500,
             'payment_method' => 'gcash',
+            'rules_agreement' => '1',
             'payment_proof' => UploadedFile::fake()->create('proof.png', 120, 'image/png'),
             'notes' => 'Trying an occupied slot.',
         ]);
@@ -482,6 +674,7 @@ class BookingSubmissionTest extends TestCase
             'guests' => 2,
             'downpayment_amount' => 149.50,
             'payment_method' => 'gcash',
+            'rules_agreement' => '1',
             'payment_proof' => UploadedFile::fake()->create('proof.png', 120, 'image/png'),
             'notes' => 'Short private booking.',
         ]);
@@ -528,6 +721,7 @@ class BookingSubmissionTest extends TestCase
                     'guests' => 6,
                     'downpayment_amount' => 500,
                     'payment_method' => 'gcash',
+                    'rules_agreement' => '1',
                     'payment_proof' => $paymentProof,
                     'notes' => 'Testing supported image uploads.',
                 ]);
@@ -576,6 +770,178 @@ class BookingSubmissionTest extends TestCase
             'room_name' => 'Conference Room',
             'status' => 'booked',
         ]);
+    }
+
+    public function test_member_can_open_the_balance_payment_page_for_their_booking(): void
+    {
+        $user = User::factory()->create();
+
+        $header = BookingHeader::query()->create([
+            'user_id' => $user->id,
+            'reference_no' => 'HYVE-BAL-000001',
+            'customer_name' => $user->name,
+            'email' => $user->email,
+            'phone' => $user->phone,
+            'booking_type' => BookingHeader::TYPE_MEMBER,
+            'source' => BookingHeader::SOURCE_WEB,
+            'payment_method' => 'gcash',
+            'payment_status' => 'pending_verification',
+            'total_amount' => 1598,
+            'downpayment_amount' => 500,
+            'balance_amount' => 1098,
+            'status' => BookingHeader::STATUS_PENDING,
+        ]);
+
+        $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+        $spaceId = Space::query()->where('slug', 'zeal-room-8-seats')->value('id');
+
+        BookingDetail::query()->create([
+            'booking_header_id' => $header->id,
+            'space_id' => $spaceId,
+            'hyve_room_id' => $room->id,
+            'booking_date' => now()->addDay()->toDateString(),
+            'start_time' => '08:00',
+            'end_time' => '10:00',
+            'guests' => 2,
+            'subtotal' => 1598,
+            'status' => BookingDetail::STATUS_PENDING,
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('member.bookings.balance-payment', ['bookingHeader' => $header, 'detail' => $header->details()->first()->id]))
+            ->assertOk()
+            ->assertSee('Pay Remaining Balance')
+            ->assertSee('Pay selected booking only')
+            ->assertSee('Pay all remaining');
+    }
+
+    public function test_member_can_submit_a_remaining_balance_payment(): void
+    {
+        Storage::fake('public');
+
+        $user = User::factory()->create();
+        $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+        $spaceId = Space::query()->where('slug', 'zeal-room-8-seats')->value('id');
+
+        $header = BookingHeader::query()->create([
+            'user_id' => $user->id,
+            'reference_no' => 'HYVE-BAL-000002',
+            'customer_name' => $user->name,
+            'email' => $user->email,
+            'phone' => $user->phone,
+            'booking_type' => BookingHeader::TYPE_MEMBER,
+            'source' => BookingHeader::SOURCE_WEB,
+            'payment_method' => 'gcash',
+            'payment_status' => 'pending_verification',
+            'total_amount' => 1598,
+            'downpayment_amount' => 500,
+            'balance_amount' => 1098,
+            'status' => BookingHeader::STATUS_PENDING,
+            'notes' => 'Initial booking.',
+        ]);
+
+        $detail = BookingDetail::query()->create([
+            'booking_header_id' => $header->id,
+            'space_id' => $spaceId,
+            'hyve_room_id' => $room->id,
+            'booking_date' => now()->addDay()->toDateString(),
+            'start_time' => '08:00',
+            'end_time' => '10:00',
+            'guests' => 2,
+            'subtotal' => 1598,
+            'status' => BookingDetail::STATUS_PENDING,
+        ]);
+
+        $response = $this->actingAs($user)
+            ->post(route('member.bookings.balance-payment.store', $header), [
+                'payment_scope' => 'single',
+                'detail_id' => $detail->id,
+                'payment_method' => 'bank_transfer',
+                'rules_agreement' => '1',
+                'payment_proof' => UploadedFile::fake()->create('balance-proof.png', 120, 'image/png'),
+                'notes' => 'Paid the remaining balance today.',
+            ]);
+
+        $response->assertRedirect(route('member.index'));
+        $response->assertSessionHas('member_success');
+
+        $header->refresh();
+
+        $this->assertSame(1598.00, (float) $header->downpayment_amount);
+        $this->assertSame(0.00, (float) $header->balance_amount);
+        $this->assertSame('bank_transfer', $header->payment_method);
+        $this->assertSame('pending_balance_verification', $header->payment_status);
+        $this->assertStringContainsString('Paid the remaining balance today.', (string) $header->notes);
+        Storage::disk('public')->assertExists((string) $header->payment_proof_path);
+    }
+
+    public function test_member_can_submit_only_the_selected_booking_balance_without_paying_all(): void
+    {
+        Storage::fake('public');
+
+        $user = User::factory()->create();
+        $roomOne = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+        $roomTwo = HyveRoom::query()->where('room_name', 'Room 1')->firstOrFail();
+
+        $header = BookingHeader::query()->create([
+            'user_id' => $user->id,
+            'reference_no' => 'HYVE-BAL-000003',
+            'customer_name' => $user->name,
+            'email' => $user->email,
+            'phone' => $user->phone,
+            'booking_type' => BookingHeader::TYPE_MEMBER,
+            'source' => BookingHeader::SOURCE_WEB,
+            'payment_method' => 'gcash',
+            'payment_status' => 'pending_verification',
+            'total_amount' => 1897,
+            'downpayment_amount' => 500,
+            'balance_amount' => 1397,
+            'status' => BookingHeader::STATUS_PENDING,
+        ]);
+
+        $spaceOneId = Space::query()->where('slug', 'zeal-room-8-seats')->value('id');
+        $spaceTwoId = Space::query()->where('slug', 'fortitude-office-2-seats')->value('id');
+
+        $detailOne = BookingDetail::query()->create([
+            'booking_header_id' => $header->id,
+            'space_id' => $spaceOneId,
+            'hyve_room_id' => $roomOne->id,
+            'booking_date' => now()->addDay()->toDateString(),
+            'start_time' => '08:00',
+            'end_time' => '10:00',
+            'guests' => 2,
+            'subtotal' => 1598,
+            'status' => BookingDetail::STATUS_PENDING,
+        ]);
+
+        BookingDetail::query()->create([
+            'booking_header_id' => $header->id,
+            'space_id' => $spaceTwoId,
+            'hyve_room_id' => $roomTwo->id,
+            'booking_date' => now()->addDays(2)->toDateString(),
+            'start_time' => '08:00',
+            'end_time' => '10:00',
+            'guests' => 2,
+            'subtotal' => 299,
+            'status' => BookingDetail::STATUS_PENDING,
+        ]);
+
+        $response = $this->actingAs($user)
+            ->post(route('member.bookings.balance-payment.store', $header), [
+                'payment_scope' => 'single',
+                'detail_id' => $detailOne->id,
+                'payment_method' => 'gcash',
+                'rules_agreement' => '1',
+                'payment_proof' => UploadedFile::fake()->create('single-balance-proof.png', 120, 'image/png'),
+                'notes' => 'Pay only the selected booking.',
+            ]);
+
+        $response->assertRedirect(route('member.index'));
+
+        $header->refresh();
+
+        $this->assertSame(1897.00, (float) $header->downpayment_amount);
+        $this->assertSame(0.00, (float) $header->balance_amount);
     }
 
     public function test_today_room_layout_only_returns_current_and_future_hourly_slots(): void
@@ -629,10 +995,6 @@ class BookingSubmissionTest extends TestCase
 
         $response->assertOk();
         $response->assertJsonFragment([
-            'value' => '09:00',
-            'duration_label' => '1 hour',
-        ]);
-        $response->assertJsonFragment([
             'value' => '10:00',
             'duration_label' => '2 hours',
         ]);
@@ -652,10 +1014,69 @@ class BookingSubmissionTest extends TestCase
 
         $response->assertOk();
         $response->assertJsonFragment([
-            'value' => '17:30',
-            'duration_label' => '1 hour',
+            'value' => '18:30',
+            'duration_label' => '2 hours',
         ]);
 
         Carbon::setTestNow();
+    }
+
+    public function test_regular_booking_requires_a_minimum_of_two_hours(): void
+    {
+        Storage::fake('public');
+
+        $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+
+        $response = $this->from(route('bookings.index'))->post(route('bookings.store'), [
+            'full_name' => 'Minimum Duration Guest',
+            'email' => 'minimum@example.com',
+            'phone' => '+639181112999',
+            'hyve_room_id' => $room->id,
+            'booking_date' => now()->addDay()->toDateString(),
+            'start_time' => '08:00',
+            'end_time' => '09:00',
+            'guests' => 2,
+            'downpayment_amount' => 500,
+            'payment_method' => 'gcash',
+            'rules_agreement' => '1',
+            'payment_proof' => UploadedFile::fake()->create('proof.png', 120, 'image/png'),
+            'notes' => 'Trying to book for only one hour.',
+        ]);
+
+        $response->assertRedirect(route('bookings.index'));
+        $response->assertSessionHasErrors('end_time');
+    }
+
+    public function test_full_schedule_booking_requires_at_least_two_hours_total(): void
+    {
+        Storage::fake('public');
+
+        $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+
+        $response = $this->from(route('bookings.index'))->post(route('bookings.store'), [
+            'booking_mode' => 'schedule',
+            'selected_schedule_items' => json_encode([
+                [
+                    'hyve_room_id' => $room->id,
+                    'booking_date' => now()->addDay()->toDateString(),
+                    'start_time' => '08:00',
+                    'end_time' => '09:00',
+                ],
+            ], JSON_THROW_ON_ERROR),
+            'guests' => 1,
+            'downpayment_amount' => 500,
+            'payment_method' => 'gcash',
+            'rules_agreement' => '1',
+            'payment_proof' => UploadedFile::fake()->create('proof.png', 120, 'image/png'),
+            'full_name' => 'Schedule Minimum Guest',
+            'email' => 'schedule-minimum@example.com',
+            'phone' => '+639181111000',
+            'notes' => 'Trying to book only one schedule hour.',
+        ]);
+
+        $response->assertRedirect(route('bookings.index'));
+        $response->assertSessionHasErrors([
+            'selected_schedule_items' => 'Select at least 2 hours of schedule slots before continuing to checkout.',
+        ]);
     }
 }

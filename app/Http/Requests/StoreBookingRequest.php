@@ -35,16 +35,25 @@ class StoreBookingRequest extends FormRequest
      */
     public function rules(): array
     {
+        $adminWalkIn = $this->routeIs('admin.bookings.create', 'admin.bookings.store');
+        $paymentMethods = $adminWalkIn
+            ? ['gcash', 'bank_transfer', 'cash']
+            : ['gcash', 'bank_transfer'];
+        $agreementRules = $adminWalkIn
+            ? ['nullable']
+            : ['required', 'accepted'];
+
         $rules = [
-            'booking_mode' => ['nullable', Rule::in(['room', 'schedule'])],
+            'booking_mode' => ['nullable', Rule::in(['room', 'schedule', 'monthly'])],
             'hyve_room_id' => ['required_unless:booking_mode,schedule', 'integer', Rule::exists(HyveRoom::class, 'id')->where(fn ($query) => $query->where('status', 0))],
             'booking_date' => ['required_unless:booking_mode,schedule', 'date', 'after_or_equal:today'],
-            'start_time' => ['required_unless:booking_mode,schedule', 'date_format:H:i'],
+            'booking_end_date' => ['required_if:booking_mode,monthly', 'date', 'after_or_equal:booking_date'],
+            'start_time' => ['required_if:booking_mode,room', 'date_format:H:i'],
             'end_time' => [
-                'required_unless:booking_mode,schedule',
+                'required_if:booking_mode,room',
                 'date_format:H:i',
                 function (string $attribute, mixed $value, Closure $fail): void {
-                    if ($this->input('booking_mode') === 'schedule') {
+                    if ($this->input('booking_mode') !== 'room') {
                         return;
                     }
 
@@ -69,10 +78,12 @@ class StoreBookingRequest extends FormRequest
                     $minimumDuration = (int) config('hyve.booking.minimum_duration_minutes', 60);
 
                     if ($durationMinutes < $minimumDuration) {
-                        $fail('The end time must be at least '.($minimumDuration / 60).' hour after the start time.');
+                        $minimumHours = $minimumDuration / 60;
+                        $fail('The end time must be at least '.$minimumHours.' hour'.($minimumHours === 1.0 ? '' : 's').' after the start time.');
                     }
                 },
             ],
+            'monthly_plan' => ['nullable', 'string', 'max:120'],
             'selected_schedule_items' => [
                 'nullable',
                 'array',
@@ -83,6 +94,36 @@ class StoreBookingRequest extends FormRequest
 
                     if (! is_array($value) || $value === []) {
                         $fail('Select at least one schedule slot before continuing to checkout.');
+                        return;
+                    }
+
+                    $minimumDuration = (int) config('hyve.booking.minimum_duration_minutes', 120);
+                    $totalDuration = collect($value)
+                        ->filter(fn ($item) => is_array($item))
+                        ->sum(function (array $item): int {
+                            $startTime = $item['start_time'] ?? null;
+                            $endTime = $item['end_time'] ?? null;
+
+                            if (! is_string($startTime) || ! is_string($endTime)) {
+                                return 0;
+                            }
+
+                            $startMinutes = $this->minutesFromTime($startTime);
+                            $endMinutes = $this->minutesFromTime($endTime);
+
+                            if ($startMinutes === null || $endMinutes === null) {
+                                return 0;
+                            }
+
+                            if ($endMinutes <= $startMinutes) {
+                                $endMinutes += 24 * 60;
+                            }
+
+                            return $endMinutes - $startMinutes;
+                        });
+
+                    if ($totalDuration < $minimumDuration) {
+                        $fail('Select at least '.($minimumDuration / 60).' hours of schedule slots before continuing to checkout.');
                     }
                 },
             ],
@@ -91,7 +132,8 @@ class StoreBookingRequest extends FormRequest
             'selected_schedule_items.*.start_time' => ['required_if:booking_mode,schedule', 'date_format:H:i'],
             'selected_schedule_items.*.end_time' => ['required_if:booking_mode,schedule', 'date_format:H:i'],
             'guests' => ['required', 'integer', 'min:1', 'max:20'],
-            'payment_method' => ['required', Rule::in(['gcash', 'bank_transfer'])],
+            'payment_method' => ['required', Rule::in($paymentMethods)],
+            'rules_agreement' => $agreementRules,
             'downpayment_amount' => [
                 'required',
                 'numeric',
@@ -99,8 +141,9 @@ class StoreBookingRequest extends FormRequest
                 function (string $attribute, mixed $value, Closure $fail): void {
                     /** @var HyvePricing $pricing */
                     $pricing = app(HyvePricing::class);
+                    $bookingMode = (string) ($this->input('booking_mode') ?? 'room');
 
-                    if ($this->input('booking_mode') === 'schedule') {
+                    if ($bookingMode === 'schedule') {
                         $items = $this->input('selected_schedule_items');
 
                         if (! is_array($items) || ! is_numeric($value)) {
@@ -151,6 +194,40 @@ class StoreBookingRequest extends FormRequest
                         return;
                     }
 
+                    if ($bookingMode === 'monthly') {
+                        $roomId = $this->input('hyve_room_id');
+                        $bookingDate = $this->input('booking_date');
+                        $endDate = $this->input('booking_end_date');
+
+                        if (! is_numeric($roomId) || ! is_string($bookingDate) || ! is_string($endDate) || ! is_numeric($value)) {
+                            return;
+                        }
+
+                        $room = HyveRoom::query()->active()->find((int) $roomId);
+
+                        if (! $room) {
+                            return;
+                        }
+
+                        $quote = $pricing->quoteForLongStayRoom($room, (string) $this->input('monthly_plan', ''), $bookingDate, $endDate);
+
+                        if (! $quote) {
+                            return;
+                        }
+
+                        $minimumDownpayment = (float) ($quote['minimum_downpayment_amount'] ?? 0);
+
+                        if ((float) $value < $minimumDownpayment) {
+                            $fail('The minimum downpayment for this booking is Php '.number_format($minimumDownpayment, 2).'.');
+                        }
+
+                        if ((float) $value > (float) $quote['total_amount']) {
+                            $fail('The downpayment amount cannot be greater than the total booking amount.');
+                        }
+
+                        return;
+                    }
+
                     $roomId = $this->input('hyve_room_id');
                     $bookingDate = $this->input('booking_date');
                     $startTime = $this->input('start_time');
@@ -184,15 +261,23 @@ class StoreBookingRequest extends FormRequest
                 },
             ],
             'payment_proof' => [
-                'required',
+                Rule::requiredIf(fn () => ! ($adminWalkIn && $this->input('payment_method') === 'cash')),
+                'nullable',
                 'file',
                 'mimetypes:image/jpeg,image/png,image/gif',
                 'max:5120',
             ],
-            'notes' => ['nullable', 'string', 'max:1000'],
+            'notes' => [
+                Rule::requiredIf(fn () => $adminWalkIn && $this->input('payment_method') === 'cash'),
+                'nullable',
+                'string',
+                'max:1000',
+            ],
         ];
 
-        if (! $this->user()) {
+        $requiresGuestContact = ! $this->user() || $this->routeIs('admin.bookings.create', 'admin.bookings.store');
+
+        if ($requiresGuestContact) {
             $rules['full_name'] = ['required', 'string', 'max:255'];
             $rules['email'] = ['required', 'email', 'max:255'];
             $rules['phone'] = ['required', 'string', 'max:30'];
@@ -214,7 +299,9 @@ class StoreBookingRequest extends FormRequest
             'booking_date' => 'booking date',
             'start_time' => 'start time',
             'end_time' => 'end time',
+            'booking_end_date' => 'end date',
             'selected_schedule_items' => 'selected schedule items',
+            'monthly_plan' => 'long-stay pricing',
             'payment_method' => 'payment method',
             'downpayment_amount' => 'downpayment amount',
             'payment_proof' => 'payment proof',

@@ -7,13 +7,17 @@ use App\Http\Requests\Auth\RegisterUserRequest;
 use App\Models\User;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Str;
 use Illuminate\View\View;
 
 class RegisteredUserController extends Controller
 {
-    public function create(): View
+    public function create(Request $request): View
     {
+        $this->rememberReturnTo($request);
+
         return view('auth.register');
     }
 
@@ -29,6 +33,7 @@ class RegisteredUserController extends Controller
             'number' => $validated['phone'],
             'password' => $validated['password'],
             'status' => 0,
+            'role' => User::ROLE_MEMBER,
         ]);
 
         event(new Registered($user));
@@ -37,6 +42,28 @@ class RegisteredUserController extends Controller
 
         $request->session()->regenerate();
 
-        return redirect()->route('bookings.index');
+        return redirect()->intended(route('bookings.index'));
+    }
+
+    private function rememberReturnTo(Request $request): void
+    {
+        $returnTo = $request->query('return_to');
+
+        if (! is_string($returnTo) || $returnTo === '') {
+            return;
+        }
+
+        if ($this->isSafeReturnTo($request, $returnTo)) {
+            $request->session()->put('url.intended', $returnTo);
+        }
+    }
+
+    private function isSafeReturnTo(Request $request, string $returnTo): bool
+    {
+        if (Str::startsWith($returnTo, '/')) {
+            return true;
+        }
+
+        return Str::startsWith($returnTo, $request->getSchemeAndHttpHost());
     }
 }

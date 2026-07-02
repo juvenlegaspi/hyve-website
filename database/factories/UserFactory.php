@@ -33,6 +33,7 @@ class UserFactory extends Factory
             'email' => fake()->unique()->safeEmail(),
             'number' => fake()->numerify('+639#########'),
             'status' => 0,
+            'role' => User::ROLE_MEMBER,
             'password' => static::$password ??= Hash::make('password'),
         ];
     }
