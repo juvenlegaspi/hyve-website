@@ -540,6 +540,140 @@ const setupMemberBookingModal = () => {
     });
 };
 
+const formatBookingCurrency = (value) => `Php ${Number(value || 0).toLocaleString('en-PH', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+})}`;
+
+const escapeBookingHtml = (value) => String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+
+const bookingDurationLabel = (startValue, endValue) => {
+    if (!startValue || !endValue) {
+        return '';
+    }
+
+    const [startHour, startMinute] = startValue.split(':').map(Number);
+    const [endHour, endMinute] = endValue.split(':').map(Number);
+
+    if ([startHour, startMinute, endHour, endMinute].some(Number.isNaN)) {
+        return '';
+    }
+
+    let startTotal = (startHour * 60) + startMinute;
+    let endTotal = (endHour * 60) + endMinute;
+
+    if (endTotal <= startTotal) {
+        endTotal += 24 * 60;
+    }
+
+    const diff = endTotal - startTotal;
+    const hours = Math.floor(diff / 60);
+    const minutes = diff % 60;
+    const parts = [];
+
+    if (hours) {
+        parts.push(`${hours} ${hours === 1 ? 'hour' : 'hours'}`);
+    }
+
+    if (minutes) {
+        parts.push(`${minutes} mins`);
+    }
+
+    return parts.join(' ');
+};
+
+const buildRateBreakdownLabel = (data, startValue, endValue) => {
+    const chargeLabel = String(data?.charge_period_label || '').trim();
+    const rateName = String(data?.rate_name || '').trim();
+    const suffix = chargeLabel ? ` - ${chargeLabel}` : '';
+    const baseRateName = suffix && rateName.endsWith(suffix)
+        ? rateName.slice(0, rateName.length - suffix.length)
+        : rateName;
+
+    if (chargeLabel === 'Day Daily Use') {
+        return `${baseRateName}: day daily rate (8:00 AM - 8:00 PM)`;
+    }
+
+    if (chargeLabel === 'Night Daily Use') {
+        return `${baseRateName}: night daily rate (8:00 PM - 8:00 AM)`;
+    }
+
+    if (chargeLabel === 'Day Daily Use + Extension') {
+        const extension = bookingDurationLabel('20:00', endValue) || 'extra time';
+
+        return `${baseRateName}: day daily rate + ${extension} extension after 8:00 PM`;
+    }
+
+    if (chargeLabel === 'Night Daily Use + Extension') {
+        const extension = bookingDurationLabel('08:00', endValue) || 'extra time';
+
+        return `${baseRateName}: night daily rate + ${extension} extension after 8:00 AM`;
+    }
+
+    if (chargeLabel === 'Day + Night Use') {
+        return `${baseRateName}: combined day and night rate for the selected hours`;
+    }
+
+    if (chargeLabel === 'Day Use') {
+        return `${baseRateName}: day use rate for the selected hours`;
+    }
+
+    if (chargeLabel === 'Night Use') {
+        return `${baseRateName}: night use rate for the selected hours`;
+    }
+
+    return chargeLabel
+        ? `${baseRateName}: ${chargeLabel}`
+        : (baseRateName || '--');
+};
+
+const buildRateBreakdownMarkup = (data, startValue, endValue) => {
+    const lines = Array.isArray(data?.breakdown) ? data.breakdown : [];
+
+    if (lines.length) {
+        return lines
+            .filter((line) => line && typeof line.label === 'string')
+            .map((line) => {
+                const amount = Number(line.amount || 0);
+
+                return `
+                    <div class="flex items-start justify-between gap-3 text-right text-[0.92rem] font-medium text-[#4b623d]">
+                        <span class="text-left text-[#6f7d72]">${escapeBookingHtml(line.label)}</span>
+                        <span class="shrink-0 text-[#173029]">${formatBookingCurrency(amount)}</span>
+                    </div>
+                `;
+            })
+            .join('');
+    }
+
+    return `<div class="text-[#4b623d]">${escapeBookingHtml(buildRateBreakdownLabel(data, startValue, endValue))}</div>`;
+};
+
+const buildCompactBreakdownMarkup = (lines) => {
+    if (!Array.isArray(lines) || !lines.length) {
+        return '';
+    }
+
+    return `
+        <div class="mt-2 space-y-1 text-[0.82rem] text-[#6f7d72]">
+            ${lines
+                .filter((line) => line && typeof line.label === 'string')
+                .map((line) => `
+                    <div class="flex items-start justify-between gap-3">
+                        <span>${escapeBookingHtml(line.label)}</span>
+                        <strong class="shrink-0 font-semibold text-[#4b623d]">${formatBookingCurrency(Number(line.amount || 0))}</strong>
+                    </div>
+                `)
+                .join('')}
+        </div>
+    `;
+};
+
 const setupBookingPage = () => {
     const page = document.querySelector('[data-booking-page]');
     const form = document.querySelector('[data-booking-form]');
