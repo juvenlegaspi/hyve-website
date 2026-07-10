@@ -49,6 +49,35 @@ class StoreBookingRequest extends FormRequest
             'booking_date' => ['required_unless:booking_mode,schedule', 'date', 'after_or_equal:today'],
             'booking_end_date' => ['required_if:booking_mode,monthly', 'date', 'after_or_equal:booking_date'],
             'start_time' => ['required_if:booking_mode,room', 'date_format:H:i'],
+            'long_stay_use_type' => [
+                'nullable',
+                Rule::in(['day', 'night']),
+                function (string $attribute, mixed $value, Closure $fail): void {
+                    if ($this->input('booking_mode') !== 'monthly') {
+                        return;
+                    }
+
+                    $roomId = $this->input('hyve_room_id');
+                    $bookingDate = $this->input('booking_date');
+                    $endDate = $this->input('booking_end_date');
+
+                    if (! is_numeric($roomId) || ! is_string($bookingDate) || ! is_string($endDate)) {
+                        return;
+                    }
+
+                    /** @var HyvePricing $pricing */
+                    $pricing = app(HyvePricing::class);
+                    $room = HyveRoom::query()->active()->find((int) $roomId);
+
+                    if (! $room) {
+                        return;
+                    }
+
+                    if ($pricing->longStayRequiresUseType($room, $bookingDate, $endDate) && ! is_string($value)) {
+                        $fail('Choose Day Use or Night Use first so HYVE can compute the correct long-stay rate.');
+                    }
+                },
+            ],
             'end_time' => [
                 'required_if:booking_mode,room',
                 'date_format:H:i',
@@ -209,7 +238,13 @@ class StoreBookingRequest extends FormRequest
                             return;
                         }
 
-                        $quote = $pricing->quoteForLongStayRoom($room, (string) $this->input('monthly_plan', ''), $bookingDate, $endDate);
+                        $quote = $pricing->quoteForLongStayRoom(
+                            $room,
+                            (string) $this->input('monthly_plan', ''),
+                            $bookingDate,
+                            $endDate,
+                            (string) $this->input('long_stay_use_type', '') ?: null,
+                        );
 
                         if (! $quote) {
                             return;
@@ -300,6 +335,7 @@ class StoreBookingRequest extends FormRequest
             'start_time' => 'start time',
             'end_time' => 'end time',
             'booking_end_date' => 'end date',
+            'long_stay_use_type' => 'stay use type',
             'selected_schedule_items' => 'selected schedule items',
             'monthly_plan' => 'long-stay pricing',
             'payment_method' => 'payment method',

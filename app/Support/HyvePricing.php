@@ -38,7 +38,8 @@ class HyvePricing
      *     minimum_hours: int,
      *     minimum_rate: float,
      *     succeeding_hour_rate: float,
-     *     rate_name: string
+     *     rate_name: string,
+     *     breakdown: array<int, array{label: string, amount: float}>
      * }|null
      */
     public function quoteForRoom(HyveRoom $room, string $bookingDate, string $startTime, string $endTime): ?array
@@ -55,6 +56,31 @@ class HyvePricing
         $minimumHours = max(1, (int) $rateCard->minimum_hours);
         $isHolidayPricing = $this->isHolidayPricingDate($bookingDate);
         $baseChargePeriod = $this->chargePeriodForStart($start);
+        $exactDailyWindowQuote = $this->exactDailyWindowQuote($rateCard, $start, $end);
+
+        if ($exactDailyWindowQuote) {
+            $minimumDownpaymentAmount = $this->minimumDownpaymentForTotal($exactDailyWindowQuote['total_amount']);
+            $downpaymentAmount = $minimumDownpaymentAmount;
+            $balanceAmount = round($exactDailyWindowQuote['total_amount'] - $downpaymentAmount, 2);
+
+            return [
+                'rate_card' => $rateCard,
+                'payment_setting' => $paymentSetting,
+                'charge_period' => $exactDailyWindowQuote['charge_period'],
+                'charge_period_label' => $exactDailyWindowQuote['charge_period_label'],
+                'duration_hours' => $durationHours,
+                'billed_hours' => $durationHours,
+                'total_amount' => round($exactDailyWindowQuote['total_amount'], 2),
+                'minimum_downpayment_amount' => $minimumDownpaymentAmount,
+                'downpayment_amount' => $downpaymentAmount,
+                'balance_amount' => $balanceAmount,
+                'minimum_hours' => $minimumHours,
+                'minimum_rate' => round($exactDailyWindowQuote['total_amount'], 2),
+                'succeeding_hour_rate' => 0.0,
+                'rate_name' => $rateCard->title.' - '.$exactDailyWindowQuote['charge_period_label'],
+                'breakdown' => $exactDailyWindowQuote['breakdown'],
+            ];
+        }
 
         if ($isHolidayPricing) {
             $chargePeriod = 'holiday';
@@ -63,6 +89,13 @@ class HyvePricing
             $additionalHours = max(0, $durationHours - $minimumHours);
             $totalAmount = $minimumRate + ($additionalHours * $succeedingHourRate);
             $chargePeriodLabel = 'Holiday Peak Use';
+            $breakdown = $this->buildStandardBreakdown(
+                'Holiday peak minimum',
+                $minimumRate,
+                $minimumHours,
+                $durationHours,
+                $succeedingHourRate
+            );
         } else {
             $splitQuote = $this->splitDayNightQuote($rateCard, $start, $end, $minimumHours);
             $chargePeriod = $splitQuote['charge_period'];
@@ -70,6 +103,7 @@ class HyvePricing
             $minimumRate = $splitQuote['minimum_rate'];
             $succeedingHourRate = $splitQuote['succeeding_hour_rate'];
             $totalAmount = $splitQuote['total_amount'];
+            $breakdown = $splitQuote['breakdown'];
         }
 
         $minimumDownpaymentAmount = $this->minimumDownpaymentForTotal($totalAmount);
@@ -91,6 +125,7 @@ class HyvePricing
             'minimum_rate' => round($minimumRate, 2),
             'succeeding_hour_rate' => round($succeedingHourRate, 2),
             'rate_name' => $rateCard->title.' - '.$chargePeriodLabel,
+            'breakdown' => $breakdown,
         ];
     }
 
@@ -234,7 +269,9 @@ class HyvePricing
      *     label: string,
      *     amount: float,
      *     display_amount: string,
-     *     type: string
+     *     type: string,
+     *     use_type: string|null,
+     *     use_type_label: string|null
      * }>
      */
     public function longStayOptionsForRoom(HyveRoom $room): array
@@ -245,50 +282,94 @@ class HyvePricing
             return [];
         }
 
-        $dailyWeekly = collect($rateCard->day_use ?? [])
-            ->map(function (mixed $value, mixed $label): ?array {
-                if (! is_string($label) || ! is_string($value)) {
-                    return null;
-                }
+        $dailyWeekly = collect([
+            'day' => $rateCard->day_use ?? [],
+            'night' => $rateCard->night_use ?? [],
+        ])->flatMap(function (mixed $rates, string $useType): array {
+            return collect(is_array($rates) ? $rates : [])
+                ->map(function (mixed $value, mixed $label) use ($useType): ?array {
+                    if (! is_string($label) || ! is_string($value)) {
+                        return null;
+                    }
 
-                $normalized = strtolower($label);
-                $type = null;
+                    $normalized = strtolower($label);
+                    $type = null;
 
-                if (str_contains($normalized, 'daily')) {
-                    $type = 'daily';
-                } elseif (str_contains($normalized, 'weekly')) {
-                    $type = 'weekly';
-                }
+                    if (str_contains($normalized, 'daily')) {
+                        $type = 'daily';
+                    } elseif (str_contains($normalized, 'weekly')) {
+                        $type = 'weekly';
+                    }
 
-                if (! $type) {
-                    return null;
-                }
+                    if (! $type) {
+                        return null;
+                    }
 
-                $amount = $this->extractAmountFromText($value);
+                    $amount = $this->extractAmountFromText($value);
 
-                if ($amount === null) {
-                    return null;
-                }
+                    if ($amount === null) {
+                        return null;
+                    }
 
-                return [
-                    'label' => $label,
-                    'amount' => $amount,
-                    'display_amount' => 'Php '.number_format($amount, 2),
-                    'type' => $type,
-                ];
-            })
-            ->filter();
+                    $useTypeLabel = $this->longStayUseTypeLabel($useType);
+
+                    return [
+                        'label' => $useTypeLabel.' - '.$label,
+                        'amount' => $amount,
+                        'display_amount' => 'Php '.number_format($amount, 2),
+                        'type' => $type,
+                        'use_type' => $useType,
+                        'use_type_label' => $useTypeLabel,
+                    ];
+                })
+                ->filter()
+                ->values()
+                ->all();
+        });
 
         $monthly = collect($this->monthlyOptionsForRoom($room))
             ->map(fn (array $option): array => [
                 ...$option,
                 'type' => 'monthly',
+                'use_type' => null,
+                'use_type_label' => null,
             ]);
 
-        return $dailyWeekly
+        return collect($dailyWeekly)
             ->concat($monthly)
             ->values()
             ->all();
+    }
+
+    public function longStayRequiresUseType(HyveRoom $room, string $startDate, string $endDate): bool
+    {
+        $start = Carbon::parse($startDate)->startOfDay();
+        $end = Carbon::parse($endDate)->startOfDay();
+
+        if ($end->lt($start)) {
+            return true;
+        }
+
+        $monthlyOption = collect($this->longStayOptionsForRoom($room))
+            ->first(fn (array $option): bool => (string) $option['type'] === 'monthly');
+
+        if (! $monthlyOption) {
+            return true;
+        }
+
+        $cursor = $start->copy();
+
+        while ($cursor->lte($end)) {
+            $segment = $this->calendarMonthSegment($cursor);
+
+            if ($segment['start']->ne($cursor) || $segment['end']->gt($end)) {
+                return true;
+            }
+
+            $cursor = $segment['next_start'];
+        }
+
+        return false;
     }
 
     /**
@@ -371,10 +452,14 @@ class HyvePricing
      *     unit_count: int,
      *     unit_label: string,
      *     booking_end_date: string,
-     *     breakdown: array<int, array{type: string, label: string, unit_count: int, days: int, amount: float}>
+     *     breakdown: array<int, array{type: string, label: string, unit_count: int, days: int, amount: float}>,
+     *     long_stay_use_type: string|null,
+     *     long_stay_use_label: string|null,
+     *     window_start_time: string,
+     *     window_end_time: string
      * }|null
      */
-    public function quoteForLongStayRoom(HyveRoom $room, string $planLabel, string $startDate, string $endDate): ?array
+    public function quoteForLongStayRoom(HyveRoom $room, string $planLabel, string $startDate, string $endDate, ?string $useType = null): ?array
     {
         $rateCard = $this->rateForRoom($room);
 
@@ -396,6 +481,21 @@ class HyvePricing
         }
 
         $dayCount = max(1, $start->diffInDays($end) + 1);
+        $requiresUseType = $this->longStayRequiresUseType($room, $startDate, $endDate);
+        $resolvedUseType = $useType !== null && in_array($useType, ['day', 'night'], true)
+            ? $useType
+            : null;
+
+        if (! $resolvedUseType && $selectedPlan && in_array((string) ($selectedPlan['type'] ?? ''), ['daily', 'weekly'], true)) {
+            $resolvedUseType = (string) ($selectedPlan['use_type'] ?? '') ?: null;
+        }
+
+        if ($requiresUseType && ! $resolvedUseType) {
+            return null;
+        }
+
+        [$windowStartTime, $windowEndTime] = $this->longStayWindowForUseType($requiresUseType ? $resolvedUseType : null);
+        $useTypeLabel = $resolvedUseType ? $this->longStayUseTypeLabel($resolvedUseType) : null;
 
         if ($selectedPlan) {
             $unitType = (string) $selectedPlan['type'];
@@ -440,6 +540,10 @@ class HyvePricing
                 'unit_count' => $unitCount,
                 'unit_label' => $unitLabel,
                 'booking_end_date' => $end->toDateString(),
+                'long_stay_use_type' => $resolvedUseType,
+                'long_stay_use_label' => $useTypeLabel,
+                'window_start_time' => $windowStartTime,
+                'window_end_time' => $windowEndTime,
                 'breakdown' => [[
                     'type' => $unitType,
                     'label' => (string) $selectedPlan['label'],
@@ -575,8 +679,29 @@ class HyvePricing
             'unit_count' => $unitCount,
             'unit_label' => $unitLabel,
             'booking_end_date' => $end->toDateString(),
+            'long_stay_use_type' => $resolvedUseType,
+            'long_stay_use_label' => $useTypeLabel,
+            'window_start_time' => $windowStartTime,
+            'window_end_time' => $windowEndTime,
             'breakdown' => $breakdown,
         ];
+    }
+
+    public function longStayUseTypeLabel(string $useType): string
+    {
+        return $useType === 'night' ? 'Night Use' : 'Day Use';
+    }
+
+    /**
+     * @return array{0: string, 1: string}
+     */
+    public function longStayWindowForUseType(?string $useType): array
+    {
+        return match ($useType) {
+            'night' => ['20:00', '08:00'],
+            'day' => ['08:00', '20:00'],
+            default => ['00:00', '23:59'],
+        };
     }
 
     public function minimumDownpaymentForTotal(float $totalAmount): float
@@ -620,7 +745,8 @@ class HyvePricing
      *     charge_period_label: string,
      *     minimum_rate: float,
      *     succeeding_hour_rate: float,
-     *     total_amount: float
+     *     total_amount: float,
+     *     breakdown: array<int, array{label: string, amount: float}>
      * }
      */
     private function splitDayNightQuote(HyveRate $rateCard, Carbon $start, Carbon $end, int $minimumHours): array
@@ -639,12 +765,20 @@ class HyvePricing
                 'minimum_rate' => round($minimumRate, 2),
                 'succeeding_hour_rate' => round($succeedingRate, 2),
                 'total_amount' => round($minimumRate + (max(0, $durationHours - $minimumHours) * $succeedingRate), 2),
+                'breakdown' => $this->buildStandardBreakdown(
+                    $period === 'night' ? 'Night use minimum' : 'Day use minimum',
+                    $minimumRate,
+                    $minimumHours,
+                    $durationHours,
+                    $succeedingRate
+                ),
             ];
         }
 
         $minimumCost = 0.0;
         $additionalCost = 0.0;
         $periodsUsed = [];
+        $breakdown = [];
 
         foreach ($segments as $segment) {
             $periodsUsed[$segment['period']] = true;
@@ -659,6 +793,17 @@ class HyvePricing
 
             $minimumCost += $minimumRate;
             $additionalCost += $additionalHours * $succeedingHourlyRate;
+
+            $breakdown = array_merge(
+                $breakdown,
+                $this->buildStandardBreakdown(
+                    $segment['period'] === 'night' ? 'Night use minimum' : 'Day use minimum',
+                    $minimumRate,
+                    $minimumHours,
+                    $segmentHours,
+                    $succeedingHourlyRate
+                )
+            );
         }
 
         $chargePeriod = count($periodsUsed) > 1
@@ -678,7 +823,150 @@ class HyvePricing
                 ? (float) $rateCard->night_succeeding_hour_rate
                 : (float) $rateCard->day_succeeding_hour_rate), 2),
             'total_amount' => round($minimumCost + $additionalCost, 2),
+            'breakdown' => $breakdown,
         ];
+    }
+
+    /**
+     * @return array{
+     *     charge_period: string,
+     *     charge_period_label: string,
+     *     total_amount: float,
+     *     breakdown: array<int, array{label: string, amount: float}>
+     * }|null
+     */
+    private function exactDailyWindowQuote(HyveRate $rateCard, Carbon $start, Carbon $end): ?array
+    {
+        $startClock = $start->format('H:i');
+
+        if ($startClock === '08:00') {
+            $baseEnd = $start->copy()->setTime(20, 0);
+
+            if ($end->lt($baseEnd)) {
+                return null;
+            }
+
+            $amount = $this->dailyRateAmount($rateCard->day_use ?? []);
+
+            if ($amount === null) {
+                return null;
+            }
+
+            $overflowBreakdown = $this->overflowSucceedingBreakdown($rateCard, $baseEnd, $end);
+            $overflowAmount = collect($overflowBreakdown)->sum('amount');
+
+            return [
+                'charge_period' => $overflowAmount > 0 ? 'mixed' : 'day',
+                'charge_period_label' => $overflowAmount > 0 ? 'Day Daily Use + Extension' : 'Day Daily Use',
+                'total_amount' => round($amount + $overflowAmount, 2),
+                'breakdown' => array_merge([
+                    [
+                        'label' => 'Day daily rate (8:00 AM - 8:00 PM)',
+                        'amount' => round($amount, 2),
+                    ],
+                ], $overflowBreakdown),
+            ];
+        }
+
+        if ($startClock === '20:00') {
+            $baseEnd = $start->copy()->addDay()->setTime(8, 0);
+
+            if ($end->lt($baseEnd)) {
+                return null;
+            }
+
+            $amount = $this->dailyRateAmount($rateCard->night_use ?? []);
+
+            if ($amount === null) {
+                return null;
+            }
+
+            $overflowBreakdown = $this->overflowSucceedingBreakdown($rateCard, $baseEnd, $end);
+            $overflowAmount = collect($overflowBreakdown)->sum('amount');
+
+            return [
+                'charge_period' => $overflowAmount > 0 ? 'mixed' : 'night',
+                'charge_period_label' => $overflowAmount > 0 ? 'Night Daily Use + Extension' : 'Night Daily Use',
+                'total_amount' => round($amount + $overflowAmount, 2),
+                'breakdown' => array_merge([
+                    [
+                        'label' => 'Night daily rate (8:00 PM - 8:00 AM)',
+                        'amount' => round($amount, 2),
+                    ],
+                ], $overflowBreakdown),
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * @return array<int, array{label: string, amount: float}>
+     */
+    private function buildStandardBreakdown(
+        string $minimumLabel,
+        float $minimumRate,
+        int $minimumHours,
+        float $durationHours,
+        float $succeedingHourlyRate
+    ): array {
+        $breakdown = [[
+            'label' => sprintf('%s (first %d hour%s)', $minimumLabel, $minimumHours, $minimumHours === 1 ? '' : 's'),
+            'amount' => round($minimumRate, 2),
+        ]];
+
+        $additionalHours = round(max(0, $durationHours - $minimumHours), 2);
+
+        if ($additionalHours > 0 && $succeedingHourlyRate > 0) {
+            $breakdown[] = [
+                'label' => sprintf(
+                    'Succeeding hours (%s x %s)',
+                    $this->formatHoursForBreakdown($additionalHours),
+                    $this->formatCurrencyForBreakdown($succeedingHourlyRate)
+                ),
+                'amount' => round($additionalHours * $succeedingHourlyRate, 2),
+            ];
+        }
+
+        return $breakdown;
+    }
+
+    private function overflowSucceedingCharge(HyveRate $rateCard, Carbon $start, Carbon $end): float
+    {
+        return round(collect($this->overflowSucceedingBreakdown($rateCard, $start, $end))->sum('amount'), 2);
+    }
+
+    /**
+     * @return array<int, array{label: string, amount: float}>
+     */
+    private function overflowSucceedingBreakdown(HyveRate $rateCard, Carbon $start, Carbon $end): array
+    {
+        if ($end->lte($start)) {
+            return [];
+        }
+
+        $segments = $this->dayNightSegments($start, $end);
+        $breakdown = [];
+
+        foreach ($segments as $segment) {
+            $segmentHours = round($segment['minutes'] / 60, 2);
+            $succeedingRate = (float) ($segment['period'] === 'night'
+                ? $rateCard->night_succeeding_hour_rate
+                : $rateCard->day_succeeding_hour_rate);
+
+            $breakdown[] = [
+                'label' => sprintf(
+                    '%s extension after %s (%s x %s)',
+                    $segment['period'] === 'night' ? 'Night' : 'Day',
+                    $segment['period'] === 'night' ? '8:00 PM' : '8:00 AM',
+                    $this->formatHoursForBreakdown($segmentHours),
+                    $this->formatCurrencyForBreakdown($succeedingRate)
+                ),
+                'amount' => round($segmentHours * $succeedingRate, 2),
+            ];
+        }
+
+        return $breakdown;
     }
 
     /**
@@ -742,8 +1030,39 @@ class HyvePricing
         return (float) str_replace(',', '', $matches[1]);
     }
 
+    private function dailyRateAmount(array $rates): ?float
+    {
+        foreach ($rates as $label => $value) {
+            if (! is_string($label) || ! is_string($value)) {
+                continue;
+            }
+
+            if (! str_contains(strtolower($label), 'daily')) {
+                continue;
+            }
+
+            return $this->extractAmountFromText($value);
+        }
+
+        return null;
+    }
+
+    private function formatHoursForBreakdown(float $hours): string
+    {
+        if (fmod($hours, 1.0) === 0.0) {
+            return (string) (int) $hours;
+        }
+
+        return rtrim(rtrim(number_format($hours, 2, '.', ''), '0'), '.');
+    }
+
+    private function formatCurrencyForBreakdown(float $amount): string
+    {
+        return 'Php '.number_format($amount, 2);
+    }
+
     /**
-     * @return array{end: Carbon, next_start: Carbon, days: int}
+     * @return array{start: Carbon, end: Carbon, next_start: Carbon, days: int}
      */
     private function calendarMonthSegment(Carbon $start): array
     {
@@ -751,6 +1070,7 @@ class HyvePricing
         $segmentEnd = $nextStart->copy()->subDay();
 
         return [
+            'start' => $start->copy(),
             'end' => $segmentEnd,
             'next_start' => $nextStart,
             'days' => max(1, $start->diffInDays($segmentEnd) + 1),

@@ -195,19 +195,36 @@ class BookingController extends Controller
             'start_time' => ['required_unless:booking_mode,monthly', 'date_format:H:i'],
             'end_time' => ['required_unless:booking_mode,monthly', 'date_format:H:i'],
             'monthly_plan' => ['nullable', 'string', 'max:120'],
+            'long_stay_use_type' => ['nullable', Rule::in(['day', 'night'])],
         ]);
 
         $room = HyveRoom::query()->active()->findOrFail($validated['hyve_room_id']);
         $isMonthlyMode = ($validated['booking_mode'] ?? 'room') === 'monthly';
 
-        if ($isMonthlyMode && ! $this->isLongStayDateRangeAvailable($room, $validated['booking_date'], $validated['booking_end_date'])) {
+        if (
+            $isMonthlyMode
+            && $this->pricing->longStayRequiresUseType($this->pricingRoomForSelection($room), $validated['booking_date'], $validated['booking_end_date'])
+            && blank($validated['long_stay_use_type'] ?? null)
+        ) {
+            return response()->json([
+                'message' => 'Choose Day Use or Night Use first so HYVE can compute the correct long-stay rate.',
+            ], 422);
+        }
+
+        if ($isMonthlyMode && ! $this->isLongStayDateRangeAvailable($room, $validated['booking_date'], $validated['booking_end_date'], $validated['long_stay_use_type'] ?? null)) {
             return response()->json([
                 'message' => 'The selected stay dates are no longer available for this room. Please choose another date range.',
             ], 422);
         }
 
         $quote = $isMonthlyMode
-            ? $this->pricing->quoteForLongStayRoom($this->pricingRoomForSelection($room), (string) ($validated['monthly_plan'] ?? ''), $validated['booking_date'], $validated['booking_end_date'])
+            ? $this->pricing->quoteForLongStayRoom(
+                $this->pricingRoomForSelection($room),
+                (string) ($validated['monthly_plan'] ?? ''),
+                $validated['booking_date'],
+                $validated['booking_end_date'],
+                $validated['long_stay_use_type'] ?? null,
+            )
             : $this->pricing->quoteForRoom($this->pricingRoomForSelection($room), $validated['booking_date'], $validated['start_time'], $validated['end_time']);
 
         if (! $quote) {
@@ -235,6 +252,10 @@ class BookingController extends Controller
             'unit_count' => $quote['unit_count'] ?? null,
             'unit_label' => $quote['unit_label'] ?? null,
             'booking_end_date' => $quote['booking_end_date'] ?? null,
+            'long_stay_use_type' => $quote['long_stay_use_type'] ?? null,
+            'long_stay_use_label' => $quote['long_stay_use_label'] ?? null,
+            'window_start_time' => $quote['window_start_time'] ?? null,
+            'window_end_time' => $quote['window_end_time'] ?? null,
             'breakdown' => $quote['breakdown'] ?? [],
             'payment' => [
                 'downpayment_percentage' => (float) ($paymentSetting?->downpayment_percentage ?? 50),
@@ -475,7 +496,7 @@ class BookingController extends Controller
 
             $rangesByRoom[$room->id] = $relevantDetails
                 ->map(function (BookingDetail $detail) use ($bookingDate, $room): array {
-                    if ($this->isLongStayDetail($detail) && $this->detailOccupiesDate($detail, $bookingDate)) {
+                    if ($this->isLongStayFullDayDetail($detail) && $this->detailOccupiesDate($detail, $bookingDate)) {
                         $schedule = $this->scheduleWindowForDate($bookingDate, $room);
 
                         return [
@@ -624,7 +645,18 @@ class BookingController extends Controller
             $room = $this->pricingRoomForSelection($selectedRoom);
             $space = $this->spaceForRoom($room);
 
-            if (! $this->isLongStayDateRangeAvailable($selectedRoom, $validated['booking_date'], $validated['booking_end_date'])) {
+            if (
+                $this->pricing->longStayRequiresUseType($room, $validated['booking_date'], $validated['booking_end_date'])
+                && blank($validated['long_stay_use_type'] ?? null)
+            ) {
+                return back()
+                    ->withInput()
+                    ->withErrors([
+                        'long_stay_use_type' => 'Choose Day Use or Night Use first so HYVE can compute the correct long-stay rate.',
+                    ]);
+            }
+
+            if (! $this->isLongStayDateRangeAvailable($selectedRoom, $validated['booking_date'], $validated['booking_end_date'], $validated['long_stay_use_type'] ?? null)) {
                 return back()
                     ->withInput()
                     ->withErrors([
@@ -632,7 +664,13 @@ class BookingController extends Controller
                     ]);
             }
 
-            $quote = $this->pricing->quoteForLongStayRoom($room, (string) ($validated['monthly_plan'] ?? ''), $validated['booking_date'], $validated['booking_end_date']);
+            $quote = $this->pricing->quoteForLongStayRoom(
+                $room,
+                (string) ($validated['monthly_plan'] ?? ''),
+                $validated['booking_date'],
+                $validated['booking_end_date'],
+                $validated['long_stay_use_type'] ?? null,
+            );
 
             if (! $quote) {
                 return back()
@@ -649,11 +687,11 @@ class BookingController extends Controller
                 'quote' => $quote,
                 'booking_date' => $validated['booking_date'],
                 'booking_end_date' => $validated['booking_end_date'],
-                'start_time' => '00:00',
-                'end_time' => '23:59',
+                'start_time' => (string) ($quote['window_start_time'] ?? '00:00'),
+                'end_time' => (string) ($quote['window_end_time'] ?? '23:59'),
                 'display_start_time' => null,
                 'display_end_time' => null,
-                'is_monthly' => true,
+                'is_monthly' => ($quote['long_stay_use_type'] ?? null) === null,
             ];
             $grandTotal = (float) $quote['total_amount'];
         } else {
@@ -1395,7 +1433,7 @@ class BookingController extends Controller
         return (array) config('hyve.booking.blocked_statuses', ['pending', 'confirmed']);
     }
 
-    private function isLongStayDateRangeAvailable(HyveRoom $room, string $startDate, string $endDate): bool
+    private function isLongStayDateRangeAvailable(HyveRoom $room, string $startDate, string $endDate, ?string $useType = null): bool
     {
         $space = $this->spaceForRoom($room);
         $query = BookingDetail::query()
@@ -1413,7 +1451,46 @@ class BookingController extends Controller
 
         $this->applyBookingDateOverlapConstraint($query, $startDate, $endDate);
 
-        return ! $query->exists();
+        if (! in_array($useType, ['day', 'night'], true)) {
+            return ! $query->exists();
+        }
+
+        $details = $query->get([
+            'booking_date',
+            'booking_end_date',
+            'start_time',
+            'end_time',
+        ]);
+
+        if ($details->isEmpty()) {
+            return true;
+        }
+
+        [$requestStartTime, $requestEndTime] = $this->pricing->longStayWindowForUseType($useType);
+        $start = Carbon::parse($startDate)->startOfDay();
+        $end = Carbon::parse($endDate)->startOfDay();
+
+        for ($cursor = $start->copy(); $cursor->lte($end); $cursor->addDay()) {
+            [$requestedStart, $requestedEnd] = $this->dateRange($cursor->toDateString(), $requestStartTime, $requestEndTime);
+
+            foreach ($details as $detail) {
+                if (! $this->detailOccupiesDate($detail, $cursor->toDateString())) {
+                    continue;
+                }
+
+                if ($this->isLongStayFullDayDetail($detail)) {
+                    return false;
+                }
+
+                [$blockedStart, $blockedEnd] = $this->dateRange($cursor->toDateString(), $detail->start_time, $detail->end_time);
+
+                if ($requestedStart->lt($blockedEnd) && $requestedEnd->gt($blockedStart)) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     private function effectiveDayStart(string $bookingDate, Carbon $dayStart): Carbon
@@ -1433,6 +1510,16 @@ class BookingController extends Controller
         $endDate = $this->detailDate($detail->booking_end_date) ?: $startDate;
 
         return $startDate !== null && $endDate !== null && $endDate->ne($startDate);
+    }
+
+    private function isLongStayFullDayDetail(BookingDetail $detail): bool
+    {
+        if (! $this->isLongStayDetail($detail)) {
+            return false;
+        }
+
+        return (string) $detail->start_time === '00:00'
+            && in_array((string) $detail->end_time, ['23:59', '24:00'], true);
     }
 
     private function detailOccupiesDate(BookingDetail $detail, string $bookingDate): bool
@@ -1500,7 +1587,7 @@ class BookingController extends Controller
 
         $ranges = $rangesQuery->get(['booking_date', 'booking_end_date', 'start_time', 'end_time'])
             ->map(function (BookingDetail $detail) use ($bookingDate, $room): array {
-                if ($this->isLongStayDetail($detail) && $this->detailOccupiesDate($detail, $bookingDate)) {
+                if ($this->isLongStayFullDayDetail($detail) && $this->detailOccupiesDate($detail, $bookingDate)) {
                     $schedule = $this->scheduleWindowForDate($bookingDate, $room);
 
                     return [
@@ -1881,7 +1968,14 @@ class BookingController extends Controller
 
     /**
      * @param  Collection<int, array{value: string, label: string, end_time: string}>  $windows
-     * @return Collection<int, array{value: string, label: string, end_time: string, total_amount: float, display_amount: string}>
+     * @return Collection<int, array{
+     *     value: string,
+     *     label: string,
+     *     end_time: string,
+     *     total_amount: float,
+     *     display_amount: string,
+     *     breakdown: array<int, array{label: string, amount: float}>
+     * }>
      */
     private function slotWindowsWithPricing(HyveRoom $room, string $bookingDate, Collection $windows, ?HyveRoom $sharedTableRepresentative = null): Collection
     {
@@ -1901,6 +1995,7 @@ class BookingController extends Controller
                     ...$window,
                     'total_amount' => $totalAmount,
                     'display_amount' => 'Php '.number_format($totalAmount, 0),
+                    'breakdown' => $quote['breakdown'] ?? [],
                 ];
             })
             ->filter()

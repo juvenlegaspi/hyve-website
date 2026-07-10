@@ -136,6 +136,7 @@
                 <input type="hidden" name="booking_end_date" value="{{ $initialEndDate }}" data-booking-end-date>
                 <input type="hidden" name="booking_mode" value="{{ $oldBookingMode }}" data-booking-mode-input>
                 <input type="hidden" name="monthly_plan" value="{{ $oldMonthlyPlan }}" data-monthly-plan-input>
+                <input type="hidden" name="long_stay_use_type" value="{{ old('long_stay_use_type', '') }}" data-long-stay-use-type-input>
                 <input type="hidden" name="selected_schedule_items" value="{{ $oldScheduleItemsJson }}" data-schedule-items-input>
                 <select name="start_time" data-start-time-select class="hidden">
                     <option value="{{ old('start_time', $queryStartTime) }}">{{ old('start_time', $queryStartTime) }}</option>
@@ -275,7 +276,7 @@
                                 </div>
                                 <div class="booking-inline-summary__row">
                                     <span>Rate breakdown</span>
-                                    <strong data-summary-rate>--</strong>
+                                    <div data-summary-rate>--</div>
                                 </div>
                                 <div class="booking-inline-summary__row booking-inline-summary__row--total">
                                     <span>Total</span>
@@ -378,6 +379,22 @@
                                 </label>
                             </div>
 
+                            <div class="booking-slot-section hidden" data-long-stay-use-wrap>
+                                <p class="mini-title">Step 2 - Choose Day Use or Night Use</p>
+                                <p class="booking-slot-copy">Tell HYVE if this stay should run during the daytime or nighttime window so the correct rate can be computed.</p>
+                                <div class="booking-slot-list booking-slot-list--compact">
+                                    <button type="button" class="booking-slot-pill" data-long-stay-use-choice="day">
+                                        <strong>Day Use</strong>
+                                        <span>8:00 AM - 8:00 PM daily window</span>
+                                    </button>
+                                    <button type="button" class="booking-slot-pill" data-long-stay-use-choice="night">
+                                        <strong>Night Use</strong>
+                                        <span>8:00 PM - 8:00 AM daily window</span>
+                                    </button>
+                                </div>
+                                <p class="booking-slot-copy">You cannot continue until you choose one stay window.</p>
+                            </div>
+
                             <div class="booking-calendar-panel__head booking-calendar-panel__head--compact">
                                 <h3 class="booking-calendar-title booking-calendar-title--small" data-monthly-calendar-title>{{ \Illuminate\Support\Carbon::parse($initialDate)->format('F Y') }}</h3>
                                 <div class="booking-calendar-nav">
@@ -427,6 +444,10 @@
                                     <span>Plan</span>
                                     <strong data-monthly-summary-plan>{{ $oldMonthlyPlan ?: '--' }}</strong>
                                 </div>
+                                <div class="booking-inline-summary__row hidden" data-monthly-summary-use-type-row>
+                                    <span>Stay window</span>
+                                    <strong data-monthly-summary-use-type>--</strong>
+                                </div>
                                 <div class="booking-inline-summary__row">
                                     <span>Coverage</span>
                                     <strong data-monthly-summary-units>--</strong>
@@ -440,6 +461,7 @@
                             @error('monthly_plan') <small class="field-error">{{ $message }}</small> @enderror
                             @error('booking_date') <small class="field-error">{{ $message }}</small> @enderror
                             @error('booking_end_date') <small class="field-error">{{ $message }}</small> @enderror
+                            @error('long_stay_use_type') <small class="field-error">{{ $message }}</small> @enderror
 
                             <button type="button" class="booking-slot-continue" data-monthly-continue disabled>Continue to checkout -&gt;</button>
                         </article>

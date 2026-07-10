@@ -672,6 +672,13 @@ const setupBookingPage = () => {
         year: 'numeric',
     }).format(date);
 
+    const escapeHtml = (value) => String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+
     const durationLabel = (startValue, endValue) => {
         if (!startValue || !endValue) {
             return '';
@@ -705,6 +712,93 @@ const setupBookingPage = () => {
         }
 
         return parts.join(' ');
+    };
+
+    const buildRateBreakdownLabel = (data, startValue, endValue) => {
+        const chargeLabel = String(data?.charge_period_label || '').trim();
+        const rateName = String(data?.rate_name || '').trim();
+        const suffix = chargeLabel ? ` - ${chargeLabel}` : '';
+        const baseRateName = suffix && rateName.endsWith(suffix)
+            ? rateName.slice(0, rateName.length - suffix.length)
+            : rateName;
+
+        if (chargeLabel === 'Day Daily Use') {
+            return `${baseRateName}: day daily rate (8:00 AM - 8:00 PM)`;
+        }
+
+        if (chargeLabel === 'Night Daily Use') {
+            return `${baseRateName}: night daily rate (8:00 PM - 8:00 AM)`;
+        }
+
+        if (chargeLabel === 'Day Daily Use + Extension') {
+            const extension = durationLabel('20:00', endValue) || 'extra time';
+
+            return `${baseRateName}: day daily rate + ${extension} extension after 8:00 PM`;
+        }
+
+        if (chargeLabel === 'Night Daily Use + Extension') {
+            const extension = durationLabel('08:00', endValue) || 'extra time';
+
+            return `${baseRateName}: night daily rate + ${extension} extension after 8:00 AM`;
+        }
+
+        if (chargeLabel === 'Day + Night Use') {
+            return `${baseRateName}: combined day and night rate for the selected hours`;
+        }
+
+        if (chargeLabel === 'Day Use') {
+            return `${baseRateName}: day use rate for the selected hours`;
+        }
+
+        if (chargeLabel === 'Night Use') {
+            return `${baseRateName}: night use rate for the selected hours`;
+        }
+
+        return chargeLabel
+            ? `${baseRateName}: ${chargeLabel}`
+            : (baseRateName || '--');
+    };
+
+    const buildRateBreakdownMarkup = (data, startValue, endValue) => {
+        const lines = Array.isArray(data?.breakdown) ? data.breakdown : [];
+
+        if (lines.length) {
+            return lines
+                .filter((line) => line && typeof line.label === 'string')
+                .map((line) => {
+                    const amount = Number(line.amount || 0);
+
+                    return `
+                        <div class="flex items-start justify-between gap-3 text-right text-[0.92rem] font-medium text-[#4b623d]">
+                            <span class="text-left text-[#6f7d72]">${escapeHtml(line.label)}</span>
+                            <span class="shrink-0 text-[#173029]">${formatCurrency(amount)}</span>
+                        </div>
+                    `;
+                })
+                .join('');
+        }
+
+        return `<div class="text-[#4b623d]">${escapeHtml(buildRateBreakdownLabel(data, startValue, endValue))}</div>`;
+    };
+
+    const buildCompactBreakdownMarkup = (lines) => {
+        if (!Array.isArray(lines) || !lines.length) {
+            return '';
+        }
+
+        return `
+            <div class="mt-2 space-y-1 text-[0.82rem] text-[#6f7d72]">
+                ${lines
+                    .filter((line) => line && typeof line.label === 'string')
+                    .map((line) => `
+                        <div class="flex items-start justify-between gap-3">
+                            <span>${escapeHtml(line.label)}</span>
+                            <strong class="shrink-0 font-semibold text-[#4b623d]">${formatCurrency(Number(line.amount || 0))}</strong>
+                        </div>
+                    `)
+                    .join('')}
+            </div>
+        `;
     };
 
     const durationMinutesForRange = (startValue, endValue) => {
@@ -808,6 +902,21 @@ const setupBookingPage = () => {
             ? `${roomCard.dataset.roomName || 'Choose a room'} · ${roomCard.dataset.roomSpace || ''}`.trim()
             : 'Choose a room';
         checkoutDate.textContent = formatDate(bookingDateInput.value || todayValue);
+        if (bookingMode === 'monthly') {
+            checkoutEndDateRow.classList.remove('hidden');
+            checkoutEndDate.textContent = formatDate(bookingEndDateInput.value || bookingDateInput.value || todayValue);
+            checkoutStart.textContent = currentQuote?.window_start_time ? formatTime(currentQuote.window_start_time) : (currentQuote?.long_stay_use_label || 'Monthly');
+            checkoutEnd.textContent = currentQuote?.window_end_time ? formatTime(currentQuote.window_end_time) : (currentQuote?.long_stay_use_label || 'Monthly');
+            checkoutDuration.textContent = currentQuote?.unit_label || '--';
+            checkoutMonthlyPlanRow.classList.remove('hidden');
+            checkoutMonthlyPlan.textContent = currentQuote?.long_stay_use_label
+                ? `${monthlyPlanInput.value || '--'} • ${currentQuote.long_stay_use_label}`
+                : (monthlyPlanInput.value || '--');
+            return;
+        }
+
+        checkoutEndDateRow.classList.add('hidden');
+        checkoutMonthlyPlanRow.classList.add('hidden');
         checkoutStart.textContent = startSelect.selectedOptions[0]?.textContent ?? startSelect.value ?? '--:--';
         checkoutEnd.textContent = endSelect.selectedOptions[0]?.textContent ?? endSelect.value ?? '--:--';
         checkoutDuration.textContent = durationLabel(startSelect.value, endSelect.value) || '--';
@@ -1206,7 +1315,7 @@ const setupBookingPage = () => {
         summaryStart.textContent = startSelect.selectedOptions[0]?.textContent ?? startSelect.value;
         summaryEnd.textContent = endSelect.selectedOptions[0]?.textContent ?? endSelect.value;
         summaryDuration.textContent = data.duration_hours === 1 ? '1 hour' : `${data.duration_hours} hours`;
-        summaryRate.textContent = `${data.rate_name} - ${data.charge_period_label}`;
+        summaryRate.innerHTML = buildRateBreakdownMarkup(data, startSelect.value, endSelect.value);
         summaryTotal.textContent = formatCurrency(data.total_amount);
         inlineSummary.classList.remove('hidden');
         checkoutStart.textContent = startSelect.selectedOptions[0]?.textContent ?? startSelect.value;
@@ -1551,6 +1660,9 @@ const setupBookingPageV2 = () => {
     const monthlyBlockedOpen = form.querySelector('[data-monthly-blocked-open]');
     const monthlyBlockedNote = form.querySelector('[data-monthly-blocked-note]');
     const monthlyPlanDescription = form.querySelector('[data-monthly-plan-description]');
+    const longStayUseTypeInput = form.querySelector('[data-long-stay-use-type-input]');
+    const longStayUseWrap = form.querySelector('[data-long-stay-use-wrap]');
+    const longStayUseChoices = [...form.querySelectorAll('[data-long-stay-use-choice]')];
     const monthlyRoomName = form.querySelector('[data-monthly-room-name]');
     const monthlyRoomSpace = form.querySelector('[data-monthly-room-space]');
     const monthlyRoomRate = form.querySelector('[data-monthly-room-rate]');
@@ -1558,6 +1670,8 @@ const setupBookingPageV2 = () => {
     const monthlySummaryDate = form.querySelector('[data-monthly-summary-date]');
     const monthlySummaryEndDate = form.querySelector('[data-monthly-summary-end-date]');
     const monthlySummaryPlan = form.querySelector('[data-monthly-summary-plan]');
+    const monthlySummaryUseTypeRow = form.querySelector('[data-monthly-summary-use-type-row]');
+    const monthlySummaryUseType = form.querySelector('[data-monthly-summary-use-type]');
     const monthlySummaryUnits = form.querySelector('[data-monthly-summary-units]');
     const monthlySummaryTotal = form.querySelector('[data-monthly-summary-total]');
     const monthlyContinue = form.querySelector('[data-monthly-continue]');
@@ -1585,7 +1699,7 @@ const setupBookingPageV2 = () => {
     const initialEndTime = endSelect.value;
     const initialMonthlyPlan = monthlyPlanInput?.value || '';
 
-    if (!roomSelect || !bookingDateInput || !bookingEndDateInput || !bookingModeInput || !monthlyPlanInput || !scheduleItemsInput || !startSelect || !endSelect || !bookingPicker || !bookingCheckout || !checkoutBack || !durationDisplay || !downpaymentInput || !paymentMethod || !paymentMethodCards.length || !roomMeta || !messageBody || !quoteTotal || !quoteMinimum || !quoteBalance || !quoteMeta || !paymentGcash || !paymentBank || !paymentInstructions || !roomCards.length || !roomRail || !calendarTitle || !calendarDays || !calendarPrev || !calendarNext || !slotDateTitle || !slotContinue || !selectedRoomName || !selectedRoomSpace || !selectedRoomRate || !startSlots || !endSlots || !startStep || !startSummary || !startSummaryTime || !startSummaryChange || !inlineSummary || !summaryDate || !summaryStart || !summaryEnd || !summaryDuration || !summaryRate || !summaryTotal || !checkoutRoom || !checkoutDate || !checkoutEndDateRow || !checkoutEndDate || !checkoutStart || !checkoutEnd || !checkoutDuration || !checkoutMonthlyPlanRow || !checkoutMonthlyPlan || !checkoutStandardSummary || !checkoutScheduleCount || !checkoutScheduleList || !checkoutSubmit || !scheduleDateTitle || !schedulePrev || !scheduleNext || !scheduleHead || !scheduleBody || !scheduleSelectionEmpty || !scheduleSelectionFilled || !scheduleSelectionRoom || !scheduleSelectionMeta || !scheduleSelectionTotal || !scheduleContinue || !scheduleCartPanel || !scheduleCartList || !scheduleCartCount || !scheduleCartHeading || !scheduleCartEmpty || !scheduleCartTotal || !monthlyStartDateInput || !monthlyEndDateInput || !monthlyCalendarTitle || !monthlyCalendarDays || !monthlyCalendarPrev || !monthlyCalendarNext || !monthlyBlockedOpen || !monthlyBlockedNote || !monthlyPlanDescription || !monthlyRoomName || !monthlyRoomSpace || !monthlyRoomRate || !monthlyInlineSummary || !monthlySummaryDate || !monthlySummaryEndDate || !monthlySummaryPlan || !monthlySummaryUnits || !monthlySummaryTotal || !monthlyContinue || !monthlyBlockedModal || !monthlyBlockedTitle || !monthlyBlockedSubtitle || !monthlyBlockedCount || !monthlyBlockedEmpty || !monthlyBlockedList || !monthlyBlockedCalendarTitle || !monthlyBlockedCalendarDays || !monthlyBlockedPrev || !monthlyBlockedNext) {
+    if (!roomSelect || !bookingDateInput || !bookingEndDateInput || !bookingModeInput || !monthlyPlanInput || !longStayUseTypeInput || !scheduleItemsInput || !startSelect || !endSelect || !bookingPicker || !bookingCheckout || !checkoutBack || !durationDisplay || !downpaymentInput || !paymentMethod || !paymentMethodCards.length || !roomMeta || !messageBody || !quoteTotal || !quoteMinimum || !quoteBalance || !quoteMeta || !paymentGcash || !paymentBank || !paymentInstructions || !roomCards.length || !roomRail || !calendarTitle || !calendarDays || !calendarPrev || !calendarNext || !slotDateTitle || !slotContinue || !selectedRoomName || !selectedRoomSpace || !selectedRoomRate || !startSlots || !endSlots || !startStep || !startSummary || !startSummaryTime || !startSummaryChange || !inlineSummary || !summaryDate || !summaryStart || !summaryEnd || !summaryDuration || !summaryRate || !summaryTotal || !checkoutRoom || !checkoutDate || !checkoutEndDateRow || !checkoutEndDate || !checkoutStart || !checkoutEnd || !checkoutDuration || !checkoutMonthlyPlanRow || !checkoutMonthlyPlan || !checkoutStandardSummary || !checkoutScheduleCount || !checkoutScheduleList || !checkoutSubmit || !scheduleDateTitle || !schedulePrev || !scheduleNext || !scheduleHead || !scheduleBody || !scheduleSelectionEmpty || !scheduleSelectionFilled || !scheduleSelectionRoom || !scheduleSelectionMeta || !scheduleSelectionTotal || !scheduleContinue || !scheduleCartPanel || !scheduleCartList || !scheduleCartCount || !scheduleCartHeading || !scheduleCartEmpty || !scheduleCartTotal || !monthlyStartDateInput || !monthlyEndDateInput || !monthlyCalendarTitle || !monthlyCalendarDays || !monthlyCalendarPrev || !monthlyCalendarNext || !monthlyBlockedOpen || !monthlyBlockedNote || !monthlyPlanDescription || !longStayUseWrap || !monthlyRoomName || !monthlyRoomSpace || !monthlyRoomRate || !monthlyInlineSummary || !monthlySummaryDate || !monthlySummaryEndDate || !monthlySummaryPlan || !monthlySummaryUseTypeRow || !monthlySummaryUseType || !monthlySummaryUnits || !monthlySummaryTotal || !monthlyContinue || !monthlyBlockedModal || !monthlyBlockedTitle || !monthlyBlockedSubtitle || !monthlyBlockedCount || !monthlyBlockedEmpty || !monthlyBlockedList || !monthlyBlockedCalendarTitle || !monthlyBlockedCalendarDays || !monthlyBlockedPrev || !monthlyBlockedNext) {
         return;
     }
 
@@ -1650,13 +1764,22 @@ const setupBookingPageV2 = () => {
         day: 'numeric',
     }).format(new Date(`${value}T00:00:00`));
 
+    const selectedLongStayRange = () => {
+        const startValue = monthlyStartDateInput.value || bookingDateInput.value || '';
+        const endValue = monthlyEndDateInput.value || bookingEndDateInput.value || startValue;
+
+        return { startValue, endValue };
+    };
+
     const longStayDayCount = () => {
-        if (!bookingDateInput.value || !bookingEndDateInput.value) {
+        const { startValue, endValue } = selectedLongStayRange();
+
+        if (!startValue || !endValue) {
             return 0;
         }
 
-        const start = new Date(`${bookingDateInput.value}T00:00:00`);
-        const end = new Date(`${bookingEndDateInput.value}T00:00:00`);
+        const start = new Date(`${startValue}T00:00:00`);
+        const end = new Date(`${endValue}T00:00:00`);
 
         if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
             return 0;
@@ -1863,6 +1986,7 @@ const setupBookingPageV2 = () => {
             room_space: item.room_space,
             label: item.label,
             total_amount: item.total_amount,
+            breakdown: Array.isArray(item.breakdown) ? item.breakdown : [],
         })));
     };
 
@@ -1907,6 +2031,7 @@ const setupBookingPageV2 = () => {
                         room_space: item.room_space || roomCard?.dataset.roomSpace || '',
                         label: item.label || `${item.start_time} - ${item.end_time}`,
                         total_amount: Number(item.total_amount || 0),
+                        breakdown: Array.isArray(item.breakdown) ? item.breakdown : [],
                     };
                 });
             syncScheduleItemsInput();
@@ -2068,6 +2193,7 @@ const setupBookingPageV2 = () => {
                     entry.innerHTML = `
                         <strong>${item.room_name} - ${item.room_space}</strong>
                         <span>${formatDate(item.booking_date)} - ${item.label} - ${durationLabel(item.start_time, item.end_time) || '2 hours'}</span>
+                        ${buildCompactBreakdownMarkup(item.breakdown)}
                         <em>${formatCurrency(item.total_amount)}</em>
                     `;
                     checkoutScheduleList.append(entry);
@@ -2167,6 +2293,8 @@ const setupBookingPageV2 = () => {
         monthlySummaryDate.textContent = formatDate(bookingDateInput.value || todayValue);
         monthlySummaryEndDate.textContent = formatDate(bookingEndDateInput.value || bookingDateInput.value || todayValue);
         monthlySummaryPlan.textContent = '--';
+        monthlySummaryUseType.textContent = '--';
+        monthlySummaryUseTypeRow.classList.add('hidden');
         monthlySummaryUnits.textContent = '--';
         monthlySummaryTotal.textContent = 'Php 0.00';
         monthlyContinue.disabled = true;
@@ -2278,6 +2406,7 @@ const setupBookingPageV2 = () => {
                     <div class="booking-schedule__cart-copy">
                         <strong>${item.room_name} - ${item.room_space}</strong>
                         <span>${formatDate(item.booking_date)} - ${item.label} - ${durationLabel(item.start_time, item.end_time) || '2 hours'}</span>
+                        ${buildCompactBreakdownMarkup(item.breakdown)}
                     </div>
                     <div class="booking-schedule__cart-meta">
                         <strong>${formatCurrency(item.total_amount)}</strong>
@@ -2389,15 +2518,73 @@ const setupBookingPageV2 = () => {
         applyScheduleSummaryDisplay();
     };
 
+    const parseDateOnlyValue = (value) => {
+        if (!value || typeof value !== 'string') {
+            return null;
+        }
+
+        const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+        if (!match) {
+            return null;
+        }
+
+        const year = Number(match[1]);
+        const month = Number(match[2]);
+        const day = Number(match[3]);
+        const date = new Date(year, month - 1, day);
+
+        if (
+            Number.isNaN(date.getTime())
+            || date.getFullYear() !== year
+            || (date.getMonth() + 1) !== month
+            || date.getDate() !== day
+        ) {
+            return null;
+        }
+
+        return date;
+    };
+
+    const isWholeCalendarMonthStay = (startValue, endValue) => {
+        const start = parseDateOnlyValue(startValue);
+        const end = parseDateOnlyValue(endValue);
+
+        if (!start || !end || end < start) {
+            return false;
+        }
+
+        const cursor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+
+        while (cursor <= end) {
+            const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
+            const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
+
+            if (cursor.getTime() === start.getTime()) {
+                if (cursor.getDate() !== monthStart.getDate()) {
+                    return false;
+                }
+            }
+
+            if (monthEnd > end) {
+                return monthEnd.getTime() === end.getTime();
+            }
+
+            cursor.setMonth(cursor.getMonth() + 1, 1);
+        }
+
+        return false;
+    };
+
     const hasBlockedDatesInRange = (startValue, endValue) => {
         if (!startValue || !endValue) {
             return false;
         }
 
-        const start = new Date(`${startValue}T00:00:00`);
-        const end = new Date(`${endValue}T00:00:00`);
+        const start = parseDateOnlyValue(startValue);
+        const end = parseDateOnlyValue(endValue);
 
-        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+        if (!start || !end || end < start) {
             return false;
         }
 
@@ -2687,6 +2874,73 @@ const setupBookingPageV2 = () => {
         return options.find((option) => option.type === recommendedType) || options[0];
     };
 
+    const getLongStayOptionsForRoom = (roomId = roomSelect.value) => roomId ? getMonthlyOptionsForRoom(roomId) : [];
+
+    const monthlyRangeNeedsUseType = () => {
+        const { startValue, endValue } = selectedLongStayRange();
+
+        if (!roomSelect.value || !startValue || !endValue) {
+            return false;
+        }
+
+        const options = getLongStayOptionsForRoom(roomSelect.value);
+        if (!options.length) {
+            return false;
+        }
+
+        const hasUseTypeOptions = options.some((option) => ['daily', 'weekly'].includes(option.type));
+
+        if (!hasUseTypeOptions) {
+            return false;
+        }
+
+        return !isWholeCalendarMonthStay(startValue, endValue);
+    };
+
+    const syncLongStayUseSelection = () => {
+        const activeType = longStayUseTypeInput.value || '';
+
+        longStayUseChoices.forEach((button) => {
+            button.classList.toggle('is-active', button.dataset.longStayUseChoice === activeType);
+        });
+
+        if (activeType) {
+            monthlySummaryUseType.textContent = activeType === 'night'
+                ? 'Night Use (8:00 PM - 8:00 AM)'
+                : 'Day Use (8:00 AM - 8:00 PM)';
+            monthlySummaryUseTypeRow.classList.remove('hidden');
+            return;
+        }
+
+        monthlySummaryUseType.textContent = '--';
+        monthlySummaryUseTypeRow.classList.add('hidden');
+    };
+
+    const longStayUsePrompt = () => {
+        if (longStayUseTypeInput.value === 'night') {
+            return 'Night Use selected. HYVE will use the 8:00 PM to 8:00 AM rate window for each covered day.';
+        }
+
+        if (longStayUseTypeInput.value === 'day') {
+            return 'Day Use selected. HYVE will use the 8:00 AM to 8:00 PM rate window for each covered day.';
+        }
+
+        return 'Choose Day Use or Night Use first so HYVE can compute the correct long-stay total.';
+    };
+
+    const syncLongStayUseVisibility = () => {
+        const needsUseType = monthlyRangeNeedsUseType();
+        longStayUseWrap.classList.toggle('hidden', !needsUseType);
+
+        if (!needsUseType) {
+            longStayUseTypeInput.value = '';
+        }
+
+        syncLongStayUseSelection();
+
+        return needsUseType;
+    };
+
     const fetchMonthlyQuote = async () => {
         if (!roomSelect.value || !bookingDateInput.value || !bookingEndDateInput.value) {
             currentQuote = null;
@@ -2699,10 +2953,12 @@ const setupBookingPageV2 = () => {
             return;
         }
 
-        const data = await fetchJson(`${quoteUrl}?booking_mode=monthly&hyve_room_id=${encodeURIComponent(roomSelect.value)}&booking_date=${encodeURIComponent(bookingDateInput.value)}&booking_end_date=${encodeURIComponent(bookingEndDateInput.value)}`);
+        const useTypeQuery = longStayUseTypeInput.value ? `&long_stay_use_type=${encodeURIComponent(longStayUseTypeInput.value)}` : '';
+        const data = await fetchJson(`${quoteUrl}?booking_mode=monthly&hyve_room_id=${encodeURIComponent(roomSelect.value)}&booking_date=${encodeURIComponent(bookingDateInput.value)}&booking_end_date=${encodeURIComponent(bookingEndDateInput.value)}${useTypeQuery}`);
 
         currentQuote = data;
         monthlyPlanInput.value = data.monthly_plan_label || '';
+        longStayUseTypeInput.value = data.long_stay_use_type || '';
         quoteTotal.textContent = formatCurrency(data.total_amount);
         quoteMinimum.textContent = formatCurrency(data.minimum_downpayment_amount);
         quoteMeta.textContent = `${data.rate_name} | ${data.charge_period_label} | ${data.unit_label || '--'} from ${formatDate(bookingDateInput.value)} to ${formatDate(data.booking_end_date || bookingEndDateInput.value)}.`;
@@ -2716,11 +2972,16 @@ const setupBookingPageV2 = () => {
         monthlySummaryDate.textContent = formatDate(bookingDateInput.value);
         monthlySummaryEndDate.textContent = formatDate(data.booking_end_date || bookingEndDateInput.value);
         monthlySummaryPlan.textContent = data.monthly_plan_label || monthlyPlanInput.value;
+        monthlySummaryUseType.textContent = data.long_stay_use_label || '--';
+        monthlySummaryUseTypeRow.classList.toggle('hidden', !data.long_stay_use_label);
         monthlySummaryUnits.textContent = data.unit_label || '--';
         monthlySummaryTotal.textContent = formatCurrency(data.total_amount);
-        monthlyPlanDescription.textContent = `Automatic breakdown applied: ${data.monthly_plan_label || '--'}. Review the total below, then continue to checkout.`;
+        monthlyPlanDescription.textContent = data.long_stay_use_label
+            ? `Automatic breakdown applied: ${data.long_stay_use_label} - ${data.monthly_plan_label || '--'}. Review the total below, then continue to checkout.`
+            : `Automatic breakdown applied: ${data.monthly_plan_label || '--'}. Review the total below, then continue to checkout.`;
         monthlyInlineSummary.classList.remove('hidden');
         monthlyContinue.disabled = false;
+        syncLongStayUseSelection();
         updateBalance();
         updateCheckoutSummary();
     };
@@ -2763,6 +3024,8 @@ const setupBookingPageV2 = () => {
 
         if (!roomId) {
             monthlyPlanInput.value = '';
+            longStayUseTypeInput.value = '';
+            syncLongStayUseVisibility();
             monthlyPlanDescription.textContent = 'Select a room first, then choose your start date and end date.';
             quoteMeta.textContent = 'Select a room first to start a long-stay booking.';
             return;
@@ -2770,6 +3033,8 @@ const setupBookingPageV2 = () => {
 
         if (!options.length) {
             monthlyPlanInput.value = '';
+            longStayUseTypeInput.value = '';
+            syncLongStayUseVisibility();
             monthlyPlanDescription.textContent = 'This room does not have an active long-stay rate yet.';
             quoteMeta.textContent = 'No long-stay rates are available for this room yet.';
             return;
@@ -2778,6 +3043,8 @@ const setupBookingPageV2 = () => {
         if (!bookingDateInput.value || !bookingEndDateInput.value) {
             monthlyPlanInput.value = '';
             monthlySelectingEnd = false;
+            longStayUseTypeInput.value = '';
+            syncLongStayUseVisibility();
             monthlyPlanDescription.textContent = 'Choose your start date first, then choose your end date. HYVE will automatically compute the full long-stay breakdown.';
             quoteMeta.textContent = 'Select your stay period first to load the long-stay quote.';
             return;
@@ -2785,6 +3052,7 @@ const setupBookingPageV2 = () => {
 
         if (monthlySelectingEnd && bookingDateInput.value === bookingEndDateInput.value) {
             monthlyPlanInput.value = '';
+            syncLongStayUseVisibility();
             monthlySummaryDate.textContent = formatDate(bookingDateInput.value);
             monthlySummaryEndDate.textContent = '--';
             monthlySummaryPlan.textContent = '--';
@@ -2802,6 +3070,7 @@ const setupBookingPageV2 = () => {
         if (hasBlockedDatesInRange(bookingDateInput.value, bookingEndDateInput.value)) {
             monthlyPlanInput.value = '';
             monthlySelectingEnd = true;
+            syncLongStayUseVisibility();
             monthlyPlanDescription.textContent = 'The selected stay includes one or more fully booked dates. Please choose another date range.';
             quoteMeta.textContent = 'Your selected date range includes fully booked dates.';
             monthlyContinue.disabled = true;
@@ -2816,11 +3085,24 @@ const setupBookingPageV2 = () => {
             return;
         }
 
+        const needsUseType = syncLongStayUseVisibility();
         monthlySummaryDate.textContent = formatDate(bookingDateInput.value);
         monthlySummaryEndDate.textContent = formatDate(bookingEndDateInput.value);
         monthlySummaryUnits.textContent = `${longStayDayCount()} day${longStayDayCount() === 1 ? '' : 's'}`;
         monthlySelectingEnd = false;
-        monthlyPlanDescription.textContent = `Selected stay: ${formatDate(bookingDateInput.value)} to ${formatDate(bookingEndDateInput.value)}. HYVE will automatically compute the best long-stay breakdown.`;
+        monthlyPlanDescription.textContent = needsUseType
+            ? `Selected stay: ${formatDate(bookingDateInput.value)} to ${formatDate(bookingEndDateInput.value)}. ${longStayUsePrompt()}`
+            : `Selected stay: ${formatDate(bookingDateInput.value)} to ${formatDate(bookingEndDateInput.value)}. HYVE will automatically compute the best long-stay breakdown.`;
+
+        if (needsUseType && !longStayUseTypeInput.value) {
+            monthlyPlanInput.value = '';
+            monthlyContinue.disabled = true;
+            quoteTotal.textContent = 'Php 0.00';
+            quoteMinimum.textContent = 'Php 0.00';
+            quoteBalance.textContent = 'Php 0.00';
+            quoteMeta.textContent = 'Choose Day Use or Night Use first to load the correct long-stay quote.';
+            return;
+        }
 
         try {
             await fetchMonthlyQuote();
@@ -3230,7 +3512,7 @@ const setupBookingPageV2 = () => {
         summaryStart.textContent = startSelect.selectedOptions[0]?.textContent ?? startSelect.value;
         summaryEnd.textContent = endSelect.selectedOptions[0]?.textContent ?? endSelect.value;
         summaryDuration.textContent = data.duration_hours === 1 ? '1 hour' : `${data.duration_hours} hours`;
-        summaryRate.textContent = `${data.rate_name} - ${data.charge_period_label}`;
+        summaryRate.innerHTML = buildRateBreakdownMarkup(data, startSelect.value, endSelect.value);
         summaryTotal.textContent = formatCurrency(data.total_amount);
         inlineSummary.classList.remove('hidden');
         checkoutStart.textContent = startSelect.selectedOptions[0]?.textContent ?? startSelect.value;
@@ -3401,6 +3683,7 @@ const setupBookingPageV2 = () => {
                                 room_space: room.space_label || '',
                                 label: availableSlot.label,
                                 total_amount: Number(availableSlot.total_amount || 0),
+                                breakdown: Array.isArray(availableSlot.breakdown) ? availableSlot.breakdown : [],
                             });
                         }
 
@@ -3770,6 +4053,16 @@ const setupBookingPageV2 = () => {
         await refreshMonthlySelection();
     });
 
+    longStayUseChoices.forEach((button) => {
+        button.addEventListener('click', async () => {
+            const useType = button.dataset.longStayUseChoice || '';
+            longStayUseTypeInput.value = useType;
+            syncLongStayUseSelection();
+            monthlyPlanDescription.textContent = `Selected stay: ${formatDate(bookingDateInput.value)} to ${formatDate(bookingEndDateInput.value)}. ${longStayUsePrompt()}`;
+            await refreshMonthlySelection();
+        });
+    });
+
     document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape' && !monthlyBlockedModal.classList.contains('hidden')) {
             closeMonthlyBlockedModal();
@@ -3801,6 +4094,7 @@ const setupBookingPageV2 = () => {
     monthlyStartDateInput.value = bookingDateInput.value || '';
     monthlyEndDateInput.value = bookingEndDateInput.value || bookingDateInput.value || '';
     monthlyEndDateInput.min = monthlyStartDateInput.value || todayValue;
+    syncLongStayUseVisibility();
     resetSlots();
     resetQuote();
     resetMonthlySummary();
