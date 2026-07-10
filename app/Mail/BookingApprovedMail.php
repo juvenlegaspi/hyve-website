@@ -43,16 +43,29 @@ class BookingApprovedMail extends Mailable
      */
     public function attachments(): array
     {
-        $path = storage_path('app/hyve-house-rules.pdf');
+        $attachments = [];
 
-        if (! is_file($path)) {
-            return [];
+        $documents = [
+            [
+                'path' => storage_path('app/hyve-house-rules.pdf'),
+                'name' => 'HYVE House Rules.pdf',
+            ],
+            [
+                'path' => storage_path('app/hyve-booking-terms-and-conditions.pdf'),
+                'name' => 'HYVE Booking Terms and Conditions.pdf',
+            ],
+        ];
+
+        foreach ($documents as $document) {
+            if (! is_file($document['path'])) {
+                continue;
+            }
+
+            $attachments[] = Attachment::fromPath($document['path'])
+                ->as($document['name'])
+                ->withMime('application/pdf');
         }
 
-        return [
-            Attachment::fromPath($path)
-                ->as('HYVE House Rules.pdf')
-                ->withMime('application/pdf'),
-        ];
+        return $attachments;
     }
 }

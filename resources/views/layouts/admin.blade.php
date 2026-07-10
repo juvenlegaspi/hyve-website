@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ $meta['title'] ?? 'HYVE Admin' }}</title>
     <meta name="description" content="{{ $meta['description'] ?? 'HYVE admin dashboard' }}">
+    <link rel="icon" type="image/jpeg" href="{{ asset('images/logohyve.jpg') }}">
+    <link rel="shortcut icon" href="{{ asset('images/logohyve.jpg') }}">
+    <link rel="apple-touch-icon" href="{{ asset('images/logohyve.jpg') }}">
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body class="min-h-screen bg-[#f7f5ef] text-[#153027] antialiased">

@@ -24,7 +24,7 @@
 
                 <div class="px-7 py-7 sm:px-8">
                     <h1 class="text-[1.7rem] font-semibold tracking-[-0.04em] text-[#1d1d1d]">Create your account</h1>
-                    <p class="mt-1 text-[0.92rem] text-[#9a9a9a]">Register for your CourtSpace membership access</p>
+                    <p class="mt-1 text-[0.92rem] text-[#9a9a9a]">Register for your HYVE membership access</p>
 
                     @if ($errors->any())
                         <div class="mt-4 rounded-[1rem] border border-red-200 bg-red-50 px-4 py-3 text-[0.8rem] text-red-700">
@@ -39,7 +39,7 @@
 
                         <label class="block">
                             <span class="mb-2 block text-[0.78rem] font-semibold uppercase tracking-[0.12em] text-[#b1aba2]">Username</span>
-                            <input type="text" name="username" value="{{ old('username') }}" class="w-full rounded-[0.95rem] border border-[#e6e0d7] bg-white px-4 py-3 text-[0.95rem] text-[#232323] outline-none transition focus:border-[#3f7b3d]" placeholder="courtspace01">
+                            <input type="text" name="username" value="{{ old('username') }}" class="w-full rounded-[0.95rem] border border-[#e6e0d7] bg-white px-4 py-3 text-[0.95rem] text-[#232323] outline-none transition focus:border-[#3f7b3d]" placeholder="hyve_user1">
                         </label>
 
                         <label class="block">

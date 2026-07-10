@@ -95,6 +95,107 @@ class HyvePricing
     }
 
     /**
+     * @return array{
+     *     rate_card: HyveRate,
+     *     payment_setting: PaymentSetting|null,
+     *     charge_period: string,
+     *     charge_period_label: string,
+     *     duration_hours: float,
+     *     billed_hours: float,
+     *     total_amount: float,
+     *     minimum_downpayment_amount: float,
+     *     downpayment_amount: float,
+     *     balance_amount: float,
+     *     minimum_hours: int,
+     *     minimum_rate: float,
+     *     succeeding_hour_rate: float,
+     *     rate_name: string
+     * }|null
+     */
+    public function quoteExtensionForRoom(HyveRoom $room, string $bookingDate, string $startTime, string $endTime): ?array
+    {
+        $rateCard = $this->rateForRoom($room);
+
+        if (! $rateCard) {
+            return null;
+        }
+
+        $paymentSetting = $this->activePaymentSetting();
+        [$start, $end] = $this->dateRange($bookingDate, $startTime, $endTime);
+        $durationHours = round($start->diffInMinutes($end, true) / 60, 2);
+        $minimumHours = max(1, (int) $rateCard->minimum_hours);
+
+        $segments = $this->dayNightSegments($start, $end);
+        if ($segments === []) {
+            $period = $this->chargePeriodForStart($start);
+            $segments = [[
+                'period' => $period,
+                'minutes' => (int) $start->diffInMinutes($end, true),
+            ]];
+        }
+
+        $totalAmount = 0.0;
+        $periodsUsed = [];
+        $lastSucceedingRate = 0.0;
+        $chargePeriod = 'day';
+
+        foreach ($segments as $segment) {
+            $periodsUsed[$segment['period']] = true;
+            $succeedingHourlyRate = (float) ($segment['period'] === 'night'
+                ? $rateCard->night_succeeding_hour_rate
+                : $rateCard->day_succeeding_hour_rate);
+
+            $lastSucceedingRate = $succeedingHourlyRate;
+        }
+
+        $chargePeriod = count($periodsUsed) > 1
+            ? 'mixed'
+            : array_key_first($periodsUsed);
+        $chargePeriodLabel = match ($chargePeriod) {
+            'night' => 'Night Use',
+            'mixed' => 'Day + Night Use',
+            default => 'Day Use',
+        };
+
+        if ($chargePeriod === 'mixed') {
+            foreach ($segments as $segment) {
+                $segmentHours = round($segment['minutes'] / 60, 2);
+                $succeedingHourlyRate = (float) ($segment['period'] === 'night'
+                    ? $rateCard->night_succeeding_hour_rate
+                    : $rateCard->day_succeeding_hour_rate);
+
+                $totalAmount += $segmentHours * $succeedingHourlyRate;
+            }
+        } else {
+            $billableHours = $durationHours;
+            $totalAmount = $billableHours * $lastSucceedingRate;
+        }
+
+        $totalAmount = round($totalAmount, 2);
+        $minimumDownpaymentAmount = $this->minimumDownpaymentForTotal($totalAmount);
+        $downpaymentAmount = $minimumDownpaymentAmount;
+        $balanceAmount = round($totalAmount - $downpaymentAmount, 2);
+        $billedHours = $durationHours;
+
+        return [
+            'rate_card' => $rateCard,
+            'payment_setting' => $paymentSetting,
+            'charge_period' => $chargePeriod,
+            'charge_period_label' => $chargePeriodLabel,
+            'duration_hours' => $durationHours,
+            'billed_hours' => $billedHours,
+            'total_amount' => $totalAmount,
+            'minimum_downpayment_amount' => $minimumDownpaymentAmount,
+            'downpayment_amount' => $downpaymentAmount,
+            'balance_amount' => $balanceAmount,
+            'minimum_hours' => $minimumHours,
+            'minimum_rate' => 0.0,
+            'succeeding_hour_rate' => round($chargePeriod === 'mixed' ? 0 : $lastSucceedingRate, 2),
+            'rate_name' => $rateCard->title.' - Extension',
+        ];
+    }
+
+    /**
      * @return array<int, array{label: string, amount: float, display_amount: string}>
      */
     public function monthlyOptionsForRoom(HyveRoom $room): array
@@ -300,7 +401,7 @@ class HyvePricing
             $unitType = (string) $selectedPlan['type'];
             $unitCount = match ($unitType) {
                 'weekly' => (int) ceil($dayCount / 7),
-                'monthly' => (int) ceil($dayCount / 30),
+                'monthly' => $this->calendarMonthUnitsToCoverRange($start, $end),
                 default => $dayCount,
             };
             $unitLabel = match ($unitType) {
@@ -356,19 +457,37 @@ class HyvePricing
         $monthlyOption = $optionsByType->get('monthly');
         $weeklyOption = $optionsByType->get('weekly');
         $dailyOption = $optionsByType->get('daily');
+        $cursor = $start->copy();
 
-        if ($monthlyOption && $remainingDays >= 30) {
-            $monthCount = intdiv($remainingDays, 30);
-            $remainingDays -= $monthCount * 30;
-            $amount = round($monthCount * (float) $monthlyOption['amount'], 2);
-            $breakdown[] = [
-                'type' => 'monthly',
-                'label' => (string) $monthlyOption['label'],
-                'unit_count' => $monthCount,
-                'days' => $monthCount * 30,
-                'amount' => $amount,
-            ];
-            $totalAmount += $amount;
+        if ($monthlyOption) {
+            $monthCount = 0;
+            $monthlyDays = 0;
+
+            while (true) {
+                $segment = $this->calendarMonthSegment($cursor);
+
+                if ($segment['end']->gt($end)) {
+                    break;
+                }
+
+                $monthCount++;
+                $monthlyDays += $segment['days'];
+                $cursor = $segment['next_start'];
+            }
+
+            $remainingDays -= $monthlyDays;
+
+            if ($monthCount > 0) {
+                $amount = round($monthCount * (float) $monthlyOption['amount'], 2);
+                $breakdown[] = [
+                    'type' => 'monthly',
+                    'label' => (string) $monthlyOption['label'],
+                    'unit_count' => $monthCount,
+                    'days' => $monthlyDays,
+                    'amount' => $amount,
+                ];
+                $totalAmount += $amount;
+            }
         }
 
         if ($weeklyOption && $remainingDays >= 7) {
@@ -487,8 +606,8 @@ class HyvePricing
     private function chargePeriodForStart(Carbon $start): string
     {
         $minutes = ((int) $start->format('H') * 60) + (int) $start->format('i');
-        $dayStartMinutes = 6 * 60;
-        $nightStartMinutes = 18 * 60;
+        $dayStartMinutes = 8 * 60;
+        $nightStartMinutes = 20 * 60;
 
         return $minutes >= $nightStartMinutes || $minutes < $dayStartMinutes
             ? 'night'
@@ -592,16 +711,16 @@ class HyvePricing
     private function nextDayNightBoundary(Carbon $moment, string $period): Carbon
     {
         if ($period === 'day') {
-            return $moment->copy()->setTime(18, 0);
+            return $moment->copy()->setTime(20, 0);
         }
 
         $minutes = ((int) $moment->format('H') * 60) + (int) $moment->format('i');
 
-        if ($minutes >= 18 * 60) {
-            return $moment->copy()->addDay()->setTime(6, 0);
+        if ($minutes >= 20 * 60) {
+            return $moment->copy()->addDay()->setTime(8, 0);
         }
 
-        return $moment->copy()->setTime(6, 0);
+        return $moment->copy()->setTime(8, 0);
     }
 
     private function isHolidayPricingDate(string $bookingDate): bool
@@ -621,5 +740,39 @@ class HyvePricing
         }
 
         return (float) str_replace(',', '', $matches[1]);
+    }
+
+    /**
+     * @return array{end: Carbon, next_start: Carbon, days: int}
+     */
+    private function calendarMonthSegment(Carbon $start): array
+    {
+        $nextStart = $start->copy()->addMonthNoOverflow();
+        $segmentEnd = $nextStart->copy()->subDay();
+
+        return [
+            'end' => $segmentEnd,
+            'next_start' => $nextStart,
+            'days' => max(1, $start->diffInDays($segmentEnd) + 1),
+        ];
+    }
+
+    private function calendarMonthUnitsToCoverRange(Carbon $start, Carbon $end): int
+    {
+        $count = 0;
+        $cursor = $start->copy();
+
+        while ($cursor->lte($end)) {
+            $count++;
+            $segment = $this->calendarMonthSegment($cursor);
+
+            if ($segment['end']->gte($end)) {
+                break;
+            }
+
+            $cursor = $segment['next_start'];
+        }
+
+        return max(1, $count);
     }
 }

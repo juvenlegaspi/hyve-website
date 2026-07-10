@@ -1527,6 +1527,7 @@
                                     <div class="admin-bookings-modal__actions">
                                         ${booking.can_start ? `<button type="button" class="admin-bookings-modal__button admin-bookings-modal__button--primary" data-admin-booking-action="start" data-booking-id="${booking.id}" data-url="${booking.start_url}">Start</button>` : ''}
                                         ${booking.can_end ? `<button type="button" class="admin-bookings-modal__button" data-admin-booking-action="end" data-booking-id="${booking.id}" data-url="${booking.end_url}">End</button>` : ''}
+                                        ${booking.can_extend ? `<button type="button" class="admin-bookings-modal__button" data-admin-booking-action="extend" data-booking-id="${booking.id}" data-url="${booking.extend_url}" data-current-end="${booking.end_time_value || ''}">Extend</button>` : ''}
                                     </div>
                                 `
                                 : '';
@@ -1589,6 +1590,17 @@
                                 <tbody>${rows}</tbody>
                             </table>
                         `;
+                    };
+
+                    const syncOpenBookingModal = (bookingGroup) => {
+                        if (!activeRow || !bookingGroup) {
+                            return;
+                        }
+
+                        applyBookingRowDataset(activeRow, bookingGroup);
+                        currentBookings = Array.isArray(bookingGroup.bookings) ? bookingGroup.bookings : [];
+                        rebuildSummary();
+                        openBookingRow(activeRow);
                     };
 
             if (notifyWrap) {
@@ -1694,7 +1706,7 @@
 
             bindBookingRowEvents();
 
-            slotsWrap.addEventListener('click', async (event) => {
+                    slotsWrap.addEventListener('click', async (event) => {
                 const button = event.target.closest('[data-admin-booking-action]');
 
                 if (!button) {
@@ -1706,6 +1718,28 @@
 
                 if (!bookingId || !url) {
                     return;
+                }
+
+                let requestBody = {};
+
+                if (button.dataset.adminBookingAction === 'extend') {
+                    const currentEnd = button.dataset.currentEnd || '';
+                    const nextEnd = window.prompt(`Enter the new end time in 24-hour format (HH:MM).\nCurrent end time: ${currentEnd || '--'}`, currentEnd);
+
+                    if (nextEnd === null) {
+                        return;
+                    }
+
+                    const normalizedEnd = nextEnd.trim();
+
+                    if (!/^\d{2}:\d{2}$/.test(normalizedEnd)) {
+                        setNotice('Please enter the new end time in HH:MM format.', true);
+                        return;
+                    }
+
+                    requestBody = {
+                        end_time: normalizedEnd,
+                    };
                 }
 
                 button.disabled = true;
@@ -1720,14 +1754,31 @@
                             'X-CSRF-TOKEN': csrfToken,
                             'X-Requested-With': 'XMLHttpRequest',
                         },
-                        body: JSON.stringify({}),
+                        body: JSON.stringify(requestBody),
                     });
 
                     if (!response.ok) {
-                        throw new Error('Unable to update booking line.');
+                        let errorMessage = 'Unable to update booking line.';
+
+                        try {
+                            const errorPayload = await response.json();
+                            errorMessage = errorPayload.message
+                                || errorPayload.errors?.end_time?.[0]
+                                || errorMessage;
+                        } catch (jsonError) {
+                        }
+
+                        throw new Error(errorMessage);
                     }
 
                     const payload = await response.json();
+
+                    if (payload.booking && Array.isArray(payload.booking.bookings)) {
+                        syncOpenBookingModal(payload.booking);
+                        setNotice(payload.message ?? 'Booking line updated successfully.', true);
+                        return;
+                    }
+
                     const bookingIndex = currentBookings.findIndex((booking) => Number(booking.id) === bookingId);
 
                     if (bookingIndex !== -1) {
@@ -1753,7 +1804,7 @@
                     renderBookings();
                     setNotice(payload.message ?? 'Booking line updated successfully.', true);
                 } catch (error) {
-                    setNotice('Unable to save the action right now. Please try again.', true);
+                    setNotice(error?.message || 'Unable to save the action right now. Please try again.', true);
                 } finally {
                     button.disabled = false;
                 }

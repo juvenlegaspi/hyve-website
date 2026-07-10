@@ -195,11 +195,31 @@ class BookingSubmissionTest extends TestCase
         ]);
     }
 
+    public function test_quote_endpoint_uses_night_rate_starting_at_8_pm(): void
+    {
+        $room = HyveRoom::query()->where('room_name', 'Room 1')->firstOrFail();
+
+        $response = $this->getJson(route('bookings.quote', [
+            'hyve_room_id' => $room->id,
+            'booking_date' => now()->addDay()->toDateString(),
+            'start_time' => '20:00',
+            'end_time' => '22:00',
+        ]));
+
+        $response->assertOk();
+        $response->assertJsonFragment([
+            'rate_name' => 'Fortitude Office (2 Seats) - Night Use',
+            'charge_period' => 'night',
+            'charge_period_label' => 'Night Use',
+            'total_amount' => 319,
+        ]);
+    }
+
     public function test_quote_endpoint_returns_monthly_plan_amounts(): void
     {
         $room = HyveRoom::query()->where('room_name', 'Room 7')->firstOrFail();
-        $startDate = now()->addDay()->toDateString();
-        $endDate = now()->addDays(30)->toDateString();
+        $startDate = '2026-08-01';
+        $endDate = '2026-08-31';
 
         $response = $this->getJson(route('bookings.quote', [
             'booking_mode' => 'monthly',
@@ -217,6 +237,27 @@ class BookingSubmissionTest extends TestCase
             'minimum_downpayment_amount' => 500,
             'unit_type' => 'monthly',
             'unit_count' => 1,
+        ]);
+    }
+
+    public function test_quote_endpoint_uses_calendar_month_breakdown_for_long_stay_ranges(): void
+    {
+        $room = HyveRoom::query()->where('room_name', 'Room 7')->firstOrFail();
+
+        $response = $this->getJson(route('bookings.quote', [
+            'booking_mode' => 'monthly',
+            'hyve_room_id' => $room->id,
+            'booking_date' => '2026-08-01',
+            'booking_end_date' => '2026-09-03',
+        ]));
+
+        $response->assertOk();
+        $response->assertJsonFragment([
+            'unit_type' => 'monthly',
+            'unit_count' => 1,
+            'monthly_plan_label' => '1 month + 3 days',
+            'unit_label' => '1 month + 3 days',
+            'total_amount' => 36477,
         ]);
     }
 
@@ -275,8 +316,8 @@ class BookingSubmissionTest extends TestCase
             'email' => 'monthly@example.com',
             'phone' => '+639171110000',
             'hyve_room_id' => $room->id,
-            'booking_date' => now()->addDays(3)->toDateString(),
-            'booking_end_date' => now()->addDays(32)->toDateString(),
+            'booking_date' => '2026-08-01',
+            'booking_end_date' => '2026-08-31',
             'monthly_plan' => 'Monthly Rental',
             'guests' => 4,
             'downpayment_amount' => 500,
@@ -311,7 +352,7 @@ class BookingSubmissionTest extends TestCase
         ]);
 
         $detail = BookingDetail::query()->where('hyve_room_id', $room->id)->latest('id')->firstOrFail();
-        $this->assertSame(now()->addDays(32)->toDateString(), optional($detail->booking_end_date)->toDateString());
+        $this->assertSame('2026-08-31', optional($detail->booking_end_date)->toDateString());
     }
 
     public function test_guest_users_can_submit_a_full_schedule_booking_with_multiple_room_slots(): void

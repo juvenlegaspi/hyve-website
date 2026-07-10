@@ -21,6 +21,30 @@ use Illuminate\Support\Facades\Route;
 
 Route::get('/', HomeController::class)->name('home');
 
+Route::get('/policies/{document}', function (string $document) {
+    $documents = [
+        'house-rules' => [
+            'path' => storage_path('app/hyve-house-rules.pdf'),
+            'name' => 'HYVE House Rules.pdf',
+        ],
+        'booking-terms' => [
+            'path' => storage_path('app/hyve-booking-terms-and-conditions.pdf'),
+            'name' => 'HYVE Booking Terms and Conditions.pdf',
+        ],
+    ];
+
+    abort_unless(isset($documents[$document]), 404);
+
+    $file = $documents[$document];
+
+    abort_unless(is_file($file['path']), 404);
+
+    return response()->file($file['path'], [
+        'Content-Type' => 'application/pdf',
+        'Content-Disposition' => 'inline; filename="'.$file['name'].'"',
+    ]);
+})->name('policies.show');
+
 Route::middleware('guest')->group(function () {
     Route::get('/register', [RegisteredUserController::class, 'create'])->name('register');
     Route::post('/register', [RegisteredUserController::class, 'store'])->name('register.store');
@@ -74,6 +98,7 @@ Route::middleware('auth')->prefix('admin')->name('admin.')->group(function () {
         Route::post('/booking-details/{bookingDetail}/reject', [AdminBookingController::class, 'rejectDetail'])->name('booking-details.reject');
         Route::post('/booking-details/{bookingDetail}/start', [AdminBookingController::class, 'startDetail'])->name('booking-details.start');
         Route::post('/booking-details/{bookingDetail}/end', [AdminBookingController::class, 'endDetail'])->name('booking-details.end');
+        Route::post('/booking-details/{bookingDetail}/extend', [AdminBookingController::class, 'extendDetail'])->name('booking-details.extend');
     });
 
     Route::get('/rooms', [AdminSectionController::class, 'show'])->defaults('section', 'rooms')->middleware('permission:rooms.view')->name('sections.rooms');

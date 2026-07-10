@@ -138,6 +138,38 @@
             font-weight: 700;
             cursor: pointer;
         }
+
+        .agreement-documents {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 0.85rem;
+            margin: 1rem 0 1.25rem;
+        }
+
+        .agreement-document {
+            border: 1px solid #dfe7d8;
+            border-radius: 1rem;
+            background: #f9fbf5;
+            padding: 0.95rem 1rem;
+        }
+
+        .agreement-document h3 {
+            margin-top: 0;
+        }
+
+        .agreement-document p {
+            margin: 0.35rem 0 0.8rem;
+        }
+
+        .agreement-document a {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            color: #2f6e42;
+            font-size: 0.82rem;
+            font-weight: 700;
+            text-decoration: underline;
+        }
     </style>
 @endonce
 
@@ -157,7 +189,25 @@
         </div>
 
         <div class="agreement-modal__body">
-            <p>Please review the official HYVE House Rules before submitting your booking or payment.</p>
+            <p>Please review both official HYVE documents before submitting your booking or payment.</p>
+
+            <div class="agreement-documents">
+                <div class="agreement-document">
+                    <h3>HYVE House Rules</h3>
+                    <p>Workspace conduct, etiquette, safety, and daily use policies for all members and guests.</p>
+                    <a href="{{ route('policies.show', 'house-rules') }}" target="_blank" rel="noopener">
+                        View PDF
+                    </a>
+                </div>
+
+                <div class="agreement-document">
+                    <h3>Booking Terms & Conditions</h3>
+                    <p>Official booking terms covering reservations, payments, cancellations, liability, and customer obligations.</p>
+                    <a href="{{ route('policies.show', 'booking-terms') }}" target="_blank" rel="noopener">
+                        View PDF
+                    </a>
+                </div>
+            </div>
 
             <h3>Professional Conduct</h3>
             <ul>
@@ -249,11 +299,11 @@
             </ul>
 
             <h3>Agreement</h3>
-            <p>By checking the agreement box, you confirm that you have read, understood, and agreed to follow the official HYVE House Rules during your booking and while using the workspace.</p>
+            <p>By checking the agreement box, you confirm that you have read, understood, and agreed to follow both the official HYVE House Rules and the official HYVE Booking Terms &amp; Conditions during your booking and while using the workspace.</p>
         </div>
 
         <div class="agreement-modal__footer">
-            <p class="text-[0.8rem] text-[#728075]">These house rules apply to members, guests, and all workspace users inside HYVE.</p>
+            <p class="text-[0.8rem] text-[#728075]">These policies apply to members, guests, and all workspace users inside HYVE.</p>
             <button type="button" data-agreement-accept>I understand and agree</button>
         </div>
     </div>

@@ -11,6 +11,7 @@ use App\Models\BookingHeader;
 use App\Models\BookingPayment;
 use App\Services\BookingApprovalTextService;
 use App\Services\BookingWifiVoucherService;
+use App\Support\HyvePricing;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Carbon;
 use Illuminate\Http\RedirectResponse;
@@ -19,12 +20,14 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class AdminBookingController extends Controller
 {
     public function __construct(
         private readonly BookingWifiVoucherService $wifiVoucherService,
+        private readonly HyvePricing $pricing,
     ) {
     }
 
@@ -142,8 +145,11 @@ class AdminBookingController extends Controller
         );
 
         if ($request->expectsJson()) {
+            $freshHeader = $header->fresh(['details.hyveRoom', 'details.space', 'payments', 'user', 'wifiVoucher']);
+
             return response()->json([
                 'message' => 'Booked line approved successfully.',
+                'booking' => $this->bookingRowPayload($freshHeader),
                 'detail' => [
                     'id' => $bookingDetail->getKey(),
                     'status' => 'Approved',
@@ -215,8 +221,11 @@ class AdminBookingController extends Controller
         );
 
         if ($request->expectsJson()) {
+            $freshHeader = $header->fresh(['details.hyveRoom', 'details.space', 'payments', 'user', 'wifiVoucher']);
+
             return response()->json([
                 'message' => 'Booked line rejected successfully.',
+                'booking' => $this->bookingRowPayload($freshHeader),
                 'detail' => [
                     'id' => $bookingDetail->getKey(),
                     'status' => 'Rejected',
@@ -263,8 +272,11 @@ class AdminBookingController extends Controller
         }
 
         if ($request->expectsJson()) {
+            $freshHeader = $header?->fresh(['details.hyveRoom', 'details.space', 'payments', 'user', 'wifiVoucher']);
+
             return response()->json([
                 'message' => 'Booked line started successfully.',
+                'booking' => $freshHeader ? $this->bookingRowPayload($freshHeader) : null,
                 'detail' => [
                     'id' => $bookingDetail->getKey(),
                     ...$this->detailProgressPayload($bookingDetail->fresh()),
@@ -281,10 +293,22 @@ class AdminBookingController extends Controller
             return $this->detailActionErrorResponse($request, 'This booked line cannot be ended yet.');
         }
 
-        $bookingDetail->update([
-            'progress_status' => BookingDetail::PROGRESS_COMPLETED,
-            'actual_end_at' => now(),
-        ]);
+        $endedAt = now();
+        $sessionStartedAt = $this->timedSessionDetails($bookingDetail)
+            ->map(fn (BookingDetail $sessionDetail) => $sessionDetail->actual_start_at)
+            ->filter()
+            ->sortBy(fn (Carbon $value) => $value->timestamp)
+            ->first();
+
+        $this->timedSessionDetails($bookingDetail)
+            ->where('status', BookingDetail::STATUS_CONFIRMED)
+            ->each(function (BookingDetail $sessionDetail) use ($endedAt, $sessionStartedAt): void {
+                $sessionDetail->update([
+                    'progress_status' => BookingDetail::PROGRESS_COMPLETED,
+                    'actual_start_at' => $sessionDetail->actual_start_at ?? $sessionStartedAt ?? $endedAt,
+                    'actual_end_at' => $endedAt,
+                ]);
+            });
 
         $bookingDetail = $bookingDetail->fresh(['hyveRoom', 'space']);
         $header = $bookingDetail->bookingHeader;
@@ -300,8 +324,11 @@ class AdminBookingController extends Controller
         }
 
         if ($request->expectsJson()) {
+            $freshHeader = $header?->fresh(['details.hyveRoom', 'details.space', 'payments', 'user', 'wifiVoucher']);
+
             return response()->json([
                 'message' => 'Booked line ended successfully.',
+                'booking' => $freshHeader ? $this->bookingRowPayload($freshHeader) : null,
                 'detail' => [
                     'id' => $bookingDetail->getKey(),
                     ...$this->detailProgressPayload($bookingDetail->fresh()),
@@ -310,6 +337,115 @@ class AdminBookingController extends Controller
         }
 
         return back()->with('admin_success', 'Booked line ended successfully.');
+    }
+
+    public function extendDetail(Request $request, BookingDetail $bookingDetail): JsonResponse|RedirectResponse
+    {
+        if (! $this->canExtendDetail($bookingDetail)) {
+            return $this->detailActionErrorResponse($request, 'This booked line cannot be extended right now.');
+        }
+
+        $validated = $request->validate([
+            'end_time' => ['required', 'date_format:H:i'],
+        ]);
+
+        $normalizedCurrentEnd = substr((string) $bookingDetail->end_time, 0, 5);
+        $normalizedRequestedEnd = (string) $validated['end_time'];
+
+        if ($normalizedRequestedEnd === $normalizedCurrentEnd) {
+            throw ValidationException::withMessages([
+                'end_time' => 'Pick a later end time to extend this booking.',
+            ]);
+        }
+
+        $slotIntervalMinutes = max(1, (int) config('hyve.booking.slot_interval_minutes', 30));
+        $requestedEnd = Carbon::createFromFormat('H:i', $normalizedRequestedEnd);
+        if (((int) $requestedEnd->format('i')) % $slotIntervalMinutes !== 0) {
+            throw ValidationException::withMessages([
+                'end_time' => 'End time must follow the '.sprintf('%d-minute', $slotIntervalMinutes).' booking interval.',
+            ]);
+        }
+
+        $bookingDate = optional($bookingDetail->booking_date)->toDateString();
+        if (! $bookingDate || ! $bookingDetail->hyveRoom) {
+            return $this->detailActionErrorResponse($request, 'This booked line is missing room or booking date details.');
+        }
+
+        [$extensionStart, $extensionEnd] = $this->timedRangeForDate(
+            $bookingDate,
+            $normalizedCurrentEnd,
+            $normalizedRequestedEnd,
+        );
+
+        if (! $extensionEnd->gt($extensionStart)) {
+            throw ValidationException::withMessages([
+                'end_time' => 'Pick a valid end time after the current booked end time.',
+            ]);
+        }
+
+        if ($this->extensionOverlapsExistingBooking($bookingDetail, $extensionStart, $extensionEnd)) {
+            throw ValidationException::withMessages([
+                'end_time' => 'That extension overlaps another booking for this room.',
+            ]);
+        }
+
+        $quote = $this->pricing->quoteExtensionForRoom(
+            $bookingDetail->hyveRoom,
+            $bookingDate,
+            $normalizedCurrentEnd,
+            $normalizedRequestedEnd,
+        );
+
+        if (! $quote) {
+            return $this->detailActionErrorResponse($request, 'Unable to compute the extension amount for this room right now.');
+        }
+
+        $header = $bookingDetail->bookingHeader()->with(['details.hyveRoom', 'details.space', 'payments'])->firstOrFail();
+
+        $extendedDetail = $header->details()->create([
+            'space_id' => $bookingDetail->space_id,
+            'hyve_room_id' => $bookingDetail->hyve_room_id,
+            'booking_date' => $bookingDate,
+            'booking_end_date' => $extensionEnd->toDateString(),
+            'start_time' => $extensionStart->format('H:i:s'),
+            'end_time' => $extensionEnd->format('H:i:s'),
+            'charge_period' => (string) ($quote['charge_period'] ?? 'day'),
+            'duration_hours' => (float) ($quote['duration_hours'] ?? 0),
+            'billed_hours' => (float) ($quote['billed_hours'] ?? 0),
+            'guests' => (int) ($bookingDetail->guests ?? 1),
+            'rate_name' => (string) ($quote['rate_name'] ?? 'Extension'),
+            'rate_amount' => (float) ($quote['succeeding_hour_rate'] ?? $quote['total_amount'] ?? 0),
+            'subtotal' => (float) ($quote['total_amount'] ?? 0),
+            'status' => BookingDetail::STATUS_CONFIRMED,
+            'progress_status' => BookingDetail::PROGRESS_SCHEDULED,
+            'actual_start_at' => null,
+            'actual_end_at' => null,
+        ]);
+
+        $freshHeader = $header->fresh(['details.hyveRoom', 'details.space', 'payments', 'user', 'wifiVoucher']);
+        $this->syncHeaderStatus($freshHeader->fresh(['details']));
+        $this->syncHeaderFinancialSnapshot($freshHeader->fresh(['details', 'payments']));
+        $this->syncWifiVoucher($freshHeader->fresh(['details', 'wifiVoucher']));
+
+        $extendedDetail = $extendedDetail->fresh(['hyveRoom', 'space']);
+        $freshHeader = $freshHeader->fresh(['details.hyveRoom', 'details.space', 'payments', 'user', 'wifiVoucher']);
+
+        $this->recordActivity(
+            $freshHeader,
+            $extendedDetail,
+            'booking_line_extended',
+            'Booking extended',
+            'Extended '.$this->activityRoomName($extendedDetail).' for '.$freshHeader->customer_name.' until '.$this->displayDateTime($extensionEnd).'.'
+        );
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'message' => 'Booking extended successfully.',
+                'booking' => $this->bookingRowPayload($freshHeader),
+            ]);
+        }
+
+        return back()->with('admin_success', 'Booking extended successfully.');
     }
 
     public function markNotificationsRead(Request $request): JsonResponse
@@ -465,8 +601,25 @@ class AdminBookingController extends Controller
         return $scheduledEnd->format('F j, Y g:i A');
     }
 
+    private function canExtendDetail(BookingDetail $detail): bool
+    {
+        if (! $this->isLatestTimedSessionDetail($detail)) {
+            return false;
+        }
+
+        return (string) $detail->status === BookingDetail::STATUS_CONFIRMED
+            && ! $this->isLongStayDetail($detail)
+            && ! $detail->actual_end_at
+            && $detail->hyve_room_id !== null
+            && $detail->bookingHeader !== null;
+    }
+
     private function canStartDetail(BookingDetail $detail): bool
     {
+        if (! $this->isFirstTimedSessionDetail($detail) || $this->sessionHasStarted($detail)) {
+            return false;
+        }
+
         return (string) $detail->status === BookingDetail::STATUS_CONFIRMED
             && ! $detail->actual_start_at
             && ! $detail->actual_end_at;
@@ -474,9 +627,13 @@ class AdminBookingController extends Controller
 
     private function canEndDetail(BookingDetail $detail): bool
     {
+        if (! $this->isLatestTimedSessionDetail($detail) || ! $this->sessionHasStarted($detail)) {
+            return false;
+        }
+
         return (string) $detail->status === BookingDetail::STATUS_CONFIRMED
             && (string) $detail->progress_status !== BookingDetail::PROGRESS_COMPLETED
-            && (bool) $detail->actual_start_at;
+            && ! $detail->actual_end_at;
     }
 
     private function detailProgressPayload(BookingDetail $detail): array
@@ -494,6 +651,193 @@ class AdminBookingController extends Controller
             'can_start' => $this->canStartDetail($detail),
             'can_end' => $this->canEndDetail($detail),
         ];
+    }
+
+    /**
+     * @return array{0: Carbon, 1: Carbon}
+     */
+    private function timedRangeForDate(string $bookingDate, string $startTime, string $endTime): array
+    {
+        $start = Carbon::parse($bookingDate.' '.$startTime);
+        $end = Carbon::parse($bookingDate.' '.$endTime);
+
+        if ($end->lessThanOrEqualTo($start)) {
+            $end->addDay();
+        }
+
+        return [$start, $end];
+    }
+
+    /**
+     * @return array{0: Carbon, 1: Carbon}|null
+     */
+    private function detailTimedRange(BookingDetail $detail): ?array
+    {
+        $bookingDate = optional($detail->booking_date)->toDateString();
+
+        if (! $bookingDate || ! $detail->start_time || ! $detail->end_time) {
+            return null;
+        }
+
+        return $this->timedRangeForDate(
+            $bookingDate,
+            substr((string) $detail->start_time, 0, 5),
+            substr((string) $detail->end_time, 0, 5),
+        );
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, BookingDetail>
+     */
+    private function timedSessionDetails(BookingDetail $detail)
+    {
+        $bookingDate = optional($detail->booking_date)->toDateString();
+
+        if (! $detail->booking_header_id || ! $detail->hyve_room_id || ! $bookingDate || $this->isLongStayDetail($detail)) {
+            return collect([$detail]);
+        }
+
+        return BookingDetail::query()
+            ->where('booking_header_id', $detail->booking_header_id)
+            ->where('hyve_room_id', $detail->hyve_room_id)
+            ->whereDate('booking_date', $bookingDate)
+            ->where('status', '!=', BookingDetail::STATUS_CANCELLED)
+            ->orderBy('booking_date')
+            ->orderBy('start_time')
+            ->get()
+            ->filter(fn (BookingDetail $sessionDetail): bool => ! $this->isLongStayDetail($sessionDetail))
+            ->values();
+    }
+
+    private function isFirstTimedSessionDetail(BookingDetail $detail): bool
+    {
+        $firstDetail = $this->timedSessionDetails($detail)->first();
+
+        return $firstDetail && (int) $firstDetail->getKey() === (int) $detail->getKey();
+    }
+
+    private function isLatestTimedSessionDetail(BookingDetail $detail): bool
+    {
+        $lastDetail = $this->timedSessionDetails($detail)->last();
+
+        return $lastDetail && (int) $lastDetail->getKey() === (int) $detail->getKey();
+    }
+
+    private function sessionHasStarted(BookingDetail $detail): bool
+    {
+        return $this->timedSessionDetails($detail)
+            ->contains(fn (BookingDetail $sessionDetail): bool => (bool) $sessionDetail->actual_start_at && ! $sessionDetail->actual_end_at);
+    }
+
+    private function extensionOverlapsExistingBooking(BookingDetail $detail, Carbon $extensionStart, Carbon $extensionEnd): bool
+    {
+        $roomId = $detail->hyve_room_id;
+
+        if (! $roomId) {
+            return true;
+        }
+
+        return BookingDetail::query()
+            ->with('bookingHeader')
+            ->where('hyve_room_id', $roomId)
+            ->whereIn('status', [BookingDetail::STATUS_PENDING, BookingDetail::STATUS_CONFIRMED])
+            ->whereKeyNot($detail->getKey())
+            ->get()
+            ->contains(function (BookingDetail $otherDetail) use ($extensionStart, $extensionEnd): bool {
+                if ($this->isLongStayDetail($otherDetail)) {
+                    $otherStartDate = optional($otherDetail->booking_date)?->copy()?->startOfDay();
+                    $otherEndDate = optional($otherDetail->booking_end_date ?: $otherDetail->booking_date)?->copy()?->endOfDay();
+
+                    if (! $otherStartDate || ! $otherEndDate) {
+                        return false;
+                    }
+
+                    return $extensionStart->lt($otherEndDate) && $extensionEnd->gt($otherStartDate);
+                }
+
+                $otherRange = $this->detailTimedRange($otherDetail);
+
+                if (! $otherRange) {
+                    return false;
+                }
+
+                return $extensionStart->lt($otherRange[1]) && $extensionEnd->gt($otherRange[0]);
+            });
+    }
+
+    private function syncHeaderFinancialSnapshot(BookingHeader $header): void
+    {
+        $header->loadMissing(['details', 'payments']);
+
+        $grossTotal = round(
+            (float) $header->details
+                ->where('status', '!=', BookingDetail::STATUS_CANCELLED)
+                ->sum(fn (BookingDetail $detail): float => (float) ($detail->subtotal ?? 0)),
+            2
+        );
+
+        $discountSnapshot = $header->discountSnapshotFor($grossTotal);
+
+        $approvedTotal = round(
+            (float) $header->payments
+                ->where('status', BookingPayment::STATUS_APPROVED)
+                ->sum(fn (BookingPayment $payment): float => (float) ($payment->amount ?? 0)),
+            2
+        );
+
+        $effectiveTotal = round((float) ($discountSnapshot['discounted_total_amount'] ?? $grossTotal), 2);
+        $nextBalance = round(max(0, $effectiveTotal - $approvedTotal), 2);
+
+        $latestApprovedProof = $header->payments
+            ->where('status', BookingPayment::STATUS_APPROVED)
+            ->sortByDesc(fn (BookingPayment $payment) => optional($payment->verified_at)->timestamp ?? optional($payment->paid_at)->timestamp ?? 0)
+            ->first();
+
+        $header->update([
+            'total_amount' => $grossTotal,
+            'discount_amount' => (float) ($discountSnapshot['discount_amount'] ?? 0),
+            'discounted_total_amount' => (float) ($discountSnapshot['discounted_total_amount'] ?? $grossTotal),
+            'payment_method' => $latestApprovedProof?->payment_method ?? $header->payment_method,
+            'payment_proof_path' => $latestApprovedProof?->payment_proof_path ?? $header->payment_proof_path,
+            'payment_proof_name' => $latestApprovedProof?->payment_proof_name ?? $header->payment_proof_name,
+            'payment_status' => $this->resolveHeaderPaymentStatus($header, $approvedTotal, $nextBalance),
+            'downpayment_amount' => $approvedTotal,
+            'balance_amount' => $nextBalance,
+        ]);
+    }
+
+    private function hasPendingPayments(int $bookingHeaderId): bool
+    {
+        return BookingPayment::query()
+            ->where('booking_header_id', $bookingHeaderId)
+            ->where('status', BookingPayment::STATUS_PENDING)
+            ->exists();
+    }
+
+    private function resolveHeaderPaymentStatus(BookingHeader $header, float $approvedTotal, float $nextBalance): string
+    {
+        if ((string) $header->status === 'cancelled') {
+            return 'rejected';
+        }
+
+        if ($nextBalance <= 0) {
+            return 'paid';
+        }
+
+        if ($this->hasPendingPayments($header->getKey())) {
+            return 'pending_balance_verification';
+        }
+
+        if ($approvedTotal > 0) {
+            return 'partially_paid';
+        }
+
+        return 'pending_verification';
+    }
+
+    private function displayDateTime(Carbon $dateTime): string
+    {
+        return $dateTime->format('F j, Y g:i A');
     }
 
     private function progressMeta(BookingDetail $detail, Carbon $scheduledStart, Carbon $scheduledEnd): array
@@ -911,6 +1255,10 @@ class AdminBookingController extends Controller
         $canManageBookings = request()->user()?->hasPermission('bookings.manage') ?? false;
 
         $bookingSummaries = $header->details
+            ->sortBy([
+                ['booking_date', 'asc'],
+                ['start_time', 'asc'],
+            ])
             ->map(function (BookingDetail $detail) use ($header, $canManageBookings): array {
                 $scheduledStart = $this->scheduledDateTime($detail, (string) $detail->start_time);
                 $scheduledEnd = $this->scheduledDateTime($detail, (string) $detail->end_time);
@@ -965,9 +1313,12 @@ class AdminBookingController extends Controller
                     'reject_url' => $canManageBookings ? route('admin.booking-details.reject', ['bookingDetail' => $detail->getKey()]) : null,
                     'start_url' => $canManageBookings ? route('admin.booking-details.start', ['bookingDetail' => $detail->getKey()]) : null,
                     'end_url' => $canManageBookings ? route('admin.booking-details.end', ['bookingDetail' => $detail->getKey()]) : null,
+                    'extend_url' => $canManageBookings ? route('admin.booking-details.extend', ['bookingDetail' => $detail->getKey()]) : null,
                     'can_review' => $canManageBookings && ! in_array($detailStatus, ['confirmed', 'cancelled'], true),
                     'can_start' => $canManageBookings && $this->canStartDetail($detail),
                     'can_end' => $canManageBookings && $this->canEndDetail($detail),
+                    'can_extend' => $canManageBookings && $this->canExtendDetail($detail),
+                    'end_time_value' => substr((string) $detail->end_time, 0, 5),
                     'created_at' => optional($header->created_at)->format('M j, Y g:i A'),
                 ];
             })

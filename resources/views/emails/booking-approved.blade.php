@@ -60,6 +60,10 @@
         <p style="margin:0; font-size:14px; line-height:1.7; color:#50635e;">
             Please present your reference number when needed. If you need help with your schedule, reply to this email or contact HYVE support.
         </p>
+
+        <p style="margin:18px 0 0; font-size:13px; line-height:1.7; color:#6d7f77;">
+            Attached to this email are the official HYVE House Rules and Booking Terms &amp; Conditions for your reference.
+        </p>
     </div>
 </body>
 </html>
