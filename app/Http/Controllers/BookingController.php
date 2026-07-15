@@ -23,8 +23,10 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class BookingController extends Controller
@@ -33,8 +35,7 @@ class BookingController extends Controller
         private readonly DatabaseManager $database,
         private readonly HyvePricing $pricing,
         private readonly HyveCalendarService $calendarService,
-    ) {
-    }
+    ) {}
 
     public function index(Request $request): View|RedirectResponse
     {
@@ -620,6 +621,7 @@ class BookingController extends Controller
                 $bookingItems[] = [
                     'room' => $room,
                     'selected_room' => $selectedRoom,
+                    'booking_mode' => 'schedule',
                     'space' => $space,
                     'quote' => $quote,
                     'booking_date' => $item['booking_date'],
@@ -683,6 +685,7 @@ class BookingController extends Controller
             $bookingItems[] = [
                 'room' => $room,
                 'selected_room' => $selectedRoom,
+                'booking_mode' => 'monthly',
                 'space' => $space,
                 'quote' => $quote,
                 'booking_date' => $validated['booking_date'],
@@ -713,7 +716,7 @@ class BookingController extends Controller
                     ->withErrors([
                         'end_time' => 'The selected booking range is no longer available. Please choose a different start and end time.',
                     ]);
-        }
+            }
 
             if (! $quote) {
                 return back()
@@ -726,6 +729,7 @@ class BookingController extends Controller
             $bookingItems[] = [
                 'room' => $room,
                 'selected_room' => $selectedRoom,
+                'booking_mode' => 'room',
                 'space' => $space,
                 'quote' => $quote,
                 'booking_date' => $validated['booking_date'],
@@ -770,123 +774,131 @@ class BookingController extends Controller
 
         try {
             $header = $this->database->transaction(function () use ($user, $contactDetails, $validated, $bookingItems, $grandTotal, $paymentProofPath, $paymentProofName, $customerDownpayment, $remainingBalance, $paymentStatus, $adminMode, $isCashWalkIn): BookingHeader {
-            $header = null;
+                $this->lockAndAssertBookingItemsAvailable($bookingItems);
 
-            if ($user && ! $adminMode) {
-                $header = BookingHeader::query()
-                    ->where('booking_type', BookingHeader::TYPE_MEMBER)
-                    ->where('user_id', $user->id)
-                    ->where('status', BookingHeader::STATUS_PENDING)
-                    ->where('payment_status', 'pending_verification')
-                    ->latest('id')
-                    ->lockForUpdate()
-                    ->first();
-            }
+                $header = null;
 
-            if ($header) {
-                $existingNotes = trim((string) ($header->notes ?? ''));
-                $newNotes = trim((string) ($validated['notes'] ?? ''));
+                if ($user && ! $adminMode) {
+                    $header = BookingHeader::query()
+                        ->where('booking_type', BookingHeader::TYPE_MEMBER)
+                        ->where('user_id', $user->id)
+                        ->where('status', BookingHeader::STATUS_PENDING)
+                        ->where('payment_status', 'pending_verification')
+                        ->latest('id')
+                        ->lockForUpdate()
+                        ->first();
+                }
 
-                $header->update([
-                    'payment_method' => $validated['payment_method'],
-                    'payment_status' => $paymentStatus,
-                    'payment_proof_path' => $paymentProofPath ?: $header->payment_proof_path,
-                    'payment_proof_name' => $paymentProofName ?: $header->payment_proof_name,
-                    'total_amount' => round((float) $header->total_amount + $grandTotal, 2),
-                    'downpayment_amount' => round((float) $header->downpayment_amount + $customerDownpayment, 2),
-                    'balance_amount' => round((float) $header->balance_amount + $remainingBalance, 2),
-                    'notes' => $newNotes !== ''
-                        ? ($existingNotes !== '' ? $existingNotes.PHP_EOL.PHP_EOL.$newNotes : $newNotes)
-                        : $header->notes,
-                    'status' => BookingHeader::STATUS_PENDING,
-                    ...$contactDetails,
-                ]);
-            } else {
-                $header = BookingHeader::query()->create([
-                    'reference_no' => $this->generateReferenceNumber(),
-                    'source' => $adminMode ? BookingHeader::SOURCE_ADMIN : BookingHeader::SOURCE_WEB,
-                    'payment_method' => $validated['payment_method'],
-                    'payment_status' => $paymentStatus,
-                    'payment_proof_path' => $paymentProofPath,
-                    'payment_proof_name' => $paymentProofName,
-                    'total_amount' => round($grandTotal, 2),
-                    'downpayment_amount' => $customerDownpayment,
-                    'balance_amount' => $remainingBalance,
-                    'notes' => $validated['notes'] ?? null,
-                    'status' => BookingHeader::STATUS_PENDING,
-                    ...$contactDetails,
-                ]);
-            }
+                if ($header) {
+                    $existingNotes = trim((string) ($header->notes ?? ''));
+                    $newNotes = trim((string) ($validated['notes'] ?? ''));
 
-            foreach ($bookingItems as $bookingItem) {
-                /** @var Space $space */
-                $space = $bookingItem['space'];
-                /** @var HyveRoom $room */
-                $room = $bookingItem['room'];
-                /** @var array $quote */
-                $quote = $bookingItem['quote'];
-
-                $detail = $header->details()->create([
-                    'space_id' => $space->id,
-                    'hyve_room_id' => $room->id,
-                    'booking_date' => $bookingItem['booking_date'],
-                    'booking_end_date' => $bookingItem['booking_end_date'] ?? $bookingItem['booking_date'],
-                    'start_time' => $bookingItem['start_time'],
-                    'end_time' => $bookingItem['end_time'],
-                    'charge_period' => $quote['charge_period'],
-                    'duration_hours' => $quote['duration_hours'],
-                    'billed_hours' => $quote['billed_hours'],
-                    'guests' => $validated['guests'],
-                    'rate_name' => $quote['rate_name'],
-                    'rate_amount' => $quote['succeeding_hour_rate'],
-                    'subtotal' => $quote['total_amount'],
-                    'status' => BookingDetail::STATUS_PENDING,
-                ]);
-
-                if (Schema::hasTable('booking_activities')) {
-                    BookingActivity::query()->create([
-                        'booking_header_id' => $header->getKey(),
-                        'booking_detail_id' => $detail->getKey(),
-                        'actor_user_id' => $user?->getKey(),
-                        'event_key' => 'booking_submitted',
-                        'event_label' => 'Booking submitted',
-                        'reference_no' => $header->reference_no,
-                        'customer_name' => $header->customer_name,
-                        'room_name' => $room->room_name,
-                        'booking_date' => $detail->booking_date,
-                        'time_range' => ($bookingItem['is_monthly'] ?? false)
-                            ? 'Monthly booking'
-                            : Carbon::parse((string) $detail->start_time)->format('g:i A')
-                                .' - '
-                                .Carbon::parse((string) $detail->end_time)->format('g:i A'),
-                        'message' => ($bookingItem['is_monthly'] ?? false)
-                            ? 'New monthly booking request submitted for '.$room->room_name.'.'
-                            : 'New booking request submitted for '.$room->room_name.'.',
+                    $header->update([
+                        'payment_method' => $validated['payment_method'],
+                        'payment_status' => $paymentStatus,
+                        'payment_proof_path' => $paymentProofPath ?: $header->payment_proof_path,
+                        'payment_proof_name' => $paymentProofName ?: $header->payment_proof_name,
+                        'total_amount' => round((float) $header->total_amount + $grandTotal, 2),
+                        'downpayment_amount' => round((float) $header->downpayment_amount + $customerDownpayment, 2),
+                        'balance_amount' => round((float) $header->balance_amount + $remainingBalance, 2),
+                        'notes' => $newNotes !== ''
+                            ? ($existingNotes !== '' ? $existingNotes.PHP_EOL.PHP_EOL.$newNotes : $newNotes)
+                            : $header->notes,
+                        'status' => BookingHeader::STATUS_PENDING,
+                        ...$contactDetails,
+                    ]);
+                } else {
+                    $header = BookingHeader::query()->create([
+                        'reference_no' => $this->generateReferenceNumber(),
+                        'source' => $adminMode ? BookingHeader::SOURCE_ADMIN : BookingHeader::SOURCE_WEB,
+                        'payment_method' => $validated['payment_method'],
+                        'payment_status' => $paymentStatus,
+                        'payment_proof_path' => $paymentProofPath,
+                        'payment_proof_name' => $paymentProofName,
+                        'total_amount' => round($grandTotal, 2),
+                        'downpayment_amount' => $customerDownpayment,
+                        'balance_amount' => $remainingBalance,
+                        'notes' => $validated['notes'] ?? null,
+                        'status' => BookingHeader::STATUS_PENDING,
+                        ...$contactDetails,
                     ]);
                 }
-            }
 
-            if ($customerDownpayment > 0) {
-                BookingPayment::query()->create([
-                    'booking_header_id' => $header->getKey(),
-                    'user_id' => $user?->getKey(),
-                    'payment_type' => BookingPayment::TYPE_DOWNPAYMENT,
-                    'amount' => $customerDownpayment,
-                    'payment_method' => (string) $validated['payment_method'],
-                    'status' => $isCashWalkIn ? BookingPayment::STATUS_APPROVED : BookingPayment::STATUS_PENDING,
-                    'payment_proof_path' => $paymentProofPath,
-                    'payment_proof_name' => $paymentProofName,
-                    'notes' => $adminMode
-                        ? 'Initial booking payment submitted from the admin walk-in desk.'
-                        : 'Initial booking downpayment submitted during booking.',
-                    'paid_at' => now(),
-                    'verified_at' => $isCashWalkIn ? now() : null,
-                    'verified_by' => $isCashWalkIn ? $user?->getKey() : null,
-                ]);
-            }
+                foreach ($bookingItems as $bookingItem) {
+                    /** @var Space $space */
+                    $space = $bookingItem['space'];
+                    /** @var HyveRoom $room */
+                    $room = $bookingItem['room'];
+                    /** @var array $quote */
+                    $quote = $bookingItem['quote'];
+
+                    $detail = $header->details()->create([
+                        'space_id' => $space->id,
+                        'hyve_room_id' => $room->id,
+                        'booking_date' => $bookingItem['booking_date'],
+                        'booking_end_date' => $bookingItem['booking_end_date'] ?? $bookingItem['booking_date'],
+                        'start_time' => $bookingItem['start_time'],
+                        'end_time' => $bookingItem['end_time'],
+                        'charge_period' => $quote['charge_period'],
+                        'duration_hours' => $quote['duration_hours'],
+                        'billed_hours' => $quote['billed_hours'],
+                        'guests' => $validated['guests'],
+                        'rate_name' => $quote['rate_name'],
+                        'rate_amount' => $quote['succeeding_hour_rate'],
+                        'subtotal' => $quote['total_amount'],
+                        'status' => BookingDetail::STATUS_PENDING,
+                    ]);
+
+                    if (Schema::hasTable('booking_activities')) {
+                        BookingActivity::query()->create([
+                            'booking_header_id' => $header->getKey(),
+                            'booking_detail_id' => $detail->getKey(),
+                            'actor_user_id' => $user?->getKey(),
+                            'event_key' => 'booking_submitted',
+                            'event_label' => 'Booking submitted',
+                            'reference_no' => $header->reference_no,
+                            'customer_name' => $header->customer_name,
+                            'room_name' => $room->room_name,
+                            'booking_date' => $detail->booking_date,
+                            'time_range' => ($bookingItem['is_monthly'] ?? false)
+                                ? 'Monthly booking'
+                                : Carbon::parse((string) $detail->start_time)->format('g:i A')
+                                    .' - '
+                                    .Carbon::parse((string) $detail->end_time)->format('g:i A'),
+                            'message' => ($bookingItem['is_monthly'] ?? false)
+                                ? 'New monthly booking request submitted for '.$room->room_name.'.'
+                                : 'New booking request submitted for '.$room->room_name.'.',
+                        ]);
+                    }
+                }
+
+                if ($customerDownpayment > 0) {
+                    BookingPayment::query()->create([
+                        'booking_header_id' => $header->getKey(),
+                        'user_id' => $user?->getKey(),
+                        'payment_type' => BookingPayment::TYPE_DOWNPAYMENT,
+                        'amount' => $customerDownpayment,
+                        'payment_method' => (string) $validated['payment_method'],
+                        'status' => $isCashWalkIn ? BookingPayment::STATUS_APPROVED : BookingPayment::STATUS_PENDING,
+                        'payment_proof_path' => $paymentProofPath,
+                        'payment_proof_name' => $paymentProofName,
+                        'notes' => $adminMode
+                            ? 'Initial booking payment submitted from the admin walk-in desk.'
+                            : 'Initial booking downpayment submitted during booking.',
+                        'paid_at' => now(),
+                        'verified_at' => $isCashWalkIn ? now() : null,
+                        'verified_by' => $isCashWalkIn ? $user?->getKey() : null,
+                    ]);
+                }
 
                 return $header;
             });
+        } catch (ValidationException $exception) {
+            if ($paymentProofPath) {
+                Storage::disk('public')->delete($paymentProofPath);
+            }
+
+            throw $exception;
         } catch (\Throwable $exception) {
             Log::error('Booking submission failed.', [
                 'booking_mode' => $validated['booking_mode'] ?? 'room',
@@ -908,6 +920,65 @@ class BookingController extends Controller
             'booking_success',
             'Your booking request has been submitted under reference '.$header->reference_no.'. HYVE will contact you soon to confirm the details.',
         );
+    }
+
+    /**
+     * Serialize submissions for the same logical room, then verify availability
+     * again inside the transaction before any booking records are written.
+     *
+     * @param  array<int, array<string, mixed>>  $bookingItems
+     */
+    private function lockAndAssertBookingItemsAvailable(array $bookingItems): void
+    {
+        $roomIds = collect($bookingItems)
+            ->flatMap(fn (array $item): array => [
+                $item['selected_room'] instanceof HyveRoom ? $item['selected_room']->getKey() : null,
+                $item['room'] instanceof HyveRoom ? $item['room']->getKey() : null,
+            ])
+            ->filter()
+            ->map(fn ($id): int => (int) $id)
+            ->unique()
+            ->sort()
+            ->values();
+
+        HyveRoom::query()
+            ->whereKey($roomIds->all())
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+
+        foreach ($bookingItems as $item) {
+            /** @var HyveRoom $selectedRoom */
+            $selectedRoom = $item['selected_room'];
+            $mode = (string) ($item['booking_mode'] ?? 'room');
+
+            if ($mode === 'monthly') {
+                $available = $this->isLongStayDateRangeAvailable(
+                    $selectedRoom,
+                    (string) $item['booking_date'],
+                    (string) ($item['booking_end_date'] ?? $item['booking_date']),
+                    $item['quote']['long_stay_use_type'] ?? null,
+                );
+            } else {
+                $available = $this->isTimeRangeAvailable(
+                    $selectedRoom,
+                    (string) $item['booking_date'],
+                    (string) $item['start_time'],
+                    (string) $item['end_time'],
+                    $mode !== 'schedule',
+                );
+            }
+
+            if (! $available) {
+                $field = $mode === 'schedule'
+                    ? 'selected_schedule_items'
+                    : ($mode === 'monthly' ? 'booking_end_date' : 'end_time');
+
+                throw ValidationException::withMessages([
+                    $field => 'Sorry, another customer booked this schedule moments ago. Please select another available time.',
+                ]);
+            }
+        }
     }
 
     private function generateReferenceNumber(): string
@@ -953,7 +1024,7 @@ class BookingController extends Controller
         }
 
         $selectedSpaceSlug = (string) $request->query('space', '');
-        $room = $rooms->first(fn (HyveRoom $item): bool => \Illuminate\Support\Str::slug($item->mappedSpaceLabel()) === $selectedSpaceSlug);
+        $room = $rooms->first(fn (HyveRoom $item): bool => Str::slug($item->mappedSpaceLabel()) === $selectedSpaceSlug);
 
         if ($room?->isSharedTable()) {
             return $sharedTableRepresentative ?: $room;
@@ -1658,7 +1729,7 @@ class BookingController extends Controller
     }
 
     /**
-     * @param Collection<int, array{start: Carbon, end: Carbon}> $ranges
+     * @param  Collection<int, array{start: Carbon, end: Carbon}>  $ranges
      * @return Collection<int, array{start: Carbon, end: Carbon}>
      */
     private function mergeRanges(Collection $ranges): Collection
@@ -1695,7 +1766,7 @@ class BookingController extends Controller
     }
 
     /**
-     * @param Collection<int, array{start: Carbon, end: Carbon}> $blockedRanges
+     * @param  Collection<int, array{start: Carbon, end: Carbon}>  $blockedRanges
      * @return Collection<int, array{value: string, label: string}>
      */
     private function availableStartTimesForRoom(Collection $blockedRanges, Carbon $effectiveStart, Carbon $dayEnd, int $minimumDuration): Collection
@@ -1743,7 +1814,7 @@ class BookingController extends Controller
     }
 
     /**
-     * @param Collection<int, array{start: Carbon, end: Carbon}> $blockedRanges
+     * @param  Collection<int, array{start: Carbon, end: Carbon}>  $blockedRanges
      * @return Collection<int, array{value: string, label: string, range_label: string, duration_label: string}>
      */
     private function availableEndTimesForRoom(Collection $blockedRanges, string $bookingDate, string $selectedStartTime, Carbon $effectiveStart, Carbon $dayEnd, int $minimumDuration): Collection
@@ -1814,7 +1885,7 @@ class BookingController extends Controller
     }
 
     /**
-     * @param Collection<int, array{start: Carbon, end: Carbon}> $blockedRanges
+     * @param  Collection<int, array{start: Carbon, end: Carbon}>  $blockedRanges
      * @return Collection<int, array{value: string, label: string, end_time: string}>
      */
     private function availableWindowsForLayout(Collection $blockedRanges, Carbon $effectiveStart, Carbon $dayEnd, int $minimumDuration): Collection
@@ -1846,14 +1917,14 @@ class BookingController extends Controller
     }
 
     /**
-     * @param Collection<int, array{start: Carbon, end: Carbon}> $blockedRanges
+     * @param  Collection<int, array{start: Carbon, end: Carbon}>  $blockedRanges
      * @return Collection<int, array{value: string, label: string, end_time: string}>
      */
     private function hourlyWindowsForLayout(Collection $blockedRanges, Carbon $effectiveStart, Carbon $dayEnd, bool $booked): Collection
     {
         $slotMinutes = 120;
         $windows = collect();
-        
+
         if ($booked) {
             foreach ($blockedRanges as $range) {
                 $cursor = $range['start']->copy();
@@ -1922,7 +1993,7 @@ class BookingController extends Controller
     }
 
     /**
-     * @param Collection<int, array{start: Carbon, end: Carbon}> $blockedRanges
+     * @param  Collection<int, array{start: Carbon, end: Carbon}>  $blockedRanges
      */
     private function availableUntil(Collection $blockedRanges, Carbon $start, Carbon $dayEnd): ?Carbon
     {

@@ -10,6 +10,7 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -753,6 +754,67 @@ class BookingSubmissionTest extends TestCase
 
         $response->assertRedirect(route('bookings.index'));
         $response->assertSessionHasErrors('end_time');
+    }
+
+    public function test_submission_rechecks_availability_after_acquiring_the_room_lock(): void
+    {
+        Storage::fake('public');
+
+        $space = Space::query()->where('name', 'Zeal Room (8 Seats)')->firstOrFail();
+        $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+        $bookingDate = now()->addDay()->toDateString();
+        $conflictInjected = false;
+        $baseTransactionLevel = DB::transactionLevel();
+
+        HyveRoom::retrieved(function (HyveRoom $retrievedRoom) use ($room, $space, $bookingDate, $baseTransactionLevel, &$conflictInjected): void {
+            if ($conflictInjected || $retrievedRoom->isNot($room) || DB::transactionLevel() <= $baseTransactionLevel) {
+                return;
+            }
+
+            $conflictInjected = true;
+            $header = BookingHeader::query()->create([
+                'reference_no' => 'HYVE-RACE-WINNER',
+                'customer_name' => 'Concurrent Customer',
+                'email' => 'winner@example.com',
+                'phone' => '+639181112224',
+                'booking_type' => BookingHeader::TYPE_GUEST,
+                'source' => BookingHeader::SOURCE_WEB,
+                'status' => BookingHeader::STATUS_PENDING,
+            ]);
+
+            BookingDetail::query()->create([
+                'booking_header_id' => $header->id,
+                'space_id' => $space->id,
+                'hyve_room_id' => $room->id,
+                'booking_date' => $bookingDate,
+                'start_time' => '10:00',
+                'end_time' => '12:00',
+                'guests' => 2,
+                'status' => BookingDetail::STATUS_PENDING,
+            ]);
+        });
+
+        $response = $this->from(route('bookings.index'))->post(route('bookings.store'), [
+            'full_name' => 'Second Customer',
+            'email' => 'second@example.com',
+            'phone' => '+639181112225',
+            'hyve_room_id' => $room->id,
+            'booking_date' => $bookingDate,
+            'start_time' => '10:00',
+            'end_time' => '12:00',
+            'guests' => 2,
+            'downpayment_amount' => 500,
+            'payment_method' => 'gcash',
+            'rules_agreement' => '1',
+            'payment_proof' => UploadedFile::fake()->create('proof.png', 120, 'image/png'),
+        ]);
+
+        $response->assertRedirect(route('bookings.index'));
+        $response->assertSessionHasErrors([
+            'end_time' => 'Sorry, another customer booked this schedule moments ago. Please select another available time.',
+        ]);
+        $this->assertTrue($conflictInjected);
+        $this->assertDatabaseMissing('booking_headers', ['email' => 'second@example.com']);
     }
 
     public function test_guest_users_can_submit_a_small_booking_with_a_downpayment_below_five_hundred(): void
