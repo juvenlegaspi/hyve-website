@@ -14,6 +14,7 @@ class BookingApprovalTextService
     {
         $apiKey = (string) config('services.semaphore.api_key');
         $sender = (string) config('services.semaphore.sender_name');
+        $caBundle = trim((string) config('services.semaphore.ca_bundle'));
         $message = $this->buildMessage($context);
 
         if ($apiKey === '') {
@@ -27,15 +28,28 @@ class BookingApprovalTextService
         }
 
         try {
-            Http::asForm()
-                ->timeout(10)
-                ->post('https://semaphore.co/api/v4/messages', [
-                    'apikey' => $apiKey,
-                    'number' => $this->normalizePhone($phone),
-                    'message' => $message,
-                    'sendername' => $sender !== '' ? $sender : null,
-                ])
+            $request = Http::asForm()->timeout(10);
+
+            if ($caBundle !== '') {
+                $request = $request->withOptions(['verify' => $caBundle]);
+            }
+
+            $response = $request->post('https://api.semaphore.co/api/v4/messages', [
+                'apikey' => $apiKey,
+                'number' => $this->normalizePhone($phone),
+                'message' => $message,
+                'sendername' => $sender !== '' ? $sender : null,
+            ])
                 ->throw();
+
+            $providerMessage = $response->collect()->first();
+
+            Log::info('Booking approval SMS submitted.', [
+                'phone' => $phone,
+                'reference_no' => $context['reference_no'] ?? null,
+                'message_id' => is_array($providerMessage) ? ($providerMessage['message_id'] ?? null) : null,
+                'status' => is_array($providerMessage) ? ($providerMessage['status'] ?? null) : null,
+            ]);
         } catch (\Throwable $exception) {
             Log::warning('Failed to send booking approval SMS.', [
                 'phone' => $phone,

@@ -7,8 +7,8 @@ use App\Models\BookingHeader;
 use App\Models\HyveRoom;
 use App\Models\Space;
 use App\Models\User;
-use Illuminate\Http\UploadedFile;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
@@ -238,6 +238,64 @@ class BookingSubmissionTest extends TestCase
             'unit_type' => 'monthly',
             'unit_count' => 1,
         ]);
+    }
+
+    public function test_29_30_and_31_day_ranges_automatically_use_one_month_without_day_or_night(): void
+    {
+        $room = HyveRoom::query()->where('room_name', 'Room 7')->firstOrFail();
+
+        foreach (['2026-08-29', '2026-08-30', '2026-08-31'] as $endDate) {
+            $response = $this->getJson(route('bookings.quote', [
+                'booking_mode' => 'monthly',
+                'hyve_room_id' => $room->id,
+                'booking_date' => '2026-08-01',
+                'booking_end_date' => $endDate,
+            ]));
+
+            $response->assertOk()
+                ->assertJsonPath('unit_type', 'monthly')
+                ->assertJsonPath('unit_count', 1)
+                ->assertJsonPath('unit_label', '1 month')
+                ->assertJsonPath('total_amount', 30000)
+                ->assertJsonPath('long_stay_use_type', null)
+                ->assertJsonPath('long_stay_use_label', null);
+        }
+    }
+
+    public function test_an_arbitrary_29_day_range_uses_one_month_without_calendar_month_boundaries(): void
+    {
+        $room = HyveRoom::query()->where('room_name', 'Room 7')->firstOrFail();
+
+        $this->getJson(route('bookings.quote', [
+            'booking_mode' => 'monthly',
+            'hyve_room_id' => $room->id,
+            'booking_date' => '2026-08-10',
+            'booking_end_date' => '2026-09-07',
+        ]))
+            ->assertOk()
+            ->assertJsonPath('unit_label', '1 month')
+            ->assertJsonPath('total_amount', 30000)
+            ->assertJsonPath('long_stay_use_type', null);
+    }
+
+    public function test_days_beyond_the_monthly_band_are_billed_as_daily_excess(): void
+    {
+        $room = HyveRoom::query()->where('room_name', 'Room 7')->firstOrFail();
+
+        $this->getJson(route('bookings.quote', [
+            'booking_mode' => 'monthly',
+            'hyve_room_id' => $room->id,
+            'booking_date' => '2026-08-01',
+            'booking_end_date' => '2026-09-01',
+        ]))
+            ->assertOk()
+            ->assertJsonPath('unit_label', '1 month + 1 day')
+            ->assertJsonPath('total_amount', 32159)
+            ->assertJsonPath('long_stay_use_type', null)
+            ->assertJsonPath('breakdown.0.type', 'monthly')
+            ->assertJsonPath('breakdown.0.unit_count', 1)
+            ->assertJsonPath('breakdown.1.type', 'daily')
+            ->assertJsonPath('breakdown.1.unit_count', 1);
     }
 
     public function test_quote_endpoint_uses_calendar_month_breakdown_for_long_stay_ranges(): void

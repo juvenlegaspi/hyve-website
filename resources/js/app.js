@@ -1925,7 +1925,7 @@ const setupBookingPageV2 = () => {
     const recommendedLongStayType = () => {
         const days = longStayDayCount();
 
-        if (days >= 30) {
+        if (days >= 29) {
             return 'monthly';
         }
 
@@ -2680,36 +2680,6 @@ const setupBookingPageV2 = () => {
         return date;
     };
 
-    const isWholeCalendarMonthStay = (startValue, endValue) => {
-        const start = parseDateOnlyValue(startValue);
-        const end = parseDateOnlyValue(endValue);
-
-        if (!start || !end || end < start) {
-            return false;
-        }
-
-        const cursor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-
-        while (cursor <= end) {
-            const monthStart = new Date(cursor.getFullYear(), cursor.getMonth(), 1);
-            const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
-
-            if (cursor.getTime() === start.getTime()) {
-                if (cursor.getDate() !== monthStart.getDate()) {
-                    return false;
-                }
-            }
-
-            if (monthEnd > end) {
-                return monthEnd.getTime() === end.getTime();
-            }
-
-            cursor.setMonth(cursor.getMonth() + 1, 1);
-        }
-
-        return false;
-    };
-
     const hasBlockedDatesInRange = (startValue, endValue) => {
         if (!startValue || !endValue) {
             return false;
@@ -3028,7 +2998,9 @@ const setupBookingPageV2 = () => {
             return false;
         }
 
-        return !isWholeCalendarMonthStay(startValue, endValue);
+        const hasMonthlyOption = options.some((option) => option.type === 'monthly');
+
+        return !hasMonthlyOption || longStayDayCount() < 29;
     };
 
     const syncLongStayUseSelection = () => {

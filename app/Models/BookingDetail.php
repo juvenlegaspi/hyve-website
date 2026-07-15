@@ -12,12 +12,17 @@ class BookingDetail extends Model
     use HasFactory;
 
     public const STATUS_PENDING = 'pending';
+
     public const STATUS_CONFIRMED = 'confirmed';
+
     public const STATUS_CANCELLED = 'cancelled';
 
     public const PROGRESS_SCHEDULED = 'scheduled';
+
     public const PROGRESS_READY = 'ready_to_start';
+
     public const PROGRESS_IN_PROGRESS = 'in_progress';
+
     public const PROGRESS_COMPLETED = 'completed';
 
     /**
@@ -42,6 +47,7 @@ class BookingDetail extends Model
         'progress_status',
         'actual_start_at',
         'actual_end_at',
+        'end_reminder_sent_at',
     ];
 
     /**
@@ -57,6 +63,7 @@ class BookingDetail extends Model
         'subtotal' => 'decimal:2',
         'actual_start_at' => 'datetime',
         'actual_end_at' => 'datetime',
+        'end_reminder_sent_at' => 'datetime',
     ];
 
     public function bookingHeader(): BelongsTo

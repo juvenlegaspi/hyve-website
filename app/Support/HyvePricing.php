@@ -357,19 +357,9 @@ class HyvePricing
             return true;
         }
 
-        $cursor = $start->copy();
+        $dayCount = max(1, $start->diffInDays($end) + 1);
 
-        while ($cursor->lte($end)) {
-            $segment = $this->calendarMonthSegment($cursor);
-
-            if ($segment['start']->ne($cursor) || $segment['end']->gt($end)) {
-                return true;
-            }
-
-            $cursor = $segment['next_start'];
-        }
-
-        return false;
+        return $dayCount < 29;
     }
 
     /**
@@ -481,6 +471,7 @@ class HyvePricing
         }
 
         $dayCount = max(1, $start->diffInDays($end) + 1);
+        $monthlyCoverage = $this->flexibleMonthlyCoverage($dayCount);
         $requiresUseType = $this->longStayRequiresUseType($room, $startDate, $endDate);
         $resolvedUseType = $useType !== null && in_array($useType, ['day', 'night'], true)
             ? $useType
@@ -497,7 +488,10 @@ class HyvePricing
         [$windowStartTime, $windowEndTime] = $this->longStayWindowForUseType($requiresUseType ? $resolvedUseType : null);
         $useTypeLabel = $resolvedUseType ? $this->longStayUseTypeLabel($resolvedUseType) : null;
 
-        if ($selectedPlan) {
+        if ($selectedPlan && (
+            (string) ($selectedPlan['type'] ?? '') !== 'monthly'
+            || $monthlyCoverage['remaining_days'] === 0
+        )) {
             $unitType = (string) $selectedPlan['type'];
             $unitCount = match ($unitType) {
                 'weekly' => (int) ceil($dayCount / 7),
@@ -554,47 +548,31 @@ class HyvePricing
             ];
         }
 
-        $remainingDays = $dayCount;
+        $remainingDays = $monthlyCoverage['remaining_days'];
         $breakdown = [];
         $totalAmount = 0.0;
 
         $monthlyOption = $optionsByType->get('monthly');
-        $weeklyOption = $optionsByType->get('weekly');
-        $dailyOption = $optionsByType->get('daily');
-        $cursor = $start->copy();
+        $weeklyOption = $options->first(fn (array $option): bool => (string) ($option['type'] ?? '') === 'weekly'
+            && (string) ($option['use_type'] ?? '') === ($resolvedUseType ?: 'day')
+        );
+        $dailyOption = $options->first(fn (array $option): bool => (string) ($option['type'] ?? '') === 'daily'
+            && (string) ($option['use_type'] ?? '') === ($resolvedUseType ?: 'day')
+        );
 
-        if ($monthlyOption) {
-            $monthCount = 0;
-            $monthlyDays = 0;
-
-            while (true) {
-                $segment = $this->calendarMonthSegment($cursor);
-
-                if ($segment['end']->gt($end)) {
-                    break;
-                }
-
-                $monthCount++;
-                $monthlyDays += $segment['days'];
-                $cursor = $segment['next_start'];
-            }
-
-            $remainingDays -= $monthlyDays;
-
-            if ($monthCount > 0) {
-                $amount = round($monthCount * (float) $monthlyOption['amount'], 2);
-                $breakdown[] = [
-                    'type' => 'monthly',
-                    'label' => (string) $monthlyOption['label'],
-                    'unit_count' => $monthCount,
-                    'days' => $monthlyDays,
-                    'amount' => $amount,
-                ];
-                $totalAmount += $amount;
-            }
+        if ($monthlyOption && $monthlyCoverage['month_count'] > 0) {
+            $amount = round($monthlyCoverage['month_count'] * (float) $monthlyOption['amount'], 2);
+            $breakdown[] = [
+                'type' => 'monthly',
+                'label' => (string) $monthlyOption['label'],
+                'unit_count' => $monthlyCoverage['month_count'],
+                'days' => $monthlyCoverage['monthly_days'],
+                'amount' => $amount,
+            ];
+            $totalAmount += $amount;
         }
 
-        if ($weeklyOption && $remainingDays >= 7) {
+        if ($monthlyCoverage['month_count'] === 0 && $weeklyOption && $remainingDays >= 7) {
             $weekCount = intdiv($remainingDays, 7);
             $remainingDays -= $weekCount * 7;
             $amount = round($weekCount * (float) $weeklyOption['amount'], 2);
@@ -1074,6 +1052,26 @@ class HyvePricing
             'end' => $segmentEnd,
             'next_start' => $nextStart,
             'days' => max(1, $start->diffInDays($segmentEnd) + 1),
+        ];
+    }
+
+    /**
+     * Treat every flexible 29-31 day block as one monthly unit. Any days beyond
+     * the largest complete monthly band are billed as daily excess days.
+     *
+     * @return array{month_count: int, monthly_days: int, remaining_days: int}
+     */
+    private function flexibleMonthlyCoverage(int $dayCount): array
+    {
+        $monthCount = intdiv(max(0, $dayCount), 29);
+        $monthlyDays = $monthCount > 0
+            ? min($dayCount, $monthCount * 31)
+            : 0;
+
+        return [
+            'month_count' => $monthCount,
+            'monthly_days' => $monthlyDays,
+            'remaining_days' => max(0, $dayCount - $monthlyDays),
         ];
     }
 

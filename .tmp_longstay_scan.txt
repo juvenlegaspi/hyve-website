@@ -1,0 +1,298 @@
+
+  resources\views\bookings\index.blade.php:22:            ? json_encode($oldScheduleItems, JSON_UNESCAPED_SLASHES)
+  resources\views\bookings\index.blade.php:23:            : (string) $oldScheduleItems;
+> resources\views\bookings\index.blade.php:24:        $oldBookingMode = old('booking_mode', 
+in_array($queryBookingMode, ['room', 'monthly'], true) ? $queryBookingMode : 'room');
+> resources\views\bookings\index.blade.php:25:        $oldMonthlyPlan = (string) old('monthly_plan', '');
+> resources\views\bookings\index.blade.php:26:        $initialEndDate = old('booking_end_date', $oldBookingMode === 
+'monthly' ? $queryBookingEndDate : $initialDate);
+  resources\views\bookings\index.blade.php:27:        $hasScheduleSelection = filled($oldScheduleItemsJson) && 
+$oldScheduleItemsJson !== '[]';
+> resources\views\bookings\index.blade.php:28:        $hasMonthlySelection = $oldBookingMode === 'monthly' && 
+$oldMonthlyPlan !== '' && filled($initialDate) && filled($initialEndDate);
+> resources\views\bookings\index.blade.php:29:        $showCheckout = $errors->any() && ((old('start_time') && 
+old('end_time')) || $hasScheduleSelection || $hasMonthlySelection);
+  resources\views\bookings\index.blade.php:30:        $scheduleSummary = $oldBookingMode === 'schedule' ? 
+($oldScheduleSummary ?? null) : null;
+  resources\views\bookings\index.blade.php:31:        $scheduleSummarySlotCount = (int) 
+($scheduleSummary['slot_count'] ?? 0);
+  resources\views\bookings\index.blade.php:32:        $scheduleSummaryDateCount = (int) 
+($scheduleSummary['date_count'] ?? 0);
+  resources\views\bookings\index.blade.php:33:        $scheduleSummaryFirstDate = $scheduleSummary['first_date'] ?? 
+null;
+  resources\views\bookings\index.blade.php:136:                <input type="hidden" name="booking_end_date" value="{{ 
+$initialEndDate }}" data-booking-end-date>
+  resources\views\bookings\index.blade.php:137:                <input type="hidden" name="booking_mode" value="{{ 
+$oldBookingMode }}" data-booking-mode-input>
+> resources\views\bookings\index.blade.php:138:                <input type="hidden" name="monthly_plan" value="{{ 
+$oldMonthlyPlan }}" data-monthly-plan-input>
+  resources\views\bookings\index.blade.php:139:                <input type="hidden" name="long_stay_use_type" 
+value="{{ old('long_stay_use_type', '') }}" data-long-stay-use-type-input>
+  resources\views\bookings\index.blade.php:140:                <input type="hidden" name="selected_schedule_items" 
+value="{{ $oldScheduleItemsJson }}" data-schedule-items-input>
+  resources\views\bookings\index.blade.php:141:                <select name="start_time" data-start-time-select 
+class="hidden">
+  resources\views\bookings\index.blade.php:142:                    <option value="{{ old('start_time', 
+$queryStartTime) }}">{{ old('start_time', $queryStartTime) }}</option>
+  resources\views\bookings\index.blade.php:157:                            <button type="button" 
+class="booking-calendar-tab booking-calendar-tab--active" data-booking-mode-trigger 
+data-booking-mode-value="room">Book by room</button>
+  resources\views\bookings\index.blade.php:158:                            <button type="button" 
+class="booking-calendar-tab" data-booking-mode-trigger data-booking-mode-value="schedule">Full schedule - all 
+rooms</button>
+> resources\views\bookings\index.blade.php:159:                            <button type="button" 
+class="booking-calendar-tab" data-booking-mode-trigger data-booking-mode-value="monthly">Daily / Weekly / 
+Monthly</button>
+  resources\views\bookings\index.blade.php:160:                        </div>
+  resources\views\bookings\index.blade.php:161:                    </section>
+  resources\views\bookings\index.blade.php:162:
+  resources\views\bookings\index.blade.php:163:                    <section class="booking-room-strip reveal" 
+data-shared-room-strip>
+  resources\views\bookings\index.blade.php:167:                                @foreach ($displayRooms as $room)
+  resources\views\bookings\index.blade.php:168:                                    @php($displayName = 
+$room->isSharedTable() ? 'Common Area' : $room->room_name)
+> resources\views\bookings\index.blade.php:169:                                    @php($monthlyOptions = 
+$monthlyPlansByRoom[$room->id] ?? [])
+  resources\views\bookings\index.blade.php:170:                                    <div
+  resources\views\bookings\index.blade.php:171:                                        class="booking-room-card @if 
+($initialRoomId === (string) $room->id) is-active @endif"
+  resources\views\bookings\index.blade.php:172:                                        role="button"
+  resources\views\bookings\index.blade.php:173:                                        tabindex="0"
+  resources\views\bookings\index.blade.php:179:                                        data-room-rate="{{ 
+$rateMap[$room->mappedSpaceLabel()] ?? 'Ask HYVE' }}"
+  resources\views\bookings\index.blade.php:180:                                        
+data-room-gallery='@json($spaceGalleryMap[$room->mappedSpaceLabel()] ?? [asset('images/office.png')])'
+> resources\views\bookings\index.blade.php:181:                                        
+data-room-monthly-options='@json($monthlyOptions)'
+  resources\views\bookings\index.blade.php:182:                                    >
+  resources\views\bookings\index.blade.php:183:                                        <img src="{{ 
+$spaceImageMap[$room->mappedSpaceLabel()] ?? asset('images/office.png') }}" alt="{{ $displayName }}">
+  resources\views\bookings\index.blade.php:184:                                        <span 
+class="booking-room-card__body">
+  resources\views\bookings\index.blade.php:185:                                            <strong>{{ $displayName 
+}}</strong>
+  resources\views\bookings\index.blade.php:362:                    </section>
+  resources\views\bookings\index.blade.php:363:
+> resources\views\bookings\index.blade.php:364:                    <section class="booking-calendar-grid reveal 
+hidden" data-booking-mode-panel="monthly">
+  resources\views\bookings\index.blade.php:365:                        <article class="booking-calendar-panel">
+  resources\views\bookings\index.blade.php:366:                            <div class="booking-calendar-panel__head">
+  resources\views\bookings\index.blade.php:367:                                <h2 class="booking-calendar-title">Long 
+stay dates</h2>
+> resources\views\bookings\index.blade.php:368:                                <button type="button" class="button 
+button--ghost booking-calendar-panel__action" data-monthly-blocked-open disabled>View blocked dates</button>
+  resources\views\bookings\index.blade.php:369:                            </div>
+  resources\views\bookings\index.blade.php:370:
+  resources\views\bookings\index.blade.php:371:                            <div class="field-grid">
+  resources\views\bookings\index.blade.php:372:                                <label>
+  resources\views\bookings\index.blade.php:373:                                    <span>Start date</span>
+> resources\views\bookings\index.blade.php:374:                                    <input type="date" value="{{ 
+$initialDate }}" min="{{ now()->toDateString() }}" data-monthly-start-date>
+  resources\views\bookings\index.blade.php:375:                                </label>
+  resources\views\bookings\index.blade.php:376:                                <label>
+  resources\views\bookings\index.blade.php:377:                                    <span>End date</span>
+> resources\views\bookings\index.blade.php:378:                                    <input type="date" value="{{ 
+$initialEndDate }}" min="{{ $initialDate }}" data-monthly-end-date>
+  resources\views\bookings\index.blade.php:379:                                </label>
+  resources\views\bookings\index.blade.php:380:                            </div>
+  resources\views\bookings\index.blade.php:381:
+  resources\views\bookings\index.blade.php:382:                            <div class="booking-slot-section hidden" 
+data-long-stay-use-wrap>
+> resources\views\bookings\index.blade.php:383:                                <p class="mini-title">Step 2 - Choose 
+Day Use or Night Use</p>
+  resources\views\bookings\index.blade.php:384:                                <p class="booking-slot-copy">Tell HYVE 
+if this stay should run during the daytime or nighttime window so the correct rate can be computed.</p>
+  resources\views\bookings\index.blade.php:385:                                <div class="booking-slot-list 
+booking-slot-list--compact">
+  resources\views\bookings\index.blade.php:386:                                    <button type="button" 
+class="booking-slot-pill" data-long-stay-use-choice="day">
+  resources\views\bookings\index.blade.php:387:                                        <strong>Day Use</strong>
+  resources\views\bookings\index.blade.php:397:
+  resources\views\bookings\index.blade.php:398:                            <div class="booking-calendar-panel__head 
+booking-calendar-panel__head--compact">
+> resources\views\bookings\index.blade.php:399:                                <h3 class="booking-calendar-title 
+booking-calendar-title--small" data-monthly-calendar-title>{{ 
+\Illuminate\Support\Carbon::parse($initialDate)->format('F Y') }}</h3>
+  resources\views\bookings\index.blade.php:400:                                <div class="booking-calendar-nav">
+> resources\views\bookings\index.blade.php:401:                                    <button type="button" 
+data-monthly-calendar-prev aria-label="Previous month">&#8249;</button>
+> resources\views\bookings\index.blade.php:402:                                    <button type="button" 
+data-monthly-calendar-next aria-label="Next month">&#8250;</button>
+  resources\views\bookings\index.blade.php:403:                                </div>
+  resources\views\bookings\index.blade.php:404:                            </div>
+  resources\views\bookings\index.blade.php:405:
+  resources\views\bookings\index.blade.php:406:                            <div class="booking-calendar-weekdays">
+  resources\views\bookings\index.blade.php:414:                            </div>
+  resources\views\bookings\index.blade.php:415:
+> resources\views\bookings\index.blade.php:416:                            <div class="booking-calendar-days" 
+data-monthly-calendar-days></div>
+  resources\views\bookings\index.blade.php:417:
+  resources\views\bookings\index.blade.php:418:                            <div class="booking-calendar-legend">
+  resources\views\bookings\index.blade.php:419:                                <span><i 
+class="is-selected"></i>Selected stay</span>
+  resources\views\bookings\index.blade.php:420:                                <span><i 
+class="is-today"></i>Today</span>
+  resources\views\bookings\index.blade.php:422:                            </div>
+  resources\views\bookings\index.blade.php:423:
+> resources\views\bookings\index.blade.php:424:                            <p class="booking-slot-copy" 
+data-monthly-blocked-note>Select a room first so HYVE can check which stay dates are already booked.</p>
+  resources\views\bookings\index.blade.php:425:                        </article>
+  resources\views\bookings\index.blade.php:426:
+  resources\views\bookings\index.blade.php:427:                        <article class="booking-slot-panel">
+  resources\views\bookings\index.blade.php:428:                            <div class="booking-slot-panel__head">
+  resources\views\bookings\index.blade.php:429:                                <h2>Choose your stay period</h2>
+> resources\views\bookings\index.blade.php:430:                                <p><span data-monthly-room-name>{{ 
+$initialDisplayName }}</span> - <span data-monthly-room-space>{{ $initialDisplaySpace }}</span> - <span 
+data-monthly-room-rate>{{ $initialDisplayRate }}</span></p>
+> resources\views\bookings\index.blade.php:431:                                <p data-monthly-plan-description>Select 
+a room first, then choose your start date and end date. HYVE will automatically compute the full long-stay breakdown 
+for you.</p>
+  resources\views\bookings\index.blade.php:432:                            </div>
+  resources\views\bookings\index.blade.php:433:
+> resources\views\bookings\index.blade.php:434:                            <div class="booking-inline-summary hidden" 
+data-monthly-inline-summary>
+  resources\views\bookings\index.blade.php:435:                                <div 
+class="booking-inline-summary__row">
+  resources\views\bookings\index.blade.php:436:                                    <span>Start date</span>
+> resources\views\bookings\index.blade.php:437:                                    <strong 
+data-monthly-summary-date>{{ \Illuminate\Support\Carbon::parse($initialDate)->format('F j, Y') }}</strong>
+  resources\views\bookings\index.blade.php:438:                                </div>
+  resources\views\bookings\index.blade.php:439:                                <div 
+class="booking-inline-summary__row">
+  resources\views\bookings\index.blade.php:440:                                    <span>End date</span>
+> resources\views\bookings\index.blade.php:441:                                    <strong 
+data-monthly-summary-end-date>{{ \Illuminate\Support\Carbon::parse($initialEndDate)->format('F j, Y') }}</strong>
+  resources\views\bookings\index.blade.php:442:                                </div>
+  resources\views\bookings\index.blade.php:443:                                <div 
+class="booking-inline-summary__row">
+  resources\views\bookings\index.blade.php:444:                                    <span>Plan</span>
+> resources\views\bookings\index.blade.php:445:                                    <strong 
+data-monthly-summary-plan>{{ $oldMonthlyPlan ?: '--' }}</strong>
+  resources\views\bookings\index.blade.php:446:                                </div>
+> resources\views\bookings\index.blade.php:447:                                <div class="booking-inline-summary__row 
+hidden" data-monthly-summary-use-type-row>
+  resources\views\bookings\index.blade.php:448:                                    <span>Stay window</span>
+> resources\views\bookings\index.blade.php:449:                                    <strong 
+data-monthly-summary-use-type>--</strong>
+  resources\views\bookings\index.blade.php:450:                                </div>
+  resources\views\bookings\index.blade.php:451:                                <div 
+class="booking-inline-summary__row">
+  resources\views\bookings\index.blade.php:452:                                    <span>Coverage</span>
+> resources\views\bookings\index.blade.php:453:                                    <strong 
+data-monthly-summary-units>--</strong>
+  resources\views\bookings\index.blade.php:454:                                </div>
+  resources\views\bookings\index.blade.php:455:                                <div class="booking-inline-summary__row 
+booking-inline-summary__row--total">
+  resources\views\bookings\index.blade.php:456:                                    <span>Total</span>
+> resources\views\bookings\index.blade.php:457:                                    <strong 
+data-monthly-summary-total>Php 0.00</strong>
+  resources\views\bookings\index.blade.php:458:                                </div>
+  resources\views\bookings\index.blade.php:459:                            </div>
+  resources\views\bookings\index.blade.php:460:
+> resources\views\bookings\index.blade.php:461:                            @error('monthly_plan') <small 
+class="field-error">{{ $message }}</small> @enderror
+  resources\views\bookings\index.blade.php:462:                            @error('booking_date') <small 
+class="field-error">{{ $message }}</small> @enderror
+  resources\views\bookings\index.blade.php:463:                            @error('booking_end_date') <small 
+class="field-error">{{ $message }}</small> @enderror
+  resources\views\bookings\index.blade.php:464:                            @error('long_stay_use_type') <small 
+class="field-error">{{ $message }}</small> @enderror
+  resources\views\bookings\index.blade.php:465:
+> resources\views\bookings\index.blade.php:466:                            <button type="button" 
+class="booking-slot-continue" data-monthly-continue disabled>Continue to checkout -&gt;</button>
+  resources\views\bookings\index.blade.php:467:                        </article>
+  resources\views\bookings\index.blade.php:468:                    </section>
+  resources\views\bookings\index.blade.php:469:                </div>
+  resources\views\bookings\index.blade.php:470:
+  resources\views\bookings\index.blade.php:601:                                    <strong data-checkout-date>{{ 
+$oldBookingMode === 'schedule' ? $scheduleCheckoutDate : \Illuminate\Support\Carbon::parse($initialDate)->format('F j, 
+Y') }}</strong>
+  resources\views\bookings\index.blade.php:602:                                </div>
+> resources\views\bookings\index.blade.php:603:                                <div 
+class="booking-checkout__summary-row @if ($oldBookingMode !== 'monthly') hidden @endif" data-checkout-end-date-row>
+  resources\views\bookings\index.blade.php:604:                                    <span>End date</span>
+  resources\views\bookings\index.blade.php:605:                                    <strong data-checkout-end-date>{{ 
+\Illuminate\Support\Carbon::parse($initialEndDate)->format('F j, Y') }}</strong>
+  resources\views\bookings\index.blade.php:606:                                </div>
+  resources\views\bookings\index.blade.php:607:                                <div 
+class="booking-checkout__summary-row">
+  resources\views\bookings\index.blade.php:617:                                    <strong data-checkout-duration>{{ 
+$oldBookingMode === 'schedule' ? $scheduleCheckoutDuration : '--' }}</strong>
+  resources\views\bookings\index.blade.php:618:                                </div>
+> resources\views\bookings\index.blade.php:619:                                <div 
+class="booking-checkout__summary-row @if ($oldBookingMode !== 'monthly') hidden @endif" data-checkout-monthly-plan-row>
+> resources\views\bookings\index.blade.php:620:                                    <span>Monthly plan</span>
+> resources\views\bookings\index.blade.php:621:                                    <strong 
+data-checkout-monthly-plan>{{ $oldMonthlyPlan ?: '--' }}</strong>
+  resources\views\bookings\index.blade.php:622:                                </div>
+  resources\views\bookings\index.blade.php:623:                                <div 
+class="booking-checkout__summary-row">
+  resources\views\bookings\index.blade.php:624:                                    <span>Minimum downpayment</span>
+  resources\views\bookings\index.blade.php:625:                                    <strong 
+data-quote-minimum-downpayment>{{ $oldBookingMode === 'schedule' ? 'Php '.number_format($scheduleSummaryMinimum, 2) : 
+'Php 0.00' }}</strong>
+  resources\views\bookings\index.blade.php:689:            @endunless
+  resources\views\bookings\index.blade.php:690:
+> resources\views\bookings\index.blade.php:691:            <div class="member-booking-modal hidden" 
+data-monthly-blocked-modal>
+> resources\views\bookings\index.blade.php:692:                <div class="member-booking-modal__backdrop" 
+data-monthly-blocked-close></div>
+> resources\views\bookings\index.blade.php:693:                <div class="member-booking-modal__dialog 
+booking-availability-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="monthly-blocked-dates-title">
+> resources\views\bookings\index.blade.php:694:                    <button type="button" 
+class="member-booking-modal__close" data-monthly-blocked-close aria-label="Close blocked dates">&times;</button>
+  resources\views\bookings\index.blade.php:695:                    <p class="member-booking-modal__eyebrow">Room 
+availability</p>
+> resources\views\bookings\index.blade.php:696:                    <h2 id="monthly-blocked-dates-title" 
+data-monthly-blocked-title>Select a room first</h2>
+> resources\views\bookings\index.blade.php:697:                    <p class="member-booking-modal__space" 
+data-monthly-blocked-subtitle>Blocked dates for long-stay booking will appear here.</p>
+  resources\views\bookings\index.blade.php:698:
+  resources\views\bookings\index.blade.php:699:                    <div class="booking-availability-modal__summary">
+  resources\views\bookings\index.blade.php:700:                        <span>Blocked dates</span>
+> resources\views\bookings\index.blade.php:701:                        <strong data-monthly-blocked-count>0 
+dates</strong>
+  resources\views\bookings\index.blade.php:702:                    </div>
+  resources\views\bookings\index.blade.php:703:
+> resources\views\bookings\index.blade.php:704:                    <div class="booking-availability-modal__body" 
+data-monthly-blocked-body>
+  resources\views\bookings\index.blade.php:705:                        <div 
+class="booking-availability-modal__calendar">
+  resources\views\bookings\index.blade.php:706:                            <div 
+class="booking-availability-modal__calendar-head">
+> resources\views\bookings\index.blade.php:707:                                <strong 
+data-monthly-blocked-calendar-title>Calendar</strong>
+  resources\views\bookings\index.blade.php:708:                                <div class="booking-calendar-nav 
+booking-availability-modal__calendar-nav">
+> resources\views\bookings\index.blade.php:709:                                    <button type="button" 
+data-monthly-blocked-prev aria-label="Previous month">&#8249;</button>
+> resources\views\bookings\index.blade.php:710:                                    <button type="button" 
+data-monthly-blocked-next aria-label="Next month">&#8250;</button>
+  resources\views\bookings\index.blade.php:711:                                </div>
+  resources\views\bookings\index.blade.php:712:                            </div>
+  resources\views\bookings\index.blade.php:713:
+  resources\views\bookings\index.blade.php:714:                            <div class="booking-calendar-weekdays 
+booking-availability-modal__weekdays">
+  resources\views\bookings\index.blade.php:722:                            </div>
+  resources\views\bookings\index.blade.php:723:
+> resources\views\bookings\index.blade.php:724:                            <div class="booking-calendar-days 
+booking-availability-modal__days" data-monthly-blocked-calendar-days></div>
+  resources\views\bookings\index.blade.php:725:
+  resources\views\bookings\index.blade.php:726:                            <div class="booking-calendar-legend 
+booking-availability-modal__legend">
+  resources\views\bookings\index.blade.php:727:                                <span><i 
+class="is-selected"></i>Selected range</span>
+  resources\views\bookings\index.blade.php:728:                                <span><i 
+class="is-booked"></i>Blocked</span>
+  resources\views\bookings\index.blade.php:730:                        </div>
+  resources\views\bookings\index.blade.php:731:
+> resources\views\bookings\index.blade.php:732:                        <p class="booking-availability-modal__empty" 
+data-monthly-blocked-empty>Select a room first so HYVE can load its blocked dates.</p>
+> resources\views\bookings\index.blade.php:733:                        <div class="booking-availability-modal__dates 
+hidden" data-monthly-blocked-list></div>
+  resources\views\bookings\index.blade.php:734:                    </div>
+  resources\views\bookings\index.blade.php:735:                </div>
+  resources\views\bookings\index.blade.php:736:            </div>
+  resources\views\bookings\index.blade.php:737:
+
+
