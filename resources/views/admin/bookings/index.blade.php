@@ -1684,7 +1684,7 @@
                 pollNotifications();
                 window.setInterval(() => {
                     pollNotifications();
-                }, 10000);
+                }, 30000);
             }
 
             pollBookings();
@@ -1694,7 +1694,7 @@
                 }
 
                 pollBookings();
-            }, 10000);
+            }, 30000);
 
             window.addEventListener('storage', (event) => {
                 if (event.key !== 'hyve-admin-bookings-refresh' || !event.newValue) {

@@ -11,3 +11,7 @@ Artisan::command('inspire', function () {
 Schedule::command('bookings:send-ending-reminders')
     ->everyMinute()
     ->withoutOverlapping();
+
+Schedule::command('bookings:sync-progress')
+    ->everyMinute()
+    ->withoutOverlapping();

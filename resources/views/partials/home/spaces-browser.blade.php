@@ -69,7 +69,7 @@
                     data-space-capacity="{{ $space['capacity'] }}"
                 >
                     <div class="space-browser-card__media">
-                        <img src="{{ asset($space['image']) }}" alt="{{ $space['title'] }}">
+                        <img src="{{ asset($space['image']) }}" alt="{{ $space['title'] }}" loading="lazy" decoding="async">
                         <span class="space-browser-card__badge">{{ $space['category'] }}</span>
                     </div>
 

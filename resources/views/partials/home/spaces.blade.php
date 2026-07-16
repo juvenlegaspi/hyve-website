@@ -12,7 +12,7 @@
             @foreach ($spaces as $space)
                 <article class="space-card space-card--showcase reveal">
                     <div class="space-card__media">
-                        <img src="{{ asset($space['image']) }}" alt="{{ $space['title'] }}">
+                        <img src="{{ asset($space['image']) }}" alt="{{ $space['title'] }}" loading="lazy" decoding="async">
                     </div>
                     <div class="space-card__content">
                         <div class="space-card__header">

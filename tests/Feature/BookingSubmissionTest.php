@@ -323,18 +323,20 @@ class BookingSubmissionTest extends TestCase
     public function test_quote_endpoint_returns_daily_plan_amounts_for_selected_date_range(): void
     {
         $room = HyveRoom::query()->where('room_name', 'Room 1')->firstOrFail();
+        $startDate = now()->addMonth()->startOfMonth();
 
         $response = $this->getJson(route('bookings.quote', [
             'booking_mode' => 'monthly',
             'hyve_room_id' => $room->id,
-            'booking_date' => '2026-07-01',
-            'booking_end_date' => '2026-07-03',
+            'booking_date' => $startDate->toDateString(),
+            'booking_end_date' => $startDate->copy()->addDays(2)->toDateString(),
             'monthly_plan' => 'Daily',
+            'long_stay_use_type' => 'day',
         ]));
 
         $response->assertOk();
         $response->assertJsonFragment([
-            'rate_name' => 'Fortitude Office (2 Seats) - Daily',
+            'rate_name' => 'Fortitude Office (2 Seats) - 3 days',
             'unit_type' => 'daily',
             'unit_count' => 3,
             'total_amount' => 2247,
@@ -344,21 +346,23 @@ class BookingSubmissionTest extends TestCase
     public function test_quote_endpoint_returns_weekly_plan_amounts_for_selected_date_range(): void
     {
         $room = HyveRoom::query()->where('room_name', 'Room 1')->firstOrFail();
+        $startDate = now()->addMonth()->startOfMonth();
 
         $response = $this->getJson(route('bookings.quote', [
             'booking_mode' => 'monthly',
             'hyve_room_id' => $room->id,
-            'booking_date' => '2026-07-01',
-            'booking_end_date' => '2026-07-08',
+            'booking_date' => $startDate->toDateString(),
+            'booking_end_date' => $startDate->copy()->addDays(7)->toDateString(),
             'monthly_plan' => 'Weekly',
+            'long_stay_use_type' => 'day',
         ]));
 
         $response->assertOk();
         $response->assertJsonFragment([
-            'rate_name' => 'Fortitude Office (2 Seats) - Weekly',
+            'rate_name' => 'Fortitude Office (2 Seats) - 1 week + 1 day',
             'unit_type' => 'weekly',
-            'unit_count' => 2,
-            'total_amount' => 8990,
+            'unit_count' => 1,
+            'total_amount' => 5244,
         ]);
     }
 
@@ -1119,7 +1123,7 @@ class BookingSubmissionTest extends TestCase
                 'label' => '4:00 PM - 5:00 PM',
             ]);
             $response->assertJsonFragment([
-                'label' => '4:30 PM - 5:30 PM',
+                'label' => '4:30 PM - 6:30 PM',
             ]);
         } finally {
             Carbon::setTestNow();

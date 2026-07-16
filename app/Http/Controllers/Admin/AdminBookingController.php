@@ -10,12 +10,14 @@ use App\Models\BookingDetail;
 use App\Models\BookingHeader;
 use App\Models\BookingPayment;
 use App\Services\BookingApprovalTextService;
+use App\Services\BookingProgressSyncService;
 use App\Services\BookingWifiVoucherService;
 use App\Support\HyvePricing;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
@@ -28,8 +30,8 @@ class AdminBookingController extends Controller
     public function __construct(
         private readonly BookingWifiVoucherService $wifiVoucherService,
         private readonly HyvePricing $pricing,
-    ) {
-    }
+        private readonly BookingProgressSyncService $progressSync,
+    ) {}
 
     public function index(Request $request): View
     {
@@ -54,8 +56,6 @@ class AdminBookingController extends Controller
 
     public function bookingsFeed(Request $request): JsonResponse
     {
-        $this->syncDueBookingsProgress();
-
         $filters = $this->bookingFilters($request);
         $bookings = $this->bookingListingPaginator($request, $filters);
 
@@ -69,8 +69,6 @@ class AdminBookingController extends Controller
 
     public function summary(BookingHeader $bookingHeader): JsonResponse
     {
-        $this->syncDueBookingsProgress();
-
         $bookingHeader->load(['details.hyveRoom', 'details.space', 'user', 'wifiVoucher']);
 
         return response()->json([
@@ -467,8 +465,6 @@ class AdminBookingController extends Controller
 
     public function notificationsFeed(Request $request): JsonResponse
     {
-        $this->syncDueBookingsProgress();
-
         return response()->json($this->bookingNotificationPayload());
     }
 
@@ -687,7 +683,7 @@ class AdminBookingController extends Controller
     }
 
     /**
-     * @return \Illuminate\Support\Collection<int, BookingDetail>
+     * @return Collection<int, BookingDetail>
      */
     private function timedSessionDetails(BookingDetail $detail)
     {
@@ -946,7 +942,7 @@ class AdminBookingController extends Controller
     }
 
     /**
-     * @return array{unread_count:int,activities:\Illuminate\Support\Collection<int, mixed>}
+     * @return array{unread_count:int,activities:Collection<int, mixed>}
      */
     private function initialBookingNotifications(): array
     {
@@ -1070,54 +1066,7 @@ class AdminBookingController extends Controller
 
     private function syncDueBookingsProgress(): void
     {
-        $now = now();
-
-        BookingDetail::query()
-            ->with(['bookingHeader', 'hyveRoom', 'space'])
-            ->where('status', BookingDetail::STATUS_CONFIRMED)
-            ->whereNull('actual_end_at')
-            ->get()
-            ->each(function (BookingDetail $detail) use ($now): void {
-                $scheduledStart = $this->scheduledDateTime($detail, (string) $detail->start_time);
-                $scheduledEnd = $this->scheduledDateTime($detail, (string) $detail->end_time);
-                $header = $detail->bookingHeader;
-
-                if (! $detail->actual_start_at && $scheduledStart->lte($now) && $scheduledEnd->gt($now)) {
-                    $detail->update([
-                        'progress_status' => BookingDetail::PROGRESS_IN_PROGRESS,
-                        'actual_start_at' => $scheduledStart,
-                        'actual_end_at' => null,
-                    ]);
-
-                    if ($header) {
-                        $this->recordActivity(
-                            $header,
-                            $detail,
-                            'booking_auto_started',
-                            'Booking auto-started',
-                            'Auto-started '.$this->activityRoomName($detail).' for '.$header->customer_name.'.'
-                        );
-                    }
-                }
-
-                if ($scheduledEnd->lte($now)) {
-                    $detail->update([
-                        'progress_status' => BookingDetail::PROGRESS_COMPLETED,
-                        'actual_start_at' => $detail->actual_start_at ?: $scheduledStart,
-                        'actual_end_at' => $scheduledEnd,
-                    ]);
-
-                    if ($header) {
-                        $this->recordActivity(
-                            $header,
-                            $detail,
-                            'booking_auto_completed',
-                            'Booking auto-ended',
-                            'Auto-ended '.$this->activityRoomName($detail).' for '.$header->customer_name.'.'
-                        );
-                    }
-                }
-            });
+        $this->progressSync->sync(request()->user()?->getKey());
     }
 
     /**

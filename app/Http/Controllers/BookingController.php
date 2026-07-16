@@ -21,6 +21,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
@@ -304,9 +305,20 @@ class BookingController extends Controller
         $room = HyveRoom::query()->active()->findOrFail($validated['hyve_room_id']);
         $horizonDays = (int) ($validated['horizon_days'] ?? 14);
 
-        return response()->json([
-            'unavailable_dates' => $this->fullyBookedDates($room, $horizonDays)->values()->all(),
+        $cacheKey = implode(':', [
+            'booking-unavailable-dates',
+            now()->toDateString(),
+            $room->getKey(),
+            $horizonDays,
         ]);
+
+        $unavailableDates = Cache::remember(
+            $cacheKey,
+            now()->addSeconds(30),
+            fn (): array => $this->fullyBookedDates($room, $horizonDays)->values()->all(),
+        );
+
+        return response()->json(['unavailable_dates' => $unavailableDates]);
     }
 
     public function roomLayout(Request $request): JsonResponse
@@ -1261,6 +1273,7 @@ class BookingController extends Controller
     private function commonAreaOccupancyBySlot(string $bookingDate, Collection $tableRooms): array
     {
         $roomIds = $tableRooms->pluck('id')->values();
+        $representative = $this->sharedTableRepresentative($tableRooms);
         $counts = [];
 
         $details = BookingDetail::query()
@@ -1272,7 +1285,7 @@ class BookingController extends Controller
             ->get(['booking_date', 'booking_end_date', 'start_time', 'end_time']);
 
         foreach ($details as $detail) {
-            if ($this->isLongStayDetail($detail) && $this->detailOccupiesDate($detail, $bookingDate)) {
+            if ($representative && $this->isLongStayDetail($detail) && $this->detailOccupiesDate($detail, $bookingDate)) {
                 $schedule = $this->scheduleWindowForDate($bookingDate, $representative);
                 $start = $schedule['start'];
                 $end = $schedule['end'];

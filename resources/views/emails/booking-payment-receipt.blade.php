@@ -37,7 +37,7 @@
                 <td style="padding:8px 0; text-align:right; font-weight:700;">{{ $context['paid_at'] }}</td>
             </tr>
             <tr>
-                <td style="padding:8px 0; color:#6d7f77;">Amount received</td>
+                <td style="padding:8px 0; color:#6d7f77;">Latest payment received</td>
                 <td style="padding:8px 0; text-align:right; font-weight:700;">Php {{ number_format((float) $context['payment_amount'], 2) }}</td>
             </tr>
             <tr>
@@ -59,14 +59,36 @@
                 <td style="padding:8px 0; text-align:right; font-weight:700;">Php {{ number_format((float) $context['payable_total_amount'], 2) }}</td>
             </tr>
             <tr>
-                <td style="padding:8px 0; color:#6d7f77;">Paid so far</td>
-                <td style="padding:8px 0; text-align:right; font-weight:700;">Php {{ number_format((float) $context['downpayment_amount'], 2) }}</td>
+                <td style="padding:8px 0; color:#6d7f77;">Total paid</td>
+                <td style="padding:8px 0; text-align:right; font-weight:700;">Php {{ number_format((float) ($context['total_paid_amount'] ?? $context['downpayment_amount']), 2) }}</td>
             </tr>
             <tr>
                 <td style="padding:8px 0; color:#6d7f77;">Remaining balance</td>
                 <td style="padding:8px 0; text-align:right; font-weight:700;">Php {{ number_format((float) $context['balance_amount'], 2) }}</td>
             </tr>
         </table>
+
+        @if (! empty($context['payment_lines']))
+            <div style="margin-bottom:24px;">
+                <div style="font-size:18px; font-weight:700; margin-bottom:12px;">Payment breakdown</div>
+
+                @foreach ($context['payment_lines'] as $paymentLine)
+                    <div style="padding:14px 16px; border:1px solid #e8decb; border-radius:14px; margin-bottom:10px;">
+                        <table role="presentation" style="width:100%; border-collapse:collapse;">
+                            <tr>
+                                <td style="font-size:16px; font-weight:700;">{{ $paymentLine['label'] }}</td>
+                                <td style="font-size:16px; font-weight:700; text-align:right;">Php {{ number_format((float) $paymentLine['amount'], 2) }}</td>
+                            </tr>
+                            <tr>
+                                <td colspan="2" style="padding-top:5px; font-size:13px; color:#50635e;">
+                                    {{ $paymentLine['method'] }} | {{ $paymentLine['paid_at'] }}
+                                </td>
+                            </tr>
+                        </table>
+                    </div>
+                @endforeach
+            </div>
+        @endif
 
         @if (! empty($context['lines']))
             <div style="margin-bottom:24px;">

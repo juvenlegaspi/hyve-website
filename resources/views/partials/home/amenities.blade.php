@@ -43,6 +43,8 @@
                                 src="{{ $space['images'][0] }}"
                                 alt="{{ $space['title'] }}"
                                 data-amenities-main-image
+                                loading="lazy"
+                                decoding="async"
                             >
                         </div>
 
@@ -75,7 +77,7 @@
                                             data-image-src="{{ $image }}"
                                             aria-label="View {{ $space['title'] }} photo {{ $loop->iteration }}"
                                         >
-                                            <img src="{{ $image }}" alt="{{ $space['title'] }} thumbnail {{ $loop->iteration }}">
+                                            <img src="{{ $image }}" alt="{{ $space['title'] }} thumbnail {{ $loop->iteration }}" loading="lazy" decoding="async">
                                         </button>
                                     @endforeach
                                 </div>

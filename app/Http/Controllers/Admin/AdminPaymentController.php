@@ -4,17 +4,18 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Mail\BookingPaymentReceiptMail;
-use App\Models\BookingHeader;
 use App\Models\BookingDetail;
+use App\Models\BookingHeader;
 use App\Models\BookingPayment;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Validation\Rule;
-use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class AdminPaymentController extends Controller
@@ -172,9 +173,12 @@ class AdminPaymentController extends Controller
             return back()->with('admin_error', 'This payment has already been reviewed.');
         }
 
-        DB::transaction(function () use ($request, $bookingPayment): void {
+        $shouldSendReceiptEmail = false;
+
+        DB::transaction(function () use ($request, $bookingPayment, &$shouldSendReceiptEmail): void {
             $payment = BookingPayment::query()->lockForUpdate()->findOrFail($bookingPayment->getKey());
             $header = BookingHeader::query()->lockForUpdate()->findOrFail($payment->booking_header_id);
+            $wasFullyPaid = (string) ($header->payment_status ?? '') === 'paid';
 
             $payment->update([
                 'status' => BookingPayment::STATUS_APPROVED,
@@ -184,7 +188,17 @@ class AdminPaymentController extends Controller
             ]);
 
             $this->syncHeaderPaymentSnapshot($header->fresh('payments'));
+
+            $freshHeader = $header->fresh();
+            $shouldSendReceiptEmail = ! $wasFullyPaid
+                && $freshHeader
+                && (string) ($freshHeader->payment_status ?? '') === 'paid'
+                && trim((string) ($freshHeader->email ?? '')) !== '';
         });
+
+        if ($shouldSendReceiptEmail) {
+            $this->sendPaymentReceiptEmail($bookingPayment->bookingHeader()->first()?->load(['details.hyveRoom', 'details.space', 'payments']));
+        }
 
         return back()
             ->with('admin_success', 'Payment verified and booking balance updated.')
@@ -580,7 +594,7 @@ class AdminPaymentController extends Controller
     {
         $format = strlen($value) === 5 ? 'H:i' : 'H:i:s';
 
-        return \Illuminate\Support\Carbon::createFromFormat($format, $value)->format('g:i A');
+        return Carbon::createFromFormat($format, $value)->format('g:i A');
     }
 
     private function sendPaymentReceiptEmail(?BookingHeader $header): void
@@ -627,6 +641,34 @@ class AdminPaymentController extends Controller
             ->sortByDesc(fn (BookingPayment $payment) => optional($payment->verified_at)->timestamp ?? optional($payment->paid_at)->timestamp ?? 0)
             ->first();
 
+        $approvedPayments = $header->payments
+            ->where('status', BookingPayment::STATUS_APPROVED)
+            ->sortBy(fn (BookingPayment $payment) => optional($payment->verified_at)->timestamp ?? optional($payment->paid_at)->timestamp ?? optional($payment->created_at)->timestamp ?? 0)
+            ->values();
+
+        $paymentLines = $approvedPayments
+            ->map(function (BookingPayment $payment) use ($latestApprovedPayment): array {
+                $isLatestPayment = $latestApprovedPayment?->is($payment) ?? false;
+                $label = match (true) {
+                    (string) $payment->payment_type === BookingPayment::TYPE_DOWNPAYMENT => 'Downpayment',
+                    $isLatestPayment => 'Final payment',
+                    default => 'Balance payment',
+                };
+
+                return [
+                    'label' => $label,
+                    'method' => ucfirst(str_replace('_', ' ', (string) ($payment->payment_method ?? 'cash'))),
+                    'paid_at' => optional($payment->verified_at ?? $payment->paid_at ?? $payment->created_at)->format('F j, Y g:i A') ?? '--',
+                    'amount' => round((float) ($payment->amount ?? 0), 2),
+                ];
+            })
+            ->all();
+
+        $totalPaidAmount = round(
+            (float) $approvedPayments->sum(fn (BookingPayment $payment): float => (float) ($payment->amount ?? 0)),
+            2,
+        );
+
         $lines = $details->map(function (BookingDetail $detail): array {
             $roomName = $detail->hyveRoom?->room_name ?? $detail->space?->name ?? 'Room';
             $startTime = $detail->start_time ? $this->displayTime((string) $detail->start_time) : '--';
@@ -650,7 +692,9 @@ class AdminPaymentController extends Controller
             'discount_amount' => round((float) ($header->discount_amount ?? 0), 2),
             'payable_total_amount' => round((float) ($header->discounted_total_amount ?? $header->total_amount ?? 0), 2),
             'downpayment_amount' => round((float) ($header->downpayment_amount ?? 0), 2),
+            'total_paid_amount' => $totalPaidAmount,
             'balance_amount' => round((float) ($header->balance_amount ?? 0), 2),
+            'payment_lines' => $paymentLines,
             'lines' => $lines,
         ];
     }
