@@ -753,35 +753,53 @@ class HyvePricing
             ];
         }
 
-        $minimumCost = 0.0;
+        $startingPeriod = $this->chargePeriodForStart($start);
+        $minimumCost = (float) ($startingPeriod === 'night'
+            ? $rateCard->night_minimum_rate
+            : $rateCard->day_minimum_rate);
         $additionalCost = 0.0;
         $periodsUsed = [];
-        $breakdown = [];
+        $minimumCoveredUntil = $start->copy()->addHours($minimumHours);
+        $segmentStart = $start->copy();
+        $breakdown = [[
+            'label' => sprintf(
+                '%s minimum (first %d hour%s)',
+                $startingPeriod === 'night' ? 'Night use' : 'Day use',
+                $minimumHours,
+                $minimumHours === 1 ? '' : 's'
+            ),
+            'amount' => round($minimumCost, 2),
+        ]];
 
         foreach ($segments as $segment) {
             $periodsUsed[$segment['period']] = true;
-            $segmentHours = round($segment['minutes'] / 60, 2);
-            $minimumRate = (float) ($segment['period'] === 'night'
-                ? $rateCard->night_minimum_rate
-                : $rateCard->day_minimum_rate);
+            $segmentEnd = $segmentStart->copy()->addMinutes((int) $segment['minutes']);
+            $succeedingStart = $segmentStart->greaterThan($minimumCoveredUntil)
+                ? $segmentStart
+                : $minimumCoveredUntil;
+            $succeedingMinutes = $segmentEnd->greaterThan($succeedingStart)
+                ? (int) $succeedingStart->diffInMinutes($segmentEnd, true)
+                : 0;
             $succeedingHourlyRate = (float) ($segment['period'] === 'night'
                 ? $rateCard->night_succeeding_hour_rate
                 : $rateCard->day_succeeding_hour_rate);
-            $additionalHours = max(0, $segmentHours - $minimumHours);
 
-            $minimumCost += $minimumRate;
-            $additionalCost += $additionalHours * $succeedingHourlyRate;
+            if ($succeedingMinutes > 0) {
+                $succeedingHours = round($succeedingMinutes / 60, 2);
+                $amount = round($succeedingHours * $succeedingHourlyRate, 2);
+                $additionalCost += $amount;
+                $breakdown[] = [
+                    'label' => sprintf(
+                        '%s succeeding hours (%s x %s)',
+                        $segment['period'] === 'night' ? 'Night' : 'Day',
+                        $this->formatHoursForBreakdown($succeedingHours),
+                        $this->formatCurrencyForBreakdown($succeedingHourlyRate)
+                    ),
+                    'amount' => $amount,
+                ];
+            }
 
-            $breakdown = array_merge(
-                $breakdown,
-                $this->buildStandardBreakdown(
-                    $segment['period'] === 'night' ? 'Night use minimum' : 'Day use minimum',
-                    $minimumRate,
-                    $minimumHours,
-                    $segmentHours,
-                    $succeedingHourlyRate
-                )
-            );
+            $segmentStart = $segmentEnd;
         }
 
         $chargePeriod = count($periodsUsed) > 1

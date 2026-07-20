@@ -216,6 +216,46 @@ class BookingSubmissionTest extends TestCase
         ]);
     }
 
+    public function test_quote_crossing_from_day_to_night_uses_one_minimum_then_night_succeeding_rate(): void
+    {
+        $room = HyveRoom::query()->where('room_name', 'Room 7')->firstOrFail();
+
+        $response = $this->getJson(route('bookings.quote', [
+            'hyve_room_id' => $room->id,
+            'booking_date' => now()->addDay()->toDateString(),
+            'start_time' => '18:00',
+            'end_time' => '21:00',
+        ]));
+
+        $response->assertOk()
+            ->assertJsonPath('charge_period', 'mixed')
+            ->assertJsonPath('charge_period_label', 'Day + Night Use')
+            ->assertJsonPath('minimum_rate', 719)
+            ->assertJsonPath('total_amount', 1108)
+            ->assertJsonPath('breakdown.0.amount', 719)
+            ->assertJsonPath('breakdown.1.amount', 389);
+    }
+
+    public function test_quote_crossing_from_night_to_day_uses_one_minimum_then_day_succeeding_rate(): void
+    {
+        $room = HyveRoom::query()->where('room_name', 'Room 7')->firstOrFail();
+
+        $response = $this->getJson(route('bookings.quote', [
+            'hyve_room_id' => $room->id,
+            'booking_date' => now()->addDay()->toDateString(),
+            'start_time' => '06:00',
+            'end_time' => '09:00',
+        ]));
+
+        $response->assertOk()
+            ->assertJsonPath('charge_period', 'mixed')
+            ->assertJsonPath('charge_period_label', 'Day + Night Use')
+            ->assertJsonPath('minimum_rate', 789)
+            ->assertJsonPath('total_amount', 1148)
+            ->assertJsonPath('breakdown.0.amount', 789)
+            ->assertJsonPath('breakdown.1.amount', 359);
+    }
+
     public function test_quote_endpoint_returns_monthly_plan_amounts(): void
     {
         $room = HyveRoom::query()->where('room_name', 'Room 7')->firstOrFail();

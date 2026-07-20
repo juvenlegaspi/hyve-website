@@ -1,6 +1,6 @@
 <section id="overview" class="hero-section hero-section--video">
     <video class="hero-video" autoplay muted loop playsinline>
-        <source src="{{ asset('videos/hyve-hero.mp4') }}" type="video/mp4">
+        <source src="{{ asset('videos/hyve-hero.mp4') }}?v=20260720" type="video/mp4">
     </video>
     <div class="hero-overlay"></div>
 
