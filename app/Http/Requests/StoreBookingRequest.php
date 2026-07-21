@@ -23,6 +23,10 @@ class StoreBookingRequest extends FormRequest
                 ]);
             }
         }
+
+        if ($this->input('payment_method') === 'pay_later') {
+            $this->merge(['downpayment_amount' => 0]);
+        }
     }
 
     public function authorize(): bool
@@ -36,9 +40,18 @@ class StoreBookingRequest extends FormRequest
     public function rules(): array
     {
         $adminWalkIn = $this->routeIs('admin.bookings.create', 'admin.bookings.store');
-        $paymentMethods = $adminWalkIn
-            ? ['gcash', 'bank_transfer', 'cash']
-            : ['gcash', 'bank_transfer'];
+        $commonAreaOnly = $this->isCommonAreaOnlyBooking();
+        $payLaterAllowed = $adminWalkIn || $commonAreaOnly;
+        $isPayLater = $payLaterAllowed && $this->input('payment_method') === 'pay_later';
+        $paymentMethods = ['gcash', 'bank_transfer'];
+
+        if ($adminWalkIn) {
+            $paymentMethods[] = 'cash';
+        }
+
+        if ($payLaterAllowed) {
+            $paymentMethods[] = 'pay_later';
+        }
         $agreementRules = $adminWalkIn
             ? ['nullable']
             : ['required', 'accepted'];
@@ -164,10 +177,19 @@ class StoreBookingRequest extends FormRequest
             'payment_method' => ['required', Rule::in($paymentMethods)],
             'rules_agreement' => $agreementRules,
             'downpayment_amount' => [
-                'required',
+                Rule::requiredIf(! $isPayLater),
+                'nullable',
                 'numeric',
-                'gt:0',
-                function (string $attribute, mixed $value, Closure $fail): void {
+                $isPayLater ? 'min:0' : 'gt:0',
+                function (string $attribute, mixed $value, Closure $fail) use ($isPayLater): void {
+                    if ($isPayLater) {
+                        if ((float) ($value ?? 0) !== 0.0) {
+                            $fail('Set the initial payment to Php 0.00 when the customer will pay upon checkout.');
+                        }
+
+                        return;
+                    }
+
                     /** @var HyvePricing $pricing */
                     $pricing = app(HyvePricing::class);
                     $bookingMode = (string) ($this->input('booking_mode') ?? 'room');
@@ -296,7 +318,7 @@ class StoreBookingRequest extends FormRequest
                 },
             ],
             'payment_proof' => [
-                Rule::requiredIf(fn () => ! ($adminWalkIn && $this->input('payment_method') === 'cash')),
+                Rule::requiredIf(fn () => ! (($adminWalkIn && $this->input('payment_method') === 'cash') || $isPayLater)),
                 'nullable',
                 'file',
                 'mimetypes:image/jpeg,image/png,image/gif',
@@ -319,6 +341,34 @@ class StoreBookingRequest extends FormRequest
         }
 
         return $rules;
+    }
+
+    private function isCommonAreaOnlyBooking(): bool
+    {
+        if ($this->input('booking_mode') === 'schedule') {
+            $roomIds = collect($this->input('selected_schedule_items', []))
+                ->filter(fn ($item): bool => is_array($item) && is_numeric($item['hyve_room_id'] ?? null))
+                ->map(fn (array $item): int => (int) $item['hyve_room_id'])
+                ->unique()
+                ->values();
+
+            if ($roomIds->isEmpty()) {
+                return false;
+            }
+
+            $rooms = HyveRoom::query()->active()->whereKey($roomIds)->get();
+
+            return $rooms->count() === $roomIds->count()
+                && $rooms->every(fn (HyveRoom $room): bool => $room->isSharedTable());
+        }
+
+        $roomId = $this->input('hyve_room_id');
+
+        if (! is_numeric($roomId)) {
+            return false;
+        }
+
+        return HyveRoom::query()->active()->find((int) $roomId)?->isSharedTable() ?? false;
     }
 
     /**

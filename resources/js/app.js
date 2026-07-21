@@ -709,6 +709,7 @@ const setupBookingPage = () => {
     const paymentGcash = form.querySelector('[data-payment-gcash]');
     const paymentBank = form.querySelector('[data-payment-bank]');
     const paymentCash = form.querySelector('[data-payment-cash]');
+    const paymentPayLater = form.querySelector('[data-payment-pay-later]');
     const paymentInstructions = form.querySelector('[data-payment-instructions]');
     const paymentProofWrap = form.querySelector('[data-payment-proof-wrap]');
     const paymentProofInput = form.querySelector('input[name="payment_proof"]');
@@ -1003,20 +1004,43 @@ const setupBookingPage = () => {
         });
     };
 
+    const isPayLaterSelected = () => isAdminMode && paymentMethod.value === 'pay_later';
+
     const updatePaymentDestination = () => {
         paymentGcash.classList.toggle('hidden', paymentMethod.value !== 'gcash');
         paymentBank.classList.toggle('hidden', paymentMethod.value !== 'bank_transfer');
         paymentCash?.classList.toggle('hidden', paymentMethod.value !== 'cash');
+        paymentPayLater?.classList.toggle('hidden', !isPayLaterSelected());
+        paymentInstructions.classList.toggle('hidden', isPayLaterSelected());
 
         if (paymentProofWrap && paymentProofInput) {
-            const isCashWalkIn = isAdminMode && paymentMethod.value === 'cash';
-            paymentProofWrap.classList.toggle('hidden', isCashWalkIn);
-            paymentProofInput.required = !isCashWalkIn;
+            const doesNotNeedProof = isAdminMode && ['cash', 'pay_later'].includes(paymentMethod.value);
+            paymentProofWrap.classList.toggle('hidden', doesNotNeedProof);
+            paymentProofInput.required = !doesNotNeedProof;
+        }
+
+        downpaymentInput.readOnly = isPayLaterSelected();
+
+        if (isPayLaterSelected()) {
+            downpaymentInput.min = '0';
+            downpaymentInput.value = '0';
+        } else if (currentQuote) {
+            const minimum = Number(currentQuote.minimum_downpayment_amount || 0);
+            downpaymentInput.min = String(minimum);
+
+            if (!downpaymentInput.value || Number(downpaymentInput.value) < minimum) {
+                downpaymentInput.value = String(minimum);
+            }
         }
 
         paymentMethodCards.forEach((card) => {
             card.classList.toggle('is-active', card.dataset.paymentChoice === paymentMethod.value);
         });
+
+        if (currentQuote) {
+            quoteMinimum.textContent = formatCurrency(isPayLaterSelected() ? 0 : Number(currentQuote.minimum_downpayment_amount || 0));
+            updateBalance(false);
+        }
     };
 
     const showCheckout = () => {
@@ -1062,7 +1086,9 @@ const setupBookingPage = () => {
         }
 
         const total = Number(currentQuote.total_amount || 0);
-        const minimum = Number(currentQuote.minimum_downpayment_amount || 0);
+        const minimum = isPayLaterSelected()
+            ? 0
+            : Number(currentQuote.minimum_downpayment_amount || 0);
         const rawValue = downpaymentInput.value.trim();
 
         if (!rawValue) {
@@ -1103,7 +1129,9 @@ const setupBookingPage = () => {
         const current = normalizedDownpaymentValue(commit);
 
         quoteBalance.textContent = formatCurrency(total - current);
-        checkoutSubmit.textContent = `Confirm & Pay ${formatCurrency(current)}`;
+        checkoutSubmit.textContent = isPayLaterSelected()
+            ? 'Confirm booking - Pay at checkout'
+            : `Confirm & Pay ${formatCurrency(current)}`;
     };
 
     const hideInlineSummary = () => {
@@ -1719,6 +1747,7 @@ const setupBookingPageV2 = () => {
     const paymentGcash = form.querySelector('[data-payment-gcash]');
     const paymentBank = form.querySelector('[data-payment-bank]');
     const paymentCash = form.querySelector('[data-payment-cash]');
+    const paymentPayLater = form.querySelector('[data-payment-pay-later]');
     const paymentInstructions = form.querySelector('[data-payment-instructions]');
     const paymentProofWrap = form.querySelector('[data-payment-proof-wrap]');
     const paymentProofInput = form.querySelector('input[name="payment_proof"]');
@@ -1838,6 +1867,7 @@ const setupBookingPageV2 = () => {
     }
 
     let blockedDates = new Set();
+    let unavailableDatesRoomId = '';
     let currentQuote = null;
     let bookingMode = bookingModeInput.value || 'room';
     let scheduleCart = [];
@@ -2281,20 +2311,59 @@ const setupBookingPageV2 = () => {
         });
     };
 
+    const selectedRoomIsCommonArea = () => roomSelect.selectedOptions[0]?.dataset.commonArea === 'true';
+    const scheduleContainsOnlyCommonArea = () => scheduleCart.length > 0 && scheduleCart.every((item) => {
+        const roomCard = roomCards.find((card) => card.dataset.roomId === String(item.hyve_room_id));
+
+        return roomCard?.dataset.commonArea === 'true';
+    });
+    const payLaterIsAllowed = () => isAdminMode
+        || (bookingMode === 'schedule' ? scheduleContainsOnlyCommonArea() : selectedRoomIsCommonArea());
+    const isPayLaterSelected = () => payLaterIsAllowed() && paymentMethod.value === 'pay_later';
+
     const updatePaymentDestination = () => {
+        if (paymentMethod.value === 'pay_later' && !payLaterIsAllowed()) {
+            paymentMethod.value = '';
+        }
+
         paymentGcash.classList.toggle('hidden', paymentMethod.value !== 'gcash');
         paymentBank.classList.toggle('hidden', paymentMethod.value !== 'bank_transfer');
         paymentCash?.classList.toggle('hidden', paymentMethod.value !== 'cash');
+        paymentPayLater?.classList.toggle('hidden', !isPayLaterSelected());
+        paymentInstructions.classList.toggle('hidden', isPayLaterSelected());
 
         if (paymentProofWrap && paymentProofInput) {
-            const isCashWalkIn = isAdminMode && paymentMethod.value === 'cash';
-            paymentProofWrap.classList.toggle('hidden', isCashWalkIn);
-            paymentProofInput.required = !isCashWalkIn;
+            const doesNotNeedProof = (isAdminMode && paymentMethod.value === 'cash') || isPayLaterSelected();
+            paymentProofWrap.classList.toggle('hidden', doesNotNeedProof);
+            paymentProofInput.required = !doesNotNeedProof;
+        }
+
+        downpaymentInput.readOnly = isPayLaterSelected();
+
+        if (isPayLaterSelected()) {
+            downpaymentInput.min = '0';
+            downpaymentInput.value = '0';
+        } else if (currentQuote) {
+            const minimum = Number(currentQuote.minimum_downpayment_amount || 0);
+            downpaymentInput.min = String(minimum);
+
+            if (!downpaymentInput.value || Number(downpaymentInput.value) < minimum) {
+                downpaymentInput.value = String(minimum);
+            }
         }
 
         paymentMethodCards.forEach((card) => {
+            if (card.dataset.paymentChoice === 'pay_later') {
+                card.classList.toggle('hidden', !payLaterIsAllowed());
+            }
+
             card.classList.toggle('is-active', card.dataset.paymentChoice === paymentMethod.value);
         });
+
+        if (currentQuote) {
+            quoteMinimum.textContent = formatCurrency(isPayLaterSelected() ? 0 : Number(currentQuote.minimum_downpayment_amount || 0));
+            updateBalance(false);
+        }
     };
 
     const showCheckout = () => {
@@ -2368,7 +2437,9 @@ const setupBookingPageV2 = () => {
         }
 
         const total = Number(currentQuote.total_amount || 0);
-        const minimum = Number(currentQuote.minimum_downpayment_amount || 0);
+        const minimum = isPayLaterSelected()
+            ? 0
+            : Number(currentQuote.minimum_downpayment_amount || 0);
         const rawValue = downpaymentInput.value.trim();
 
         if (!rawValue) {
@@ -2409,7 +2480,9 @@ const setupBookingPageV2 = () => {
         const current = normalizedDownpaymentValue(commit);
 
         quoteBalance.textContent = formatCurrency(total - current);
-        checkoutSubmit.textContent = `Confirm & Pay ${formatCurrency(current)}`;
+        checkoutSubmit.textContent = isPayLaterSelected()
+            ? 'Confirm booking - Pay at checkout'
+            : `Confirm & Pay ${formatCurrency(current)}`;
     };
 
     const hideInlineSummary = () => {
@@ -2600,10 +2673,12 @@ const setupBookingPageV2 = () => {
             quoteBalance.textContent = 'Php 0.00';
             quoteMeta.textContent = 'Choose one or more schedule slots first to load your live rate summary.';
             checkoutSubmit.textContent = 'Confirm & Pay Php 0.00';
+            updatePaymentDestination();
             return;
         }
 
         const summary = summarizeScheduleCart();
+        const effectiveMinimum = isPayLaterSelected() ? 0 : summary.minimumDownpayment;
         currentQuote = {
             total_amount: summary.total,
             minimum_downpayment_amount: summary.minimumDownpayment,
@@ -2620,15 +2695,16 @@ const setupBookingPageV2 = () => {
         scheduleSelectionTotal.textContent = formatCurrency(summary.total);
         scheduleCartTotal.textContent = formatCurrency(summary.total);
         quoteTotal.textContent = formatCurrency(summary.total);
-        quoteMinimum.textContent = formatCurrency(summary.minimumDownpayment);
+        quoteMinimum.textContent = formatCurrency(effectiveMinimum);
         quoteMeta.textContent = `Full schedule cart | ${summary.slotCount} hour slot(s) | ${summary.roomCount} room(s).`;
 
-        if (!downpaymentInput.value || Number(downpaymentInput.value) < summary.minimumDownpayment) {
-            downpaymentInput.value = String(summary.minimumDownpayment);
+        if (!downpaymentInput.value || Number(downpaymentInput.value) < effectiveMinimum || isPayLaterSelected()) {
+            downpaymentInput.value = String(effectiveMinimum);
         }
 
-        downpaymentInput.min = String(summary.minimumDownpayment);
+        downpaymentInput.min = String(effectiveMinimum);
         updateBalance();
+        updatePaymentDestination();
 
         if (summary.totalMinutes < minimumDuration) {
             const missingHours = (minimumDuration - summary.totalMinutes) / 60;
@@ -2886,7 +2962,7 @@ const setupBookingPageV2 = () => {
             return false;
         }
 
-        await fetchUnavailableDates();
+        await fetchUnavailableDates(bookingDateInput.value, bookingEndDateInput.value);
 
         if (hasBlockedDatesInRange(bookingDateInput.value, bookingEndDateInput.value)) {
             monthlyPlanInput.value = '';
@@ -3063,16 +3139,17 @@ const setupBookingPageV2 = () => {
         const data = await fetchJson(`${quoteUrl}?booking_mode=monthly&hyve_room_id=${encodeURIComponent(roomSelect.value)}&booking_date=${encodeURIComponent(bookingDateInput.value)}&booking_end_date=${encodeURIComponent(bookingEndDateInput.value)}${useTypeQuery}`);
 
         currentQuote = data;
+        const effectiveMinimum = isPayLaterSelected() ? 0 : Number(data.minimum_downpayment_amount || 0);
         monthlyPlanInput.value = data.monthly_plan_label || '';
         longStayUseTypeInput.value = data.long_stay_use_type || '';
         quoteTotal.textContent = formatCurrency(data.total_amount);
-        quoteMinimum.textContent = formatCurrency(data.minimum_downpayment_amount);
+        quoteMinimum.textContent = formatCurrency(effectiveMinimum);
         quoteMeta.textContent = `${data.rate_name} | ${data.charge_period_label} | ${data.unit_label || '--'} from ${formatDate(bookingDateInput.value)} to ${formatDate(data.booking_end_date || bookingEndDateInput.value)}.`;
         paymentInstructions.textContent = data.payment?.instructions || paymentInstructions.textContent;
-        downpaymentInput.min = String(data.minimum_downpayment_amount);
+        downpaymentInput.min = String(effectiveMinimum);
 
-        if (!downpaymentInput.value || Number(downpaymentInput.value) < Number(data.minimum_downpayment_amount)) {
-            downpaymentInput.value = String(data.minimum_downpayment_amount);
+        if (!downpaymentInput.value || Number(downpaymentInput.value) < effectiveMinimum || isPayLaterSelected()) {
+            downpaymentInput.value = String(effectiveMinimum);
         }
 
         monthlySummaryDate.textContent = formatDate(bookingDateInput.value);
@@ -3381,6 +3458,7 @@ const setupBookingPageV2 = () => {
         });
         updateRoomMeta();
         updateScheduleSelection();
+        updatePaymentDestination();
     };
 
     const renderCalendar = () => {
@@ -3509,20 +3587,71 @@ const setupBookingPageV2 = () => {
         return response.json();
     };
 
-    const fetchUnavailableDates = async () => {
+    const monthDateRange = (month) => {
+        const start = new Date(month.getFullYear(), month.getMonth(), 1);
+        const end = new Date(month.getFullYear(), month.getMonth() + 1, 0);
+        const dateValue = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+        return [dateValue(start), dateValue(end)];
+    };
+
+    const fetchUnavailableDates = async (requestedStart = '', requestedEnd = '') => {
         if (!roomSelect.value) {
             blockedDates = new Set();
+            unavailableDatesRoomId = '';
             renderCalendar();
             renderMonthlyCalendar();
             updateMonthlyBlockedNote();
             return;
         }
 
-        const data = await fetchJson(`${unavailableDatesUrl}?hyve_room_id=${encodeURIComponent(roomSelect.value)}&horizon_days=${encodeURIComponent(horizonDays)}`);
-        blockedDates = new Set((Array.isArray(data.unavailable_dates) ? data.unavailable_dates : []).map((item) => item.value));
+        const activeRoomId = String(roomSelect.value);
+
+        if (unavailableDatesRoomId !== activeRoomId) {
+            blockedDates = new Set();
+            unavailableDatesRoomId = activeRoomId;
+        }
+
+        let rangeStart = requestedStart;
+        let rangeEnd = requestedEnd;
+
+        if (!rangeStart || !rangeEnd) {
+            [rangeStart, rangeEnd] = monthDateRange(currentMonth);
+        }
+
+        rangeStart = rangeStart < todayValue ? todayValue : rangeStart;
+
+        if (rangeEnd < rangeStart) {
+            renderCalendar();
+            renderMonthlyCalendar();
+            updateMonthlyBlockedNote();
+            return;
+        }
+
+        const start = new Date(`${rangeStart}T00:00:00`);
+        const end = new Date(`${rangeEnd}T00:00:00`);
+        const requestedDays = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
+        const days = Math.max(1, Math.min(requestedDays, horizonDays, 365));
+        const actualEnd = new Date(start);
+        actualEnd.setDate(actualEnd.getDate() + days - 1);
+        const actualEndValue = `${actualEnd.getFullYear()}-${String(actualEnd.getMonth() + 1).padStart(2, '0')}-${String(actualEnd.getDate()).padStart(2, '0')}`;
+
+        blockedDates.forEach((value) => {
+            if (value >= rangeStart && value <= actualEndValue) {
+                blockedDates.delete(value);
+            }
+        });
+
+        const data = await fetchJson(`${unavailableDatesUrl}?hyve_room_id=${encodeURIComponent(activeRoomId)}&start_date=${encodeURIComponent(rangeStart)}&horizon_days=${encodeURIComponent(days)}`);
+        (Array.isArray(data.unavailable_dates) ? data.unavailable_dates : []).forEach((item) => blockedDates.add(item.value));
         renderCalendar();
         renderMonthlyCalendar();
         updateMonthlyBlockedNote();
+    };
+
+    const fetchUnavailableDatesForMonth = async (month) => {
+        const [rangeStart, rangeEnd] = monthDateRange(month);
+        await fetchUnavailableDates(rangeStart, rangeEnd);
     };
 
     const fetchStartTimes = async () => {
@@ -3600,14 +3729,15 @@ const setupBookingPageV2 = () => {
         const data = await fetchJson(`${quoteUrl}?hyve_room_id=${encodeURIComponent(roomSelect.value)}&booking_date=${encodeURIComponent(bookingDateInput.value)}&start_time=${encodeURIComponent(startSelect.value)}&end_time=${encodeURIComponent(endSelect.value)}`);
 
         currentQuote = data;
+        const effectiveMinimum = isPayLaterSelected() ? 0 : Number(data.minimum_downpayment_amount || 0);
         quoteTotal.textContent = formatCurrency(data.total_amount);
-        quoteMinimum.textContent = formatCurrency(data.minimum_downpayment_amount);
+        quoteMinimum.textContent = formatCurrency(effectiveMinimum);
         quoteMeta.textContent = `${data.rate_name} | ${data.charge_period_label} | ${data.duration_hours} scheduled hour(s) | ${data.billed_hours} billed hour(s).`;
         paymentInstructions.textContent = data.payment?.instructions || paymentInstructions.textContent;
-        downpaymentInput.min = String(data.minimum_downpayment_amount);
+        downpaymentInput.min = String(effectiveMinimum);
 
-        if (!downpaymentInput.value || Number(downpaymentInput.value) < Number(data.minimum_downpayment_amount)) {
-            downpaymentInput.value = String(data.minimum_downpayment_amount);
+        if (!downpaymentInput.value || Number(downpaymentInput.value) < effectiveMinimum || isPayLaterSelected()) {
+            downpaymentInput.value = String(effectiveMinimum);
         }
 
         durationDisplay.textContent = endSelect.selectedOptions[0]?.dataset.durationLabel
@@ -3852,7 +3982,10 @@ const setupBookingPageV2 = () => {
 
             try {
                 if (bookingMode === 'monthly') {
-                    await fetchUnavailableDates();
+                    await fetchUnavailableDates(
+                        bookingDateInput.value || monthDateRange(monthlyCalendarMonth)[0],
+                        bookingEndDateInput.value || monthDateRange(monthlyCalendarMonth)[1],
+                    );
                     renderMonthlyCalendar();
                     await refreshMonthlySelection();
                     return;
@@ -4046,21 +4179,23 @@ const setupBookingPageV2 = () => {
     monthlyBlockedOpen.addEventListener('click', () => {
         openMonthlyBlockedModal();
     });
-    monthlyBlockedPrev.addEventListener('click', () => {
+    monthlyBlockedPrev.addEventListener('click', async () => {
         monthlyBlockedCalendarMonth = new Date(monthlyBlockedCalendarMonth.getFullYear(), monthlyBlockedCalendarMonth.getMonth() - 1, 1);
+        await fetchUnavailableDatesForMonth(monthlyBlockedCalendarMonth);
         renderMonthlyBlockedModal();
     });
-    monthlyBlockedNext.addEventListener('click', () => {
+    monthlyBlockedNext.addEventListener('click', async () => {
         monthlyBlockedCalendarMonth = new Date(monthlyBlockedCalendarMonth.getFullYear(), monthlyBlockedCalendarMonth.getMonth() + 1, 1);
+        await fetchUnavailableDatesForMonth(monthlyBlockedCalendarMonth);
         renderMonthlyBlockedModal();
     });
-    monthlyCalendarPrev.addEventListener('click', () => {
+    monthlyCalendarPrev.addEventListener('click', async () => {
         monthlyCalendarMonth = new Date(monthlyCalendarMonth.getFullYear(), monthlyCalendarMonth.getMonth() - 1, 1);
-        renderMonthlyCalendar();
+        await fetchUnavailableDatesForMonth(monthlyCalendarMonth);
     });
-    monthlyCalendarNext.addEventListener('click', () => {
+    monthlyCalendarNext.addEventListener('click', async () => {
         monthlyCalendarMonth = new Date(monthlyCalendarMonth.getFullYear(), monthlyCalendarMonth.getMonth() + 1, 1);
-        renderMonthlyCalendar();
+        await fetchUnavailableDatesForMonth(monthlyCalendarMonth);
     });
     monthlyBlockedClosers.forEach((closer) => {
         closer.addEventListener('click', () => {
@@ -4104,14 +4239,14 @@ const setupBookingPageV2 = () => {
         showPicker();
     });
 
-    calendarPrev.addEventListener('click', () => {
+    calendarPrev.addEventListener('click', async () => {
         currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1);
-        renderCalendar();
+        await fetchUnavailableDatesForMonth(currentMonth);
     });
 
-    calendarNext.addEventListener('click', () => {
+    calendarNext.addEventListener('click', async () => {
         currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1);
-        renderCalendar();
+        await fetchUnavailableDatesForMonth(currentMonth);
     });
 
     monthlyStartDateInput.addEventListener('change', async () => {
@@ -4252,7 +4387,10 @@ const setupBookingPageV2 = () => {
                 : new Date(today.getFullYear(), today.getMonth(), 1);
             monthlyRangeAnchor = bookingDateInput.value || '';
             monthlySelectingEnd = bookingDateInput.value === bookingEndDateInput.value;
-            renderMonthlyCalendar();
+            await fetchUnavailableDates(
+                bookingDateInput.value || monthDateRange(monthlyCalendarMonth)[0],
+                bookingEndDateInput.value || monthDateRange(monthlyCalendarMonth)[1],
+            );
             await refreshMonthlySelection();
         }
     });

@@ -32,6 +32,16 @@ use Illuminate\View\View;
 
 class BookingController extends Controller
 {
+    private ?Collection $unavailableDateBookingDetails = null;
+
+    private ?Collection $unavailableDateCalendarEvents = null;
+
+    private ?Collection $unavailableDateScheduleOverrides = null;
+
+    private ?Collection $unavailableDateTableRooms = null;
+
+    private ?Collection $unavailableDateSpacesBySlug = null;
+
     public function __construct(
         private readonly DatabaseManager $database,
         private readonly HyvePricing $pricing,
@@ -299,15 +309,23 @@ class BookingController extends Controller
     {
         $validated = $request->validate([
             'hyve_room_id' => ['required', 'integer', Rule::exists(HyveRoom::class, 'id')->where(fn ($query) => $query->where('status', 0))],
+            'start_date' => ['nullable', 'date'],
             'horizon_days' => ['nullable', 'integer', 'min:1', 'max:365'],
         ]);
 
         $room = HyveRoom::query()->active()->findOrFail($validated['hyve_room_id']);
         $horizonDays = (int) ($validated['horizon_days'] ?? 14);
+        $startDate = isset($validated['start_date'])
+            ? Carbon::parse($validated['start_date'])->startOfDay()
+            : Carbon::today();
+
+        if ($startDate->lt(Carbon::today())) {
+            $startDate = Carbon::today();
+        }
 
         $cacheKey = implode(':', [
             'booking-unavailable-dates',
-            now()->toDateString(),
+            $startDate->toDateString(),
             $room->getKey(),
             $horizonDays,
         ]);
@@ -315,7 +333,7 @@ class BookingController extends Controller
         $unavailableDates = Cache::remember(
             $cacheKey,
             now()->addSeconds(30),
-            fn (): array => $this->fullyBookedDates($room, $horizonDays)->values()->all(),
+            fn (): array => $this->fullyBookedDates($room, $horizonDays, $startDate)->values()->all(),
         );
 
         return response()->json(['unavailable_dates' => $unavailableDates]);
@@ -755,17 +773,20 @@ class BookingController extends Controller
             $grandTotal = (float) $quote['total_amount'];
         }
 
-        $customerDownpayment = round((float) $validated['downpayment_amount'], 2);
+        $customerDownpayment = round((float) ($validated['downpayment_amount'] ?? 0), 2);
         $remainingBalance = round(max(0, $grandTotal - $customerDownpayment), 2);
         $isCashWalkIn = $adminMode && (($validated['payment_method'] ?? null) === 'cash');
-        $paymentStatus = $isCashWalkIn
-            ? ($remainingBalance <= 0 ? 'paid' : 'partially_paid')
-            : 'pending_verification';
+        $isPayLater = ($validated['payment_method'] ?? null) === 'pay_later';
+        $paymentStatus = match (true) {
+            $isPayLater => 'pending_verification',
+            $isCashWalkIn => $remainingBalance <= 0 ? 'paid' : 'partially_paid',
+            default => 'pending_verification',
+        };
 
-        $paymentProofPath = $isCashWalkIn
+        $paymentProofPath = ($isCashWalkIn || $isPayLater)
             ? null
             : $request->file('payment_proof')?->store('booking-payments', 'public');
-        $paymentProofName = $isCashWalkIn
+        $paymentProofName = ($isCashWalkIn || $isPayLater)
             ? null
             : $request->file('payment_proof')?->getClientOriginalName();
 
@@ -1166,7 +1187,8 @@ class BookingController extends Controller
      */
     private function bookingSnapshotForCommonArea(HyveRoom $room, string $bookingDate, ?string $selectedStartTime = null): array
     {
-        $tableRooms = HyveRoom::query()->active()->where('room_name', 'like', 'Table %')->orderBy('id')->get();
+        $tableRooms = $this->unavailableDateTableRooms
+            ?? HyveRoom::query()->active()->where('room_name', 'like', 'Table %')->orderBy('id')->get();
         $capacity = $tableRooms->count();
 
         if ($capacity < 1 || $this->isFullDayBlockedByCalendarEvent($room, $bookingDate)) {
@@ -1276,13 +1298,18 @@ class BookingController extends Controller
         $representative = $this->sharedTableRepresentative($tableRooms);
         $counts = [];
 
-        $details = BookingDetail::query()
-            ->whereIn('status', $this->blockedStatuses())
-            ->whereIn('hyve_room_id', $roomIds)
-            ->where(function ($query) use ($bookingDate) {
-                $this->applyBookingDateOverlapConstraint($query, $bookingDate, $bookingDate);
-            })
-            ->get(['booking_date', 'booking_end_date', 'start_time', 'end_time']);
+        $details = $this->unavailableDateBookingDetails !== null
+            ? $this->unavailableDateBookingDetails
+                ->filter(fn (BookingDetail $detail): bool => $roomIds->contains((int) $detail->hyve_room_id)
+                    && $this->detailOccupiesDate($detail, $bookingDate))
+                ->values()
+            : BookingDetail::query()
+                ->whereIn('status', $this->blockedStatuses())
+                ->whereIn('hyve_room_id', $roomIds)
+                ->where(function ($query) use ($bookingDate) {
+                    $this->applyBookingDateOverlapConstraint($query, $bookingDate, $bookingDate);
+                })
+                ->get(['hyve_room_id', 'booking_date', 'booking_end_date', 'start_time', 'end_time']);
 
         foreach ($details as $detail) {
             if ($representative && $this->isLongStayDetail($detail) && $this->detailOccupiesDate($detail, $bookingDate)) {
@@ -1420,6 +1447,21 @@ class BookingController extends Controller
 
     private function scheduleOverrideForRoom(string $bookingDate, ?HyveRoom $room = null): ?HyveScheduleOverride
     {
+        if ($this->unavailableDateScheduleOverrides !== null) {
+            return $this->unavailableDateScheduleOverrides
+                ->filter(function (HyveScheduleOverride $override) use ($bookingDate, $room): bool {
+                    if (optional($override->booking_date)->toDateString() !== $bookingDate) {
+                        return false;
+                    }
+
+                    return $room
+                        ? ($override->hyve_room_id === null || (int) $override->hyve_room_id === (int) $room->getKey())
+                        : $override->hyve_room_id === null;
+                })
+                ->sortBy(fn (HyveScheduleOverride $override): int => $override->hyve_room_id === null ? 1 : 0)
+                ->first();
+        }
+
         return HyveScheduleOverride::query()
             ->when($room, function ($query) use ($room) {
                 $query->where(function ($builder) use ($room) {
@@ -1456,32 +1498,93 @@ class BookingController extends Controller
     /**
      * @return Collection<int, array{value: string, label: string}>
      */
-    private function fullyBookedDates(HyveRoom $room, int $horizonDays): Collection
+    private function fullyBookedDates(HyveRoom $room, int $horizonDays, ?Carbon $startDate = null): Collection
     {
-        $today = Carbon::today();
-        $this->calendarService->ensureSystemHolidaysForYears([$today->year, $today->copy()->addYear()->year]);
+        $rangeStart = ($startDate ?? Carbon::today())->copy()->startOfDay();
+        $rangeEnd = $rangeStart->copy()->addDays(max(0, $horizonDays - 1));
+        $this->calendarService->ensureSystemHolidaysForYears(
+            collect([$rangeStart->year, $rangeEnd->year])->unique()->values()->all()
+        );
 
-        return collect(range(0, $horizonDays - 1))
-            ->map(function (int $offset) use ($today, $room): ?array {
-                $date = $today->copy()->addDays($offset);
-                $bookingDate = $date->toDateString();
-                $snapshot = $this->bookingSnapshotForRoom($room, $bookingDate);
+        $space = $this->spaceForRoom($room);
+        $tableRooms = $room->isSharedTable()
+            ? HyveRoom::query()->active()->where('room_name', 'like', 'Table %')->orderBy('id')->get()
+            : collect();
+        $roomIds = $room->isSharedTable() ? $tableRooms->pluck('id')->values() : collect([$room->getKey()]);
+        $detailsQuery = BookingDetail::query()
+            ->whereIn('status', $this->blockedStatuses())
+            ->where(function ($query) use ($room, $roomIds, $space) {
+                $query->whereIn('hyve_room_id', $roomIds->all());
 
-                if ($snapshot['start_times']->isNotEmpty()) {
-                    return null;
+                if ($room->isConferenceRoom()) {
+                    $query->orWhere(function ($fallback) use ($space) {
+                        $fallback->whereNull('hyve_room_id')->where('space_id', $space->getKey());
+                    });
                 }
+            });
+        $this->applyBookingDateOverlapConstraint($detailsQuery, $rangeStart->toDateString(), $rangeEnd->toDateString());
 
-                return [
-                    'value' => $bookingDate,
-                    'label' => $date->format('M j, Y'),
-                ];
+        $this->unavailableDateBookingDetails = $detailsQuery->get([
+            'hyve_room_id',
+            'space_id',
+            'booking_date',
+            'booking_end_date',
+            'start_time',
+            'end_time',
+        ]);
+        $this->unavailableDateCalendarEvents = HyveCalendarEvent::query()
+            ->with('rooms:id,room_name')
+            ->active()
+            ->where('affects_booking', true)
+            ->whereDate('start_date', '<=', $rangeEnd->toDateString())
+            ->whereDate('end_date', '>=', $rangeStart->toDateString())
+            ->orderBy('start_date')
+            ->orderBy('start_time')
+            ->get();
+        $this->unavailableDateScheduleOverrides = HyveScheduleOverride::query()
+            ->whereBetween('booking_date', [$rangeStart->toDateString(), $rangeEnd->toDateString()])
+            ->where(function ($query) use ($room) {
+                $query->where('hyve_room_id', $room->getKey())->orWhereNull('hyve_room_id');
             })
-            ->filter()
-            ->values();
+            ->get();
+        $this->unavailableDateTableRooms = $room->isSharedTable() ? $tableRooms : null;
+        $this->unavailableDateSpacesBySlug = collect([$space->slug => $space]);
+
+        try {
+            return collect(range(0, $horizonDays - 1))
+                ->map(function (int $offset) use ($rangeStart, $room): ?array {
+                    $date = $rangeStart->copy()->addDays($offset);
+                    $bookingDate = $date->toDateString();
+                    $snapshot = $this->bookingSnapshotForRoom($room, $bookingDate);
+
+                    if ($snapshot['start_times']->isNotEmpty()) {
+                        return null;
+                    }
+
+                    return [
+                        'value' => $bookingDate,
+                        'label' => $date->format('M j, Y'),
+                    ];
+                })
+                ->filter()
+                ->values();
+        } finally {
+            $this->unavailableDateBookingDetails = null;
+            $this->unavailableDateCalendarEvents = null;
+            $this->unavailableDateScheduleOverrides = null;
+            $this->unavailableDateTableRooms = null;
+            $this->unavailableDateSpacesBySlug = null;
+        }
     }
 
     private function spaceForRoom(HyveRoom $room): Space
     {
+        $cachedSpace = $this->unavailableDateSpacesBySlug?->get($room->mappedSpaceSlug());
+
+        if ($cachedSpace instanceof Space) {
+            return $cachedSpace;
+        }
+
         return Space::query()
             ->active()
             ->where('slug', $room->mappedSpaceSlug())
@@ -1655,21 +1758,40 @@ class BookingController extends Controller
     {
         $space = $this->spaceForRoom($room);
 
-        $rangesQuery = BookingDetail::query()
-            ->whereIn('status', $this->blockedStatuses())
-            ->where(function ($query) use ($room, $space) {
-                $query->where('hyve_room_id', $room->id);
+        if ($this->unavailableDateBookingDetails !== null) {
+            $bookingDetails = $this->unavailableDateBookingDetails
+                ->filter(function (BookingDetail $detail) use ($room, $space, $bookingDate): bool {
+                    $matchesRoom = (int) $detail->hyve_room_id === (int) $room->id
+                        || ($room->isConferenceRoom() && ! $detail->hyve_room_id && (int) $detail->space_id === (int) $space->id);
 
-                if ($room->isConferenceRoom()) {
-                    $query->orWhere(function ($fallback) use ($space) {
-                        $fallback->whereNull('hyve_room_id')
-                            ->where('space_id', $space->id);
-                    });
-                }
-            });
-        $this->applyBookingDateOverlapConstraint($rangesQuery, $bookingDate, $bookingDate);
+                    return $matchesRoom && $this->detailOccupiesDate($detail, $bookingDate);
+                })
+                ->values();
+        } else {
+            $rangesQuery = BookingDetail::query()
+                ->whereIn('status', $this->blockedStatuses())
+                ->where(function ($query) use ($room, $space) {
+                    $query->where('hyve_room_id', $room->id);
 
-        $ranges = $rangesQuery->get(['booking_date', 'booking_end_date', 'start_time', 'end_time'])
+                    if ($room->isConferenceRoom()) {
+                        $query->orWhere(function ($fallback) use ($space) {
+                            $fallback->whereNull('hyve_room_id')
+                                ->where('space_id', $space->id);
+                        });
+                    }
+                });
+            $this->applyBookingDateOverlapConstraint($rangesQuery, $bookingDate, $bookingDate);
+            $bookingDetails = $rangesQuery->get([
+                'hyve_room_id',
+                'space_id',
+                'booking_date',
+                'booking_end_date',
+                'start_time',
+                'end_time',
+            ]);
+        }
+
+        $ranges = $bookingDetails
             ->map(function (BookingDetail $detail) use ($bookingDate, $room): array {
                 if ($this->isLongStayFullDayDetail($detail) && $this->detailOccupiesDate($detail, $bookingDate)) {
                     $schedule = $this->scheduleWindowForDate($bookingDate, $room);
@@ -1698,6 +1820,18 @@ class BookingController extends Controller
      */
     private function calendarEventsForRoomOnDate(HyveRoom $room, string $bookingDate): Collection
     {
+        if ($this->unavailableDateCalendarEvents !== null) {
+            $targetDate = Carbon::parse($bookingDate)->startOfDay();
+
+            return $this->unavailableDateCalendarEvents
+                ->filter(function (HyveCalendarEvent $event) use ($room, $targetDate): bool {
+                    return $event->start_date?->copy()->startOfDay()->lte($targetDate)
+                        && $event->end_date?->copy()->startOfDay()->gte($targetDate)
+                        && $event->appliesToRoom($room);
+                })
+                ->values();
+        }
+
         $targetDate = Carbon::parse($bookingDate);
         $this->calendarService->ensureSystemHolidaysForYears([$targetDate->year, $targetDate->copy()->addYear()->year]);
 

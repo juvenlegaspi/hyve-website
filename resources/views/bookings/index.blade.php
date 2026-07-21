@@ -119,7 +119,7 @@
                 data-quote-url="{{ $bookingConfig['quote_url'] }}"
                 data-layout-url="{{ $bookingConfig['layout_url'] }}"
                 data-minimum-duration="{{ $bookingConfig['minimum_duration_minutes'] }}"
-                data-unavailable-dates-horizon="30"
+                data-unavailable-dates-horizon="{{ $bookingConfig['unavailable_dates_horizon'] }}"
                 data-show-checkout="{{ $showCheckout ? 'true' : 'false' }}"
                 data-admin-mode="{{ $adminMode ? 'true' : 'false' }}"
             >
@@ -129,7 +129,7 @@
                     <option value="">Select a room</option>
                     @foreach ($displayRooms as $room)
                         @php($displayName = $room->isSharedTable() ? 'Common Area' : $room->room_name)
-                        <option value="{{ $room->id }}" @selected($initialRoomId === (string) $room->id)>{{ $displayName }} - {{ $room->mappedSpaceLabel() }}</option>
+                        <option value="{{ $room->id }}" data-common-area="{{ $room->isSharedTable() ? 'true' : 'false' }}" @selected($initialRoomId === (string) $room->id)>{{ $displayName }} - {{ $room->mappedSpaceLabel() }}</option>
                     @endforeach
                 </select>
                 <input type="hidden" name="booking_date" value="{{ $initialDate }}" data-booking-date>
@@ -179,6 +179,7 @@
                                         data-room-rate="{{ $rateMap[$room->mappedSpaceLabel()] ?? 'Ask HYVE' }}"
                                         data-room-gallery='@json($spaceGalleryMap[$room->mappedSpaceLabel()] ?? [asset('images/office.png')])'
                                         data-room-monthly-options='@json($monthlyOptions)'
+                                        data-common-area="{{ $room->isSharedTable() ? 'true' : 'false' }}"
                                     >
                                         <img src="{{ $spaceImageMap[$room->mappedSpaceLabel()] ?? asset('images/office.png') }}" alt="{{ $displayName }}">
                                         <span class="booking-room-card__body">
@@ -512,8 +513,8 @@
                                             @error('guests') <small class="field-error">{{ $message }}</small> @enderror
                                         </label>
                                         <label>
-                                            <span>Downpayment</span>
-                                            <input type="number" name="downpayment_amount" min="0.01" step="0.01" value="{{ old('downpayment_amount') }}" data-downpayment-input>
+                                            <span>{{ $adminMode ? 'Initial payment' : 'Downpayment' }}</span>
+                                            <input type="number" name="downpayment_amount" min="{{ $adminMode ? '0' : '0.01' }}" step="0.01" value="{{ old('downpayment_amount') }}" data-downpayment-input>
                                             @error('downpayment_amount') <small class="field-error">{{ $message }}</small> @enderror
                                         </label>
                                         <div class="booking-checkout__method-block">
@@ -522,6 +523,7 @@
                                                 <option value="">Select a payment method</option>
                                                 <option value="gcash" @selected(old('payment_method') === 'gcash')>GCash</option>
                                                 <option value="bank_transfer" @selected(old('payment_method') === 'bank_transfer')>Bank Transfer</option>
+                                                <option value="pay_later" @selected(old('payment_method') === 'pay_later')>{{ $adminMode ? 'Pay upon checkout' : 'Pay at HYVE' }}</option>
                                                 @if ($adminMode)
                                                     <option value="cash" @selected(old('payment_method') === 'cash')>Cash</option>
                                                 @endif
@@ -541,6 +543,10 @@
                                                         <strong>Cash</strong>
                                                     </button>
                                                 @endif
+                                                <button type="button" class="booking-checkout__method-card hidden" data-payment-choice="pay_later">
+                                                    <span class="booking-checkout__method-icon">P</span>
+                                                    <strong>{{ $adminMode ? 'Pay upon checkout' : 'Pay at HYVE' }}</strong>
+                                                </button>
                                             </div>
                                             @error('payment_method') <small class="field-error">{{ $message }}</small> @enderror
                                         </div>
@@ -552,14 +558,14 @@
                                             <input type="file" name="payment_proof" accept="image/*">
                                             @error('payment_proof') <small class="field-error">{{ $message }}</small> @enderror
                                             @if ($adminMode)
-                                                <small class="field-error" style="color:#7f857c;" data-payment-proof-hint>Optional only for cash walk-ins. Keep a receipt note below for cash payments.</small>
+                                                <small class="field-error" style="color:#7f857c;" data-payment-proof-hint>Not required for cash or deferred payment. GCash and bank payments still require proof.</small>
                                             @endif
                                         </label>
                                     </div>
 
                                     <label>
                                         <span>{{ $adminMode ? 'Notes / receipt reference' : 'Notes' }}</span>
-                                        <textarea name="notes" rows="4" placeholder="{{ $adminMode ? 'For cash walk-ins, note the OR number, amount received, or front-desk remarks.' : 'Tell HYVE anything important about your setup or purpose.' }}">{{ old('notes') }}</textarea>
+                                        <textarea name="notes" rows="4" placeholder="{{ $adminMode ? 'For cash, note the OR number or amount received. For pay upon checkout, add any front-desk remarks.' : 'Tell HYVE anything important about your setup or purpose.' }}">{{ old('notes') }}</textarea>
                                         @error('notes') <small class="field-error">{{ $message }}</small> @enderror
                                     </label>
                                     @unless ($adminMode)
@@ -668,6 +674,10 @@
                                     <div data-payment-cash class="hidden">
                                         <p>Cash payment at front desk</p>
                                         <p>Record the receipt / OR number in notes.</p>
+                                    </div>
+                                    <div data-payment-pay-later class="hidden">
+                                        <p>{{ $adminMode ? 'Pay upon checkout' : 'Pay at HYVE' }}</p>
+                                        <p>No initial payment is required. The full booking amount will remain due at HYVE.</p>
                                     </div>
                                     <p data-payment-instructions>{{ $paymentSetting?->instructions ?? 'Send the required downpayment first, then upload your proof for checking.' }}</p>
                                 </div>

@@ -67,6 +67,138 @@ class BookingSubmissionTest extends TestCase
         Storage::disk('public')->assertExists($header->payment_proof_path);
     }
 
+    public function test_admin_can_create_a_walk_in_booking_with_no_downpayment_to_be_paid_at_checkout(): void
+    {
+        Storage::fake('public');
+
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+
+        $response = $this
+            ->actingAs($admin)
+            ->post(route('admin.bookings.store'), [
+                'booking_mode' => 'room',
+                'full_name' => 'Walk In Customer',
+                'email' => 'walkin@example.com',
+                'phone' => '09171234567',
+                'hyve_room_id' => $room->id,
+                'booking_date' => now()->addDay()->toDateString(),
+                'start_time' => '08:00',
+                'end_time' => '10:00',
+                'guests' => 4,
+                'downpayment_amount' => 0,
+                'payment_method' => 'pay_later',
+                'notes' => 'Customer will pay upon checkout.',
+            ]);
+
+        $response->assertRedirect(route('admin.bookings.index'));
+        $response->assertSessionHas('admin_success');
+
+        $header = BookingHeader::query()->where('email', 'walkin@example.com')->firstOrFail();
+
+        $this->assertSame(BookingHeader::SOURCE_ADMIN, $header->source);
+        $this->assertSame('pay_later', $header->payment_method);
+        $this->assertSame('pending_verification', $header->payment_status);
+        $this->assertSame(0.0, (float) $header->downpayment_amount);
+        $this->assertSame((float) $header->total_amount, (float) $header->balance_amount);
+        $this->assertDatabaseMissing('booking_payments', [
+            'booking_header_id' => $header->getKey(),
+        ]);
+    }
+
+    public function test_online_booking_still_rejects_a_zero_downpayment(): void
+    {
+        Storage::fake('public');
+
+        $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+
+        $this->from(route('bookings.index'))
+            ->post(route('bookings.store'), [
+                'booking_mode' => 'room',
+                'full_name' => 'Online Customer',
+                'email' => 'online-zero@example.com',
+                'phone' => '09181234567',
+                'hyve_room_id' => $room->id,
+                'booking_date' => now()->addDay()->toDateString(),
+                'start_time' => '08:00',
+                'end_time' => '10:00',
+                'guests' => 2,
+                'downpayment_amount' => 0,
+                'payment_method' => 'gcash',
+                'rules_agreement' => '1',
+                'payment_proof' => UploadedFile::fake()->create('proof.png', 120, 'image/png'),
+            ])
+            ->assertRedirect(route('bookings.index'))
+            ->assertSessionHasErrors('downpayment_amount');
+
+        $this->assertDatabaseMissing('booking_headers', [
+            'email' => 'online-zero@example.com',
+        ]);
+    }
+
+    public function test_online_common_area_booking_can_pay_at_hyve_without_a_downpayment(): void
+    {
+        Storage::fake('public');
+
+        $commonArea = HyveRoom::query()->where('room_name', 'Table 1-A')->firstOrFail();
+
+        $this->post(route('bookings.store'), [
+            'booking_mode' => 'room',
+            'full_name' => 'Common Area Customer',
+            'email' => 'common-pay-later@example.com',
+            'phone' => '09191234567',
+            'hyve_room_id' => $commonArea->id,
+            'booking_date' => now()->addDay()->toDateString(),
+            'start_time' => '08:00',
+            'end_time' => '10:00',
+            'guests' => 1,
+            'downpayment_amount' => 0,
+            'payment_method' => 'pay_later',
+            'rules_agreement' => '1',
+        ])
+            ->assertRedirect(route('bookings.index'))
+            ->assertSessionHas('booking_success');
+
+        $header = BookingHeader::query()->where('email', 'common-pay-later@example.com')->firstOrFail();
+
+        $this->assertSame(BookingHeader::SOURCE_WEB, $header->source);
+        $this->assertSame('pay_later', $header->payment_method);
+        $this->assertSame(0.0, (float) $header->downpayment_amount);
+        $this->assertSame((float) $header->total_amount, (float) $header->balance_amount);
+        $this->assertDatabaseMissing('booking_payments', [
+            'booking_header_id' => $header->getKey(),
+        ]);
+    }
+
+    public function test_online_private_room_cannot_use_pay_at_hyve_to_bypass_the_downpayment(): void
+    {
+        Storage::fake('public');
+
+        $privateRoom = HyveRoom::query()->where('room_name', 'Room 1')->firstOrFail();
+
+        $this->from(route('bookings.index'))
+            ->post(route('bookings.store'), [
+                'booking_mode' => 'room',
+                'full_name' => 'Private Room Customer',
+                'email' => 'private-pay-later@example.com',
+                'phone' => '09201234567',
+                'hyve_room_id' => $privateRoom->id,
+                'booking_date' => now()->addDay()->toDateString(),
+                'start_time' => '08:00',
+                'end_time' => '10:00',
+                'guests' => 2,
+                'downpayment_amount' => 0,
+                'payment_method' => 'pay_later',
+                'rules_agreement' => '1',
+            ])
+            ->assertRedirect(route('bookings.index'))
+            ->assertSessionHasErrors('payment_method');
+
+        $this->assertDatabaseMissing('booking_headers', [
+            'email' => 'private-pay-later@example.com',
+        ]);
+    }
+
     public function test_an_authenticated_user_can_submit_a_booking_request(): void
     {
         Storage::fake('public');
@@ -750,6 +882,52 @@ class BookingSubmissionTest extends TestCase
         $response->assertJsonFragment([
             'value' => $bookingDate,
         ]);
+    }
+
+    public function test_unavailable_dates_endpoint_can_load_a_future_month_without_scanning_from_today(): void
+    {
+        $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+        $startDate = now()->addDays(40)->toDateString();
+        $endDate = now()->addDays(70)->toDateString();
+        $requestedDate = now()->addDays(60)->toDateString();
+
+        $header = BookingHeader::query()->create([
+            'reference_no' => 'HYVE-TEST-FUTURE-MONTH',
+            'customer_name' => 'Monthly Client',
+            'email' => 'monthly@example.com',
+            'phone' => '+639181112225',
+            'booking_type' => BookingHeader::TYPE_MONTHLY,
+            'source' => BookingHeader::SOURCE_WEB,
+            'status' => BookingHeader::STATUS_PENDING,
+        ]);
+
+        BookingDetail::query()->create([
+            'booking_header_id' => $header->id,
+            'space_id' => Space::query()->where('slug', 'zeal-room-8-seats')->value('id'),
+            'hyve_room_id' => $room->id,
+            'booking_date' => $startDate,
+            'booking_end_date' => $endDate,
+            'start_time' => '00:00',
+            'end_time' => '23:59',
+            'charge_period' => 'monthly',
+            'guests' => 2,
+            'status' => BookingDetail::STATUS_PENDING,
+        ]);
+
+        $queryCount = 0;
+        DB::listen(function () use (&$queryCount): void {
+            $queryCount++;
+        });
+
+        $this->getJson(route('bookings.unavailable-dates', [
+            'hyve_room_id' => $room->id,
+            'start_date' => now()->addDays(50)->toDateString(),
+            'horizon_days' => 31,
+        ]))
+            ->assertOk()
+            ->assertJsonFragment(['value' => $requestedDate]);
+
+        $this->assertLessThan(25, $queryCount, 'Unavailable dates should be loaded with bulk queries, not one query per day.');
     }
 
     public function test_a_booking_cannot_use_a_slot_that_has_already_been_taken(): void
