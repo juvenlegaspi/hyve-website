@@ -316,11 +316,51 @@ const setupHomepageMotion = () => {
     }
 
     const hero = shell.querySelector('.hero-section--video');
+    const heroVideo = shell.querySelector('[data-hero-video]');
+
+    if (heroVideo) {
+        let videoLoadTimer;
+
+        const loadHeroVideo = () => {
+            if (heroVideo.src || !heroVideo.dataset.src) {
+                return;
+            }
+
+            window.clearTimeout(videoLoadTimer);
+            heroVideo.src = heroVideo.dataset.src;
+            heroVideo.removeAttribute('data-src');
+            heroVideo.load();
+
+            const playPromise = heroVideo.play();
+
+            if (playPromise) {
+                playPromise.catch(() => {});
+            }
+        };
+
+        const scheduleHeroVideo = () => {
+            // Keep the poster as the fast first paint, then start the cinematic
+            // background after the page is settled or as soon as the user engages.
+            videoLoadTimer = window.setTimeout(loadHeroVideo, 3500);
+        };
+
+        if (document.readyState === 'complete') {
+            scheduleHeroVideo();
+        } else {
+            window.addEventListener('load', scheduleHeroVideo, { once: true });
+        }
+
+        ['pointerdown', 'keydown', 'scroll'].forEach((eventName) => {
+            window.addEventListener(eventName, loadHeroVideo, { once: true, passive: true });
+        });
+    }
+
     const depthImages = [...shell.querySelectorAll([
         '.space-card__media img',
         '.space-browser-card__media img',
         '.amenities-gallery__media > img',
     ].join(','))];
+    const visibleDepthImages = new Set();
     const interactiveCards = shell.querySelectorAll([
         '.feature-card--service',
         '.space-card--showcase',
@@ -340,19 +380,16 @@ const setupHomepageMotion = () => {
             hero.style.setProperty('--hero-scroll', progress.toFixed(3));
         }
 
-        depthImages.forEach((image) => {
-            if (!image.offsetParent) {
-                return;
-            }
+        const imageShifts = [];
 
+        visibleDepthImages.forEach((image) => {
             const rect = image.getBoundingClientRect();
-
-            if (rect.bottom < 0 || rect.top > window.innerHeight) {
-                return;
-            }
-
             const centerOffset = (rect.top + rect.height / 2 - window.innerHeight / 2) / window.innerHeight;
-            image.style.setProperty('--media-shift', `${Math.max(-1, Math.min(1, centerOffset)) * -14}px`);
+            imageShifts.push([image, Math.max(-1, Math.min(1, centerOffset)) * -14]);
+        });
+
+        imageShifts.forEach(([image, shift]) => {
+            image.style.setProperty('--media-shift', `${shift}px`);
         });
     };
 
@@ -376,6 +413,20 @@ const setupHomepageMotion = () => {
             card.style.setProperty('--pointer-y', `${event.clientY - rect.top}px`);
         });
     });
+
+    const depthObserver = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+                visibleDepthImages.add(entry.target);
+            } else {
+                visibleDepthImages.delete(entry.target);
+            }
+        });
+
+        requestDepthFrame();
+    }, { rootMargin: '15% 0px' });
+
+    depthImages.forEach((image) => depthObserver.observe(image));
 
     window.addEventListener('scroll', requestDepthFrame, { passive: true });
     window.addEventListener('resize', requestDepthFrame, { passive: true });

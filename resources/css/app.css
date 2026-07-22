@@ -4430,13 +4430,8 @@
 
     [data-home-shell] .hero-video {
         transform: scale(calc(1.045 + (var(--hero-scroll, 0) * 0.035))) translateY(calc(var(--hero-scroll, 0) * 1.8rem));
-        filter: saturate(0.86) contrast(1.04);
-        transition: filter 1.4s ease;
+        filter: saturate(1) contrast(1.03);
         will-change: transform;
-    }
-
-    [data-home-shell].home-motion-ready .hero-video {
-        filter: saturate(1) contrast(1);
     }
 
     [data-home-shell] .hero-overlay {
@@ -4456,9 +4451,14 @@
         pointer-events: none;
     }
 
-    [data-home-shell] .hero-content.reveal {
+    [data-home-shell] .hero-content.reveal,
+    [data-home-shell] .hero-content.reveal.is-visible {
+        opacity: 1;
         transform: none;
         filter: none;
+        clip-path: none;
+        transition: none;
+        will-change: auto;
     }
 
     [data-home-shell] .hero-location,
@@ -4471,9 +4471,8 @@
     }
 
     [data-home-shell] .hero-title__line {
-        clip-path: inset(0 0 105% 0);
         transform: translateY(70%);
-        transition: opacity 1000ms var(--motion-ease), transform 1100ms var(--motion-ease), clip-path 1100ms var(--motion-ease);
+        transition: opacity 1000ms var(--motion-ease), transform 1100ms var(--motion-ease);
     }
 
     [data-home-shell] .hero-title__line:nth-child(2) {
@@ -4494,22 +4493,18 @@
     [data-home-shell] .hero-content.is-visible .hero-actions--center {
         opacity: 1;
         transform: translateY(0);
-        clip-path: inset(0 0 0 0);
     }
 
     [data-home-shell] .reveal {
         --reveal-x: 0px;
         opacity: 0;
         transform: translate3d(var(--reveal-x), 2.75rem, 0) scale(0.985);
-        filter: blur(7px);
         transition:
             opacity 850ms var(--motion-ease),
             transform 950ms var(--motion-ease),
-            filter 850ms var(--motion-ease),
             box-shadow 450ms var(--motion-ease),
             border-color 450ms ease;
         transition-delay: calc(var(--reveal-order, 0) * 90ms);
-        will-change: opacity, transform;
     }
 
     [data-home-shell] .reveal--left {
@@ -4520,15 +4515,9 @@
         --reveal-x: 2.5rem;
     }
 
-    [data-home-shell] .reveal--heading {
-        clip-path: inset(0 0 28% 0);
-    }
-
     [data-home-shell] .reveal.is-visible {
         opacity: 1;
         transform: translate3d(0, 0, 0) scale(1);
-        filter: blur(0);
-        clip-path: inset(0 0 0 0);
     }
 
     [data-home-shell] .eyebrow::before {

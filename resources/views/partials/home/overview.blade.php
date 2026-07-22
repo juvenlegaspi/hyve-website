@@ -1,7 +1,16 @@
 <section id="overview" class="hero-section hero-section--video">
-    <video class="hero-video" autoplay muted loop playsinline>
-        <source src="{{ asset('videos/hyve-hero.mp4') }}?v=20260720" type="video/mp4">
-    </video>
+    <video
+        class="hero-video"
+        muted
+        loop
+        playsinline
+        preload="none"
+        fetchpriority="high"
+        poster="{{ asset('images/optimized/common-area-1.webp') }}"
+        data-hero-video
+        data-src="{{ asset('videos/hyve-hero.mp4') }}?v=20260720"
+        aria-hidden="true"
+    ></video>
     <div class="hero-overlay"></div>
 
     <div class="hero-content hero-content--workspace reveal">

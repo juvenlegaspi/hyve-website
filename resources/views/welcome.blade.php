@@ -1,5 +1,9 @@
 @extends('layouts.app')
 
+@push('head')
+    <link rel="preload" as="image" href="{{ asset('images/optimized/common-area-1.webp') }}" type="image/webp" fetchpriority="high">
+@endpush
+
 @section('content')
     <div class="site-shell" data-home-shell data-page-mode="home">
         @include('partials.home.navigation')

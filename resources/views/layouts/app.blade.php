@@ -15,6 +15,7 @@
     <link rel="icon" type="image/jpeg" href="{{ asset('images/logohyve.jpg') }}">
     <link rel="shortcut icon" href="{{ asset('images/logohyve.jpg') }}">
     <link rel="apple-touch-icon" href="{{ asset('images/logohyve.jpg') }}">
+    @stack('head')
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body class="hyve-body">
