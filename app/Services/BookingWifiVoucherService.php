@@ -140,7 +140,8 @@ class BookingWifiVoucherService
         }
 
         $start = Carbon::parse($firstDetail->booking_date->format('Y-m-d').' '.$firstDetail->start_time);
-        $end = Carbon::parse($lastDetail->booking_date->format('Y-m-d').' '.$lastDetail->end_time);
+        $endDate = $lastDetail->booking_end_date ?: $lastDetail->booking_date;
+        $end = Carbon::parse($endDate->format('Y-m-d').' '.$lastDetail->end_time);
 
         if ($end->lte($start)) {
             $end->addDay();

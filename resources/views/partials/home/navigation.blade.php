@@ -1,3 +1,7 @@
+@php
+    $isHomePage = request()->routeIs('home');
+@endphp
+
 <header class="site-header site-header--overlay">
     <nav id="site-nav" class="site-nav site-nav--hero">
         <a href="{{ route('home') }}" class="brand-mark">
@@ -13,15 +17,22 @@
 
         <div class="nav-links">
             @foreach ($navigation as $item)
+                @php
+                    $navigationHref = $isHomePage
+                        ? $item['href']
+                        : route('home').$item['href'];
+                @endphp
                 <a
-                    href="{{ $item['href'] }}"
-                    class="nav-link @if (request()->routeIs('home') && $loop->first) is-active @endif"
-                    @if ($item['href'] === '#overview')
-                        data-nav-mode="home"
-                    @elseif ($item['href'] === '#spaces')
-                        data-nav-mode="spaces"
-                    @else
-                        data-nav-anchor
+                    href="{{ $navigationHref }}"
+                    class="nav-link @if ($isHomePage && $loop->first) is-active @endif"
+                    @if ($isHomePage)
+                        @if ($item['href'] === '#overview')
+                            data-nav-mode="home"
+                        @elseif ($item['href'] === '#spaces')
+                            data-nav-mode="spaces"
+                        @else
+                            data-nav-anchor
+                        @endif
                     @endif
                 >{{ $item['label'] }}</a>
             @endforeach
@@ -40,15 +51,22 @@
 
     <div id="mobile-menu" class="mobile-menu hidden">
         @foreach ($navigation as $item)
+            @php
+                $navigationHref = $isHomePage
+                    ? $item['href']
+                    : route('home').$item['href'];
+            @endphp
             <a
-                href="{{ $item['href'] }}"
+                href="{{ $navigationHref }}"
                 class="mobile-menu__link"
-                @if ($item['href'] === '#overview')
-                    data-nav-mode="home"
-                @elseif ($item['href'] === '#spaces')
-                    data-nav-mode="spaces"
-                @else
-                    data-nav-anchor
+                @if ($isHomePage)
+                    @if ($item['href'] === '#overview')
+                        data-nav-mode="home"
+                    @elseif ($item['href'] === '#spaces')
+                        data-nav-mode="spaces"
+                    @else
+                        data-nav-anchor
+                    @endif
                 @endif
             >{{ $item['label'] }}</a>
         @endforeach

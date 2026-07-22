@@ -24,7 +24,13 @@
 
                 <div class="px-7 py-7 sm:px-8">
                     <h1 class="text-[1.75rem] font-semibold tracking-[-0.04em] text-[#1d1d1d]">Welcome back</h1>
-                    <p class="mt-1 text-[0.92rem] text-[#9a9a9a]">Log in to your CourtSpace account</p>
+                    <p class="mt-1 text-[0.92rem] text-[#9a9a9a]">Log in to your HYVE Workspace account</p>
+
+                    @if (session('status'))
+                        <div class="mt-4 rounded-[1rem] border border-[#b9d8b8] bg-[#eff8ee] px-4 py-3 text-[0.82rem] text-[#285b2a]">
+                            {{ session('status') }}
+                        </div>
+                    @endif
 
                     @if ($errors->any())
                         <div class="mt-4 rounded-[1rem] border border-red-200 bg-red-50 px-4 py-3 text-[0.8rem] text-red-700">
@@ -38,23 +44,30 @@
                         @csrf
 
                         <label class="block">
-                            <span class="mb-2 block text-[0.78rem] font-semibold uppercase tracking-[0.12em] text-[#b1aba2]">Email</span>
+                            <span class="mb-2 block text-[0.78rem] font-semibold uppercase tracking-[0.12em] text-[#b1aba2]">Email or username</span>
                             <input
                                 type="text"
                                 name="login"
                                 value="{{ old('login') }}"
                                 class="w-full rounded-[0.95rem] border border-[#e6e0d7] bg-white px-4 py-3 text-[1rem] text-[#232323] outline-none transition focus:border-[#3f7b3d]"
-                                placeholder="you@email.com"
+                                placeholder="you@email.com or username"
+                                autocomplete="username"
+                                required
                             >
                         </label>
 
                         <label class="block">
-                            <span class="mb-2 block text-[0.78rem] font-semibold uppercase tracking-[0.12em] text-[#b1aba2]">Password</span>
+                            <span class="mb-2 flex items-center justify-between gap-3 text-[0.78rem] font-semibold uppercase tracking-[0.12em] text-[#b1aba2]">
+                                <span>Password</span>
+                                <a href="{{ route('password.request') }}" class="normal-case tracking-normal text-[#3f7b3d] transition hover:text-[#285b2a]">Forgot password?</a>
+                            </span>
                             <input
                                 type="password"
                                 name="password"
                                 class="w-full rounded-[0.95rem] border border-[#e6e0d7] bg-white px-4 py-3 text-[1rem] text-[#232323] outline-none transition focus:border-[#3f7b3d]"
                                 placeholder="........"
+                                autocomplete="current-password"
+                                required
                             >
                         </label>
 

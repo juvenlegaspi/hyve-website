@@ -622,18 +622,27 @@ class AdminBookingController extends Controller
         return back()->with('admin_error', $message);
     }
 
-    private function scheduledDateTime(BookingDetail $detail, string $time): Carbon
+    private function scheduledDateTime(BookingDetail $detail, string $time, bool $isEnd = false): Carbon
     {
-        return Carbon::parse(optional($detail->booking_date)->format('Y-m-d').' '.$time);
+        $date = $isEnd && $detail->booking_end_date
+            ? $detail->booking_end_date
+            : $detail->booking_date;
+        $result = Carbon::parse(optional($date)->format('Y-m-d').' '.$time);
+
+        if ($isEnd) {
+            $start = Carbon::parse(optional($detail->booking_date)->format('Y-m-d').' '.$detail->start_time);
+
+            if ($result->lte($start)) {
+                $result->addDay();
+            }
+        }
+
+        return $result;
     }
 
     private function isLongStayDetail(BookingDetail $detail): bool
     {
-        $startDate = $detail->booking_date;
-        $endDate = $detail->booking_end_date;
-
-        return in_array((string) $detail->charge_period, ['daily', 'weekly', 'monthly'], true)
-            || ($endDate && $startDate && $endDate->ne($startDate));
+        return in_array((string) $detail->charge_period, ['daily', 'weekly', 'monthly'], true);
     }
 
     private function detailDateLabel(BookingDetail $detail): string
@@ -645,7 +654,7 @@ class AdminBookingController extends Controller
             return '--';
         }
 
-        if ($this->isLongStayDetail($detail) && $endDate && $endDate->ne($startDate)) {
+        if ($endDate && $endDate->ne($startDate)) {
             return $startDate->format('F j, Y').' - '.$endDate->format('F j, Y');
         }
 
@@ -663,9 +672,14 @@ class AdminBookingController extends Controller
             };
         }
 
+        $nextDay = $detail->booking_end_date
+            && $detail->booking_date
+            && $detail->booking_end_date->ne($detail->booking_date);
+
         return Carbon::parse((string) $detail->start_time)->format('g:i A')
             .' - '
-            .Carbon::parse((string) $detail->end_time)->format('g:i A');
+            .Carbon::parse((string) $detail->end_time)->format('g:i A')
+            .($nextDay ? ' next day' : '');
     }
 
     private function detailScheduledStartLabel(BookingDetail $detail, Carbon $scheduledStart): string
@@ -724,7 +738,7 @@ class AdminBookingController extends Controller
     private function detailProgressPayload(BookingDetail $detail): array
     {
         $scheduledStart = $this->scheduledDateTime($detail, (string) $detail->start_time);
-        $scheduledEnd = $this->scheduledDateTime($detail, (string) $detail->end_time);
+        $scheduledEnd = $this->scheduledDateTime($detail, (string) $detail->end_time, true);
         $progressMeta = $this->progressMeta($detail, $scheduledStart, $scheduledEnd);
 
         return [
@@ -1078,7 +1092,7 @@ class AdminBookingController extends Controller
             ->flatMap(function (BookingDetail $detail) use ($now, $windowEnd): array {
                 $reminders = [];
                 $scheduledStart = $this->scheduledDateTime($detail, (string) $detail->start_time);
-                $scheduledEnd = $this->scheduledDateTime($detail, (string) $detail->end_time);
+                $scheduledEnd = $this->scheduledDateTime($detail, (string) $detail->end_time, true);
                 $header = $detail->bookingHeader;
                 $roomName = $this->activityRoomName($detail);
                 $timeLabel = $this->activityTimeRange($detail);
@@ -1176,7 +1190,7 @@ class AdminBookingController extends Controller
             ->flatMap(function (BookingDetail $detail) use ($now, $windowEnd): array {
                 $reminders = [];
                 $scheduledStart = $this->scheduledDateTime($detail, (string) $detail->start_time);
-                $scheduledEnd = $this->scheduledDateTime($detail, (string) $detail->end_time);
+                $scheduledEnd = $this->scheduledDateTime($detail, (string) $detail->end_time, true);
                 $header = $detail->bookingHeader;
 
                 if (! $detail->actual_start_at && ! $scheduledStart->lt($now) && ! $scheduledStart->gt($windowEnd)) {
@@ -1299,7 +1313,7 @@ class AdminBookingController extends Controller
             ])
             ->map(function (BookingDetail $detail) use ($header, $canManageBookings): array {
                 $scheduledStart = $this->scheduledDateTime($detail, (string) $detail->start_time);
-                $scheduledEnd = $this->scheduledDateTime($detail, (string) $detail->end_time);
+                $scheduledEnd = $this->scheduledDateTime($detail, (string) $detail->end_time, true);
                 $progressMeta = $this->progressMeta($detail, $scheduledStart, $scheduledEnd);
                 $dateLabel = $this->detailDateLabel($detail);
                 $timeLabel = $this->detailTimeLabel($detail);

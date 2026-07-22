@@ -248,11 +248,11 @@ class MemberPortalController extends Controller
         }
 
         $bookingDate = (string) $validated['booking_date'];
-        $bookingEndDate = $isLongStay
-            ? (string) $validated['booking_end_date']
-            : $bookingDate;
         $startTime = $isLongStay ? '00:00' : (string) $validated['start_time'];
         $endTime = $isLongStay ? '23:59' : (string) $validated['end_time'];
+        $bookingEndDate = $isLongStay
+            ? (string) $validated['booking_end_date']
+            : $this->dateRange($bookingDate, $startTime, $endTime)[1]->toDateString();
         $bookableRoom = $isLongStay
             ? ($selectedRoom->isSharedTable()
                 ? $this->resolveBookableRoomForSelection($selectedRoom, $bookingDate, '00:00', '23:59', $bookingDetail->id)
@@ -465,7 +465,14 @@ class MemberPortalController extends Controller
             }
 
             $end = Carbon::createFromFormat('H:i:s', $detail->end_time);
-            $endAt = $detail->booking_date->copy()->setTime($end->hour, $end->minute, $end->second);
+            $start = $this->timeFromDatabase((string) $detail->start_time);
+            $startAt = $detail->booking_date->copy()->setTime($start->hour, $start->minute, $start->second);
+            $endDate = $detail->booking_end_date ?: $detail->booking_date;
+            $endAt = $endDate->copy()->setTime($end->hour, $end->minute, $end->second);
+
+            if ($endAt->lte($startAt)) {
+                $endAt->addDay();
+            }
 
             return $endAt->greaterThanOrEqualTo(now());
         });
@@ -524,9 +531,13 @@ class MemberPortalController extends Controller
                     : null;
                 $endAt = $isLongStay
                     ? optional($endDate)?->copy()->endOfDay()
-                    : ($bookingDate
-                        ? $bookingDate->copy()->setTime($end->hour, $end->minute, $end->second)
+                    : ($endDate
+                        ? $endDate->copy()->setTime($end->hour, $end->minute, $end->second)
                         : null);
+
+                if (! $isLongStay && $startAt && $endAt && $endAt->lte($startAt)) {
+                    $endAt->addDay();
+                }
 
                 $status = strtolower((string) ($header->status ?? BookingHeader::STATUS_PENDING));
                 $statusLabel = match ($status) {
@@ -670,11 +681,7 @@ class MemberPortalController extends Controller
 
     private function isLongStayDetail($detail): bool
     {
-        $startDate = $this->detailDateValue($detail->booking_date);
-        $endDate = $this->detailDateValue($detail->booking_end_date) ?: $startDate;
-
-        return in_array((string) $detail->charge_period, ['daily', 'weekly', 'monthly'], true)
-            || ($startDate && $endDate && $endDate->ne($startDate));
+        return in_array((string) $detail->charge_period, ['daily', 'weekly', 'monthly'], true);
     }
 
     private function detailDateLabel($detail): string
@@ -686,7 +693,7 @@ class MemberPortalController extends Controller
             return '-';
         }
 
-        if ($this->isLongStayDetail($detail) && $endDate && $endDate->ne($startDate)) {
+        if ($endDate && $endDate->ne($startDate)) {
             return $startDate->format('l, F j, Y').' - '.$endDate->format('l, F j, Y');
         }
 
@@ -707,7 +714,10 @@ class MemberPortalController extends Controller
         $start = $this->displayBookingTime((string) $detail->start_time);
         $end = $this->displayBookingTime((string) $detail->end_time);
 
-        return $start.' - '.$end;
+        $startDate = $this->detailDateValue($detail->booking_date);
+        $endDate = $this->detailDateValue($detail->booking_end_date) ?: $startDate;
+
+        return $start.' - '.$end.($startDate && $endDate && $endDate->ne($startDate) ? ' next day' : '');
     }
 
     private function detailDurationLabel($detail): string

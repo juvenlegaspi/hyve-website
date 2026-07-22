@@ -20,6 +20,9 @@
             @if ($member->isAdmin())
                 <a href="{{ route('admin.dashboard') }}" class="member-menu__link">Admin dashboard</a>
             @endif
+            @unless (request()->routeIs('home'))
+                <a href="{{ route('home') }}" class="member-menu__link">Back to HYVE website</a>
+            @endunless
             <a href="{{ route('member.index') }}" class="member-menu__link">My bookings</a>
             <a href="{{ route('member.profile.edit') }}" class="member-menu__link">Edit profile</a>
             <a href="{{ route('member.password.edit') }}" class="member-menu__link">Change password</a>

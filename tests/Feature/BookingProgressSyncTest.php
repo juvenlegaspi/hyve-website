@@ -59,6 +59,49 @@ class BookingProgressSyncTest extends TestCase
         }
     }
 
+    public function test_overnight_booking_remains_in_progress_until_its_next_day_end_time(): void
+    {
+        Carbon::setTestNow('2026-07-17 01:00:00');
+
+        try {
+            $header = BookingHeader::query()->create([
+                'reference_no' => 'HYVE-PROGRESS-NIGHT',
+                'customer_name' => 'Overnight Customer',
+                'email' => 'overnight-progress@example.com',
+                'phone' => '+639171234567',
+                'booking_type' => BookingHeader::TYPE_GUEST,
+                'source' => BookingHeader::SOURCE_WEB,
+                'payment_method' => 'gcash',
+                'total_amount' => 2000,
+                'status' => 'confirmed',
+            ]);
+            $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+            $space = Space::query()->where('slug', 'zeal-room-8-seats')->firstOrFail();
+            $detail = BookingDetail::query()->create([
+                'booking_header_id' => $header->getKey(),
+                'space_id' => $space->getKey(),
+                'hyve_room_id' => $room->getKey(),
+                'booking_date' => '2026-07-16',
+                'booking_end_date' => '2026-07-17',
+                'start_time' => '23:00',
+                'end_time' => '03:00',
+                'charge_period' => 'hourly',
+                'guests' => 2,
+                'subtotal' => 1000,
+                'status' => BookingDetail::STATUS_CONFIRMED,
+                'progress_status' => BookingDetail::PROGRESS_SCHEDULED,
+            ]);
+
+            $this->artisan('bookings:sync-progress')->assertSuccessful();
+
+            $detail->refresh();
+            $this->assertSame(BookingDetail::PROGRESS_IN_PROGRESS, $detail->progress_status);
+            $this->assertNull($detail->actual_end_at);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
     private function createDetail(
         BookingHeader $header,
         Space $space,

@@ -7,6 +7,7 @@ use Illuminate\Validation\Rule;
 use App\Models\HyveRoom;
 use Closure;
 use App\Support\HyvePricing;
+use Carbon\Carbon;
 
 class StoreBookingRequest extends FormRequest
 {
@@ -26,6 +27,22 @@ class StoreBookingRequest extends FormRequest
 
         if ($this->input('payment_method') === 'pay_later') {
             $this->merge(['downpayment_amount' => 0]);
+        }
+
+        if (
+            $this->input('booking_mode', 'room') === 'room'
+            && is_string($this->input('booking_date'))
+            && is_string($this->input('start_time'))
+            && is_string($this->input('end_time'))
+        ) {
+            $start = Carbon::parse($this->input('booking_date').' '.$this->input('start_time'));
+            $end = Carbon::parse($this->input('booking_date').' '.$this->input('end_time'));
+
+            if ($end->lte($start)) {
+                $end->addDay();
+            }
+
+            $this->merge(['booking_end_date' => $end->toDateString()]);
         }
     }
 
@@ -60,7 +77,7 @@ class StoreBookingRequest extends FormRequest
             'booking_mode' => ['nullable', Rule::in(['room', 'schedule', 'monthly'])],
             'hyve_room_id' => ['required_unless:booking_mode,schedule', 'integer', Rule::exists(HyveRoom::class, 'id')->where(fn ($query) => $query->where('status', 0))],
             'booking_date' => ['required_unless:booking_mode,schedule', 'date', 'after_or_equal:today'],
-            'booking_end_date' => ['required_if:booking_mode,monthly', 'date', 'after_or_equal:booking_date'],
+            'booking_end_date' => [Rule::requiredIf(fn (): bool => in_array($this->input('booking_mode', 'room'), ['room', 'monthly'], true)), 'date', 'after_or_equal:booking_date'],
             'start_time' => ['required_if:booking_mode,room', 'date_format:H:i'],
             'long_stay_use_type' => [
                 'nullable',

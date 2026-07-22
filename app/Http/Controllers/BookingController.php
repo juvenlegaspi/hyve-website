@@ -255,6 +255,17 @@ class BookingController extends Controller
 
         /** @var PaymentSetting|null $paymentSetting */
         $paymentSetting = $quote['payment_setting'];
+        $commonAreaAvailability = $isMonthlyMode && $room->isSharedTable()
+            ? [
+                'available_tables' => $this->availableLongStayTables(
+                    $room,
+                    $validated['booking_date'],
+                    $validated['booking_end_date'],
+                    $validated['long_stay_use_type'] ?? null,
+                )->count(),
+                'total_tables' => HyveRoom::query()->active()->where('room_name', 'like', 'Table %')->count(),
+            ]
+            : null;
 
         return response()->json([
             'rate_name' => $quote['rate_name'],
@@ -271,11 +282,14 @@ class BookingController extends Controller
             'unit_type' => $quote['unit_type'] ?? null,
             'unit_count' => $quote['unit_count'] ?? null,
             'unit_label' => $quote['unit_label'] ?? null,
-            'booking_end_date' => $quote['booking_end_date'] ?? null,
+            'booking_end_date' => $quote['booking_end_date'] ?? ($isMonthlyMode
+                ? $validated['booking_end_date']
+                : $this->normalizedEndDateTime($validated['booking_date'], $validated['start_time'], $validated['end_time'])->toDateString()),
             'long_stay_use_type' => $quote['long_stay_use_type'] ?? null,
             'long_stay_use_label' => $quote['long_stay_use_label'] ?? null,
             'window_start_time' => $quote['window_start_time'] ?? null,
             'window_end_time' => $quote['window_end_time'] ?? null,
+            'common_area_availability' => $commonAreaAvailability,
             'breakdown' => $quote['breakdown'] ?? [],
             'payment' => [
                 'downpayment_percentage' => (float) ($paymentSetting?->downpayment_percentage ?? 50),
@@ -518,6 +532,7 @@ class BookingController extends Controller
             'booking_end_date',
             'start_time',
             'end_time',
+            'charge_period',
         ]);
 
         $rangesByRoom = [];
@@ -544,7 +559,7 @@ class BookingController extends Controller
                         ];
                     }
 
-                    [$start, $end] = $this->dateRange($bookingDate, $detail->start_time, $detail->end_time);
+                    [$start, $end] = $this->detailDateRange($detail);
 
                     return [
                         'start' => $start,
@@ -682,11 +697,26 @@ class BookingController extends Controller
             }
         } elseif ($isMonthlyMode) {
             $selectedRoom = HyveRoom::query()->active()->findOrFail($validated['hyve_room_id']);
-            $room = $this->pricingRoomForSelection($selectedRoom);
+            $pricingRoom = $this->pricingRoomForSelection($selectedRoom);
+            $room = $this->resolveLongStayBookableRoom(
+                $selectedRoom,
+                $validated['booking_date'],
+                $validated['booking_end_date'],
+                $validated['long_stay_use_type'] ?? null,
+            );
+
+            if (! $room) {
+                return back()
+                    ->withInput()
+                    ->withErrors([
+                        'booking_end_date' => 'No Common Area table is available for the full selected stay. Please choose another date range or stay window.',
+                    ]);
+            }
+
             $space = $this->spaceForRoom($room);
 
             if (
-                $this->pricing->longStayRequiresUseType($room, $validated['booking_date'], $validated['booking_end_date'])
+                $this->pricing->longStayRequiresUseType($pricingRoom, $validated['booking_date'], $validated['booking_end_date'])
                 && blank($validated['long_stay_use_type'] ?? null)
             ) {
                 return back()
@@ -705,7 +735,7 @@ class BookingController extends Controller
             }
 
             $quote = $this->pricing->quoteForLongStayRoom(
-                $room,
+                $pricingRoom,
                 (string) ($validated['monthly_plan'] ?? ''),
                 $validated['booking_date'],
                 $validated['booking_end_date'],
@@ -771,7 +801,11 @@ class BookingController extends Controller
                 'space' => $space,
                 'quote' => $quote,
                 'booking_date' => $validated['booking_date'],
-                'booking_end_date' => $validated['booking_date'],
+                'booking_end_date' => $this->normalizedEndDateTime(
+                    $validated['booking_date'],
+                    $validated['start_time'],
+                    $validated['end_time'],
+                )->toDateString(),
                 'start_time' => $validated['start_time'],
                 'end_time' => $validated['end_time'],
                 'display_start_time' => $validated['start_time'],
@@ -815,7 +849,7 @@ class BookingController extends Controller
 
         try {
             $header = $this->database->transaction(function () use ($user, $contactDetails, $validated, $bookingItems, $grandTotal, $paymentProofPath, $paymentProofName, $customerDownpayment, $remainingBalance, $paymentStatus, $adminMode, $isCashWalkIn): BookingHeader {
-                $this->lockAndAssertBookingItemsAvailable($bookingItems);
+                $bookingItems = $this->lockAndResolveBookingItemsAvailable($bookingItems);
 
                 $header = null;
 
@@ -969,7 +1003,7 @@ class BookingController extends Controller
      *
      * @param  array<int, array<string, mixed>>  $bookingItems
      */
-    private function lockAndAssertBookingItemsAvailable(array $bookingItems): void
+    private function lockAndResolveBookingItemsAvailable(array $bookingItems): array
     {
         $roomIds = collect($bookingItems)
             ->flatMap(fn (array $item): array => [
@@ -982,24 +1016,48 @@ class BookingController extends Controller
             ->sort()
             ->values();
 
+        if (collect($bookingItems)->contains(fn (array $item): bool => $item['selected_room'] instanceof HyveRoom && $item['selected_room']->isSharedTable())) {
+            $roomIds = $roomIds
+                ->concat(HyveRoom::query()->active()->where('room_name', 'like', 'Table %')->pluck('id'))
+                ->map(fn ($id): int => (int) $id)
+                ->unique()
+                ->sort()
+                ->values();
+        }
+
         HyveRoom::query()
             ->whereKey($roomIds->all())
             ->orderBy('id')
             ->lockForUpdate()
             ->get();
 
-        foreach ($bookingItems as $item) {
+        foreach ($bookingItems as $index => $item) {
             /** @var HyveRoom $selectedRoom */
             $selectedRoom = $item['selected_room'];
             $mode = (string) ($item['booking_mode'] ?? 'room');
 
             if ($mode === 'monthly') {
-                $available = $this->isLongStayDateRangeAvailable(
-                    $selectedRoom,
-                    (string) $item['booking_date'],
-                    (string) ($item['booking_end_date'] ?? $item['booking_date']),
-                    $item['quote']['long_stay_use_type'] ?? null,
-                );
+                if ($selectedRoom->isSharedTable()) {
+                    $resolvedRoom = $this->resolveLongStayBookableRoom(
+                        $selectedRoom,
+                        (string) $item['booking_date'],
+                        (string) ($item['booking_end_date'] ?? $item['booking_date']),
+                        $item['quote']['long_stay_use_type'] ?? null,
+                    );
+                    $available = $resolvedRoom !== null;
+
+                    if ($resolvedRoom) {
+                        $bookingItems[$index]['room'] = $resolvedRoom;
+                        $bookingItems[$index]['space'] = $this->spaceForRoom($resolvedRoom);
+                    }
+                } else {
+                    $available = $this->isLongStayDateRangeAvailableForRoom(
+                        $selectedRoom,
+                        (string) $item['booking_date'],
+                        (string) ($item['booking_end_date'] ?? $item['booking_date']),
+                        $item['quote']['long_stay_use_type'] ?? null,
+                    );
+                }
             } else {
                 $available = $this->isTimeRangeAvailable(
                     $selectedRoom,
@@ -1020,6 +1078,8 @@ class BookingController extends Controller
                 ]);
             }
         }
+
+        return $bookingItems;
     }
 
     private function generateReferenceNumber(): string
@@ -1155,12 +1215,13 @@ class BookingController extends Controller
 
         $dayStart = $schedule['start'];
         $dayEnd = $schedule['end'];
+        $horizonEnd = Carbon::parse($bookingDate)->startOfDay()->addDays(2);
         $minimumDuration = (int) config('hyve.booking.minimum_duration_minutes', 120);
         $effectiveStart = $this->effectiveDayStart($bookingDate, $dayStart);
-        $blockedRanges = $this->blockedRangesForRoom($room, $bookingDate);
-        $startTimes = $this->availableStartTimesForRoom($blockedRanges, $effectiveStart, $dayEnd, $minimumDuration);
+        $blockedRanges = $this->blockedRangesForRoomHorizon($room, $bookingDate);
+        $startTimes = $this->availableStartTimesForRoom($blockedRanges, $effectiveStart, $dayEnd, $horizonEnd, $minimumDuration);
         $endTimes = $selectedStartTime
-            ? $this->availableEndTimesForRoom($blockedRanges, $bookingDate, $selectedStartTime, $effectiveStart, $dayEnd, $minimumDuration)
+            ? $this->availableEndTimesForRoom($blockedRanges, $bookingDate, $selectedStartTime, $effectiveStart, $horizonEnd, $minimumDuration)
             : collect();
         $availableWindows = $this->hourlyWindowsForLayout($blockedRanges, $effectiveStart, $dayEnd, false);
         $bookedWindows = $this->hourlyWindowsForLayout($blockedRanges, $effectiveStart, $dayEnd, true);
@@ -1223,13 +1284,14 @@ class BookingController extends Controller
 
         $dayStart = $schedule['start'];
         $dayEnd = $schedule['end'];
+        $horizonEnd = Carbon::parse($bookingDate)->startOfDay()->addDays(2);
         $minimumDuration = (int) config('hyve.booking.minimum_duration_minutes', 120);
         $effectiveStart = $this->effectiveDayStart($bookingDate, $dayStart);
-        $occupancy = $this->commonAreaOccupancyBySlot($bookingDate, $tableRooms);
-        $calendarBlockedRanges = $this->calendarBlockedRangesForRoom($room, $bookingDate);
-        $startTimes = $this->availableStartTimesForCommonArea($effectiveStart, $dayEnd, $minimumDuration, $occupancy, $capacity, $calendarBlockedRanges);
+        $occupancy = $this->commonAreaOccupancyBySlot($bookingDate, $tableRooms, Carbon::parse($bookingDate)->addDay()->toDateString());
+        $calendarBlockedRanges = $this->scheduleAndCalendarBlockedRangesForHorizon($room, $bookingDate);
+        $startTimes = $this->availableStartTimesForCommonArea($effectiveStart, $dayEnd, $horizonEnd, $minimumDuration, $occupancy, $capacity, $calendarBlockedRanges);
         $endTimes = $selectedStartTime
-            ? $this->availableEndTimesForCommonArea($bookingDate, $selectedStartTime, $effectiveStart, $dayEnd, $minimumDuration, $occupancy, $capacity, $calendarBlockedRanges)
+            ? $this->availableEndTimesForCommonArea($bookingDate, $selectedStartTime, $effectiveStart, $horizonEnd, $minimumDuration, $occupancy, $capacity, $calendarBlockedRanges)
             : collect();
         $availableWindows = $this->hourlyWindowsForCommonArea($effectiveStart, $dayEnd, $occupancy, $capacity, $calendarBlockedRanges, false);
         $bookedWindows = $this->hourlyWindowsForCommonArea($effectiveStart, $dayEnd, $occupancy, $capacity, $calendarBlockedRanges, true);
@@ -1276,7 +1338,7 @@ class BookingController extends Controller
         $minimumDuration = (int) config('hyve.booking.minimum_duration_minutes', 120);
         $intervalMinutes = (int) config('hyve.booking.slot_interval_minutes', 30);
 
-        if ($rangeStart->lt($effectiveStart) || $rangeEnd->gt($schedule['end'])) {
+        if ($rangeStart->lt($effectiveStart) || $rangeEnd->gt($rangeStart->copy()->addDay())) {
             return false;
         }
 
@@ -1291,16 +1353,16 @@ class BookingController extends Controller
         return $this->commonAreaWindowAvailable(
             $rangeStart,
             $rangeEnd,
-            $this->commonAreaOccupancyBySlot($bookingDate, $tableRooms),
+            $this->commonAreaOccupancyBySlot($bookingDate, $tableRooms, $rangeEnd->toDateString()),
             $tableRooms->count(),
-            $this->calendarBlockedRangesForRoom($representative, $bookingDate),
+            $this->scheduleAndCalendarBlockedRangesForHorizon($representative, $bookingDate),
         );
     }
 
     /**
      * @return array<string, int>
      */
-    private function commonAreaOccupancyBySlot(string $bookingDate, Collection $tableRooms): array
+    private function commonAreaOccupancyBySlot(string $bookingDate, Collection $tableRooms, ?string $endDate = null): array
     {
         $roomIds = $tableRooms->pluck('id')->values();
         $representative = $this->sharedTableRepresentative($tableRooms);
@@ -1309,15 +1371,16 @@ class BookingController extends Controller
         $details = $this->unavailableDateBookingDetails !== null
             ? $this->unavailableDateBookingDetails
                 ->filter(fn (BookingDetail $detail): bool => $roomIds->contains((int) $detail->hyve_room_id)
-                    && $this->detailOccupiesDate($detail, $bookingDate))
+                    && ($this->detailDate($detail->booking_date)?->toDateString() ?? '') <= ($endDate ?? $bookingDate)
+                    && ($this->detailDate($detail->booking_end_date) ?: $this->detailDate($detail->booking_date))?->toDateString() >= $bookingDate)
                 ->values()
             : BookingDetail::query()
                 ->whereIn('status', $this->blockedStatuses())
                 ->whereIn('hyve_room_id', $roomIds)
-                ->where(function ($query) use ($bookingDate) {
-                    $this->applyBookingDateOverlapConstraint($query, $bookingDate, $bookingDate);
+                ->where(function ($query) use ($bookingDate, $endDate) {
+                    $this->applyBookingDateOverlapConstraint($query, $bookingDate, $endDate ?? $bookingDate);
                 })
-                ->get(['hyve_room_id', 'booking_date', 'booking_end_date', 'start_time', 'end_time']);
+                ->get(['hyve_room_id', 'booking_date', 'booking_end_date', 'start_time', 'end_time', 'charge_period']);
 
         foreach ($details as $detail) {
             if ($representative && $this->isLongStayDetail($detail) && $this->detailOccupiesDate($detail, $bookingDate)) {
@@ -1325,7 +1388,7 @@ class BookingController extends Controller
                 $start = $schedule['start'];
                 $end = $schedule['end'];
             } else {
-                [$start, $end] = $this->dateRange($bookingDate, $detail->start_time, $detail->end_time);
+                [$start, $end] = $this->detailDateRange($detail);
             }
             $cursor = $start->copy();
 
@@ -1393,7 +1456,7 @@ class BookingController extends Controller
         $minimumDuration = (int) config('hyve.booking.minimum_duration_minutes', 120);
         $intervalMinutes = (int) config('hyve.booking.slot_interval_minutes', 30);
 
-        if ($rangeStart->lt($effectiveStart) || $rangeEnd->gt($dayEnd)) {
+        if ($rangeStart->lt($effectiveStart) || $rangeEnd->gt($rangeStart->copy()->addDay())) {
             return false;
         }
 
@@ -1409,7 +1472,7 @@ class BookingController extends Controller
             return false;
         }
 
-        return ! $this->blockedRangesForRoom($room, $bookingDate)
+        return ! $this->blockedRangesForRoomHorizon($room, $bookingDate)
             ->contains(fn (array $range): bool => $rangeStart->lt($range['end']) && $rangeEnd->gt($range['start']));
     }
 
@@ -1510,8 +1573,9 @@ class BookingController extends Controller
     {
         $rangeStart = ($startDate ?? Carbon::today())->copy()->startOfDay();
         $rangeEnd = $rangeStart->copy()->addDays(max(0, $horizonDays - 1));
+        $preloadEnd = $rangeEnd->copy()->addDay();
         $this->calendarService->ensureSystemHolidaysForYears(
-            collect([$rangeStart->year, $rangeEnd->year])->unique()->values()->all()
+            collect([$rangeStart->year, $preloadEnd->year])->unique()->values()->all()
         );
 
         $space = $this->spaceForRoom($room);
@@ -1530,7 +1594,7 @@ class BookingController extends Controller
                     });
                 }
             });
-        $this->applyBookingDateOverlapConstraint($detailsQuery, $rangeStart->toDateString(), $rangeEnd->toDateString());
+        $this->applyBookingDateOverlapConstraint($detailsQuery, $rangeStart->toDateString(), $preloadEnd->toDateString());
 
         $this->unavailableDateBookingDetails = $detailsQuery->get([
             'hyve_room_id',
@@ -1539,18 +1603,19 @@ class BookingController extends Controller
             'booking_end_date',
             'start_time',
             'end_time',
+            'charge_period',
         ]);
         $this->unavailableDateCalendarEvents = HyveCalendarEvent::query()
             ->with('rooms:id,room_name')
             ->active()
             ->where('affects_booking', true)
-            ->whereDate('start_date', '<=', $rangeEnd->toDateString())
+            ->whereDate('start_date', '<=', $preloadEnd->toDateString())
             ->whereDate('end_date', '>=', $rangeStart->toDateString())
             ->orderBy('start_date')
             ->orderBy('start_time')
             ->get();
         $this->unavailableDateScheduleOverrides = HyveScheduleOverride::query()
-            ->whereBetween('booking_date', [$rangeStart->toDateString(), $rangeEnd->toDateString()])
+            ->whereBetween('booking_date', [$rangeStart->toDateString(), $preloadEnd->toDateString()])
             ->where(function ($query) use ($room) {
                 $query->where('hyve_room_id', $room->getKey())->orWhereNull('hyve_room_id');
             })
@@ -1630,6 +1695,42 @@ class BookingController extends Controller
 
     private function isLongStayDateRangeAvailable(HyveRoom $room, string $startDate, string $endDate, ?string $useType = null): bool
     {
+        if ($room->isSharedTable()) {
+            return $this->resolveLongStayBookableRoom($room, $startDate, $endDate, $useType) !== null;
+        }
+
+        return $this->isLongStayDateRangeAvailableForRoom($room, $startDate, $endDate, $useType);
+    }
+
+    private function resolveLongStayBookableRoom(HyveRoom $selectedRoom, string $startDate, string $endDate, ?string $useType = null): ?HyveRoom
+    {
+        if (! $selectedRoom->isSharedTable()) {
+            return $this->isLongStayDateRangeAvailableForRoom($selectedRoom, $startDate, $endDate, $useType)
+                ? $selectedRoom
+                : null;
+        }
+
+        return $this->availableLongStayTables($selectedRoom, $startDate, $endDate, $useType)->first();
+    }
+
+    /** @return Collection<int, HyveRoom> */
+    private function availableLongStayTables(HyveRoom $selectedRoom, string $startDate, string $endDate, ?string $useType = null): Collection
+    {
+        if (! $selectedRoom->isSharedTable()) {
+            return collect();
+        }
+
+        return HyveRoom::query()
+            ->active()
+            ->where('room_name', 'like', 'Table %')
+            ->orderBy('id')
+            ->get()
+            ->filter(fn (HyveRoom $table): bool => $this->isLongStayDateRangeAvailableForRoom($table, $startDate, $endDate, $useType))
+            ->values();
+    }
+
+    private function isLongStayDateRangeAvailableForRoom(HyveRoom $room, string $startDate, string $endDate, ?string $useType = null): bool
+    {
         $space = $this->spaceForRoom($room);
         $query = BookingDetail::query()
             ->whereIn('status', $this->blockedStatuses())
@@ -1644,7 +1745,10 @@ class BookingController extends Controller
                 }
             });
 
-        $this->applyBookingDateOverlapConstraint($query, $startDate, $endDate);
+        $queryEndDate = $useType === 'night'
+            ? Carbon::parse($endDate)->addDay()->toDateString()
+            : $endDate;
+        $this->applyBookingDateOverlapConstraint($query, $startDate, $queryEndDate);
 
         if (! in_array($useType, ['day', 'night'], true)) {
             return ! $query->exists();
@@ -1655,6 +1759,7 @@ class BookingController extends Controller
             'booking_end_date',
             'start_time',
             'end_time',
+            'charge_period',
         ]);
 
         if ($details->isEmpty()) {
@@ -1669,23 +1774,40 @@ class BookingController extends Controller
             [$requestedStart, $requestedEnd] = $this->dateRange($cursor->toDateString(), $requestStartTime, $requestEndTime);
 
             foreach ($details as $detail) {
-                if (! $this->detailOccupiesDate($detail, $cursor->toDateString())) {
-                    continue;
-                }
-
-                if ($this->isLongStayFullDayDetail($detail)) {
-                    return false;
-                }
-
-                [$blockedStart, $blockedEnd] = $this->dateRange($cursor->toDateString(), $detail->start_time, $detail->end_time);
-
-                if ($requestedStart->lt($blockedEnd) && $requestedEnd->gt($blockedStart)) {
-                    return false;
+                foreach ($this->detailBookingRanges($detail) as [$blockedStart, $blockedEnd]) {
+                    if ($requestedStart->lt($blockedEnd) && $requestedEnd->gt($blockedStart)) {
+                        return false;
+                    }
                 }
             }
         }
 
         return true;
+    }
+
+    /**
+     * @return Collection<int, array{0: Carbon, 1: Carbon}>
+     */
+    private function detailBookingRanges(BookingDetail $detail): Collection
+    {
+        if (! $this->isLongStayDetail($detail)) {
+            return collect([$this->detailDateRange($detail)]);
+        }
+
+        $startDate = $this->detailDate($detail->booking_date)?->startOfDay();
+        $endDate = ($this->detailDate($detail->booking_end_date) ?: $startDate)?->startOfDay();
+
+        if (! $startDate || ! $endDate) {
+            return collect();
+        }
+
+        $ranges = collect();
+
+        for ($cursor = $startDate->copy(); $cursor->lte($endDate); $cursor->addDay()) {
+            $ranges->push($this->dateRange($cursor->toDateString(), (string) $detail->start_time, (string) $detail->end_time));
+        }
+
+        return $ranges;
     }
 
     private function effectiveDayStart(string $bookingDate, Carbon $dayStart): Carbon
@@ -1701,10 +1823,7 @@ class BookingController extends Controller
 
     private function isLongStayDetail(BookingDetail $detail): bool
     {
-        $startDate = $this->detailDate($detail->booking_date);
-        $endDate = $this->detailDate($detail->booking_end_date) ?: $startDate;
-
-        return $startDate !== null && $endDate !== null && $endDate->ne($startDate);
+        return in_array((string) $detail->charge_period, ['daily', 'weekly', 'monthly'], true);
     }
 
     private function isLongStayFullDayDetail(BookingDetail $detail): bool
@@ -1796,6 +1915,7 @@ class BookingController extends Controller
                 'booking_end_date',
                 'start_time',
                 'end_time',
+                'charge_period',
             ]);
         }
 
@@ -1810,7 +1930,7 @@ class BookingController extends Controller
                     ];
                 }
 
-                [$start, $end] = $this->dateRange($bookingDate, $detail->start_time, $detail->end_time);
+                [$start, $end] = $this->detailDateRange($detail);
 
                 return [
                     'start' => $start,
@@ -1821,6 +1941,64 @@ class BookingController extends Controller
             ->values();
 
         return $this->mergeRanges($ranges->concat($this->calendarBlockedRangesForRoom($room, $bookingDate)));
+    }
+
+    /**
+     * Booking, calendar, and operating-hour blocks covering the selected date and
+     * the following date. Starts remain restricted to the selected date, while
+     * end times may safely cross midnight.
+     *
+     * @return Collection<int, array{start: Carbon, end: Carbon}>
+     */
+    private function blockedRangesForRoomHorizon(HyveRoom $room, string $bookingDate): Collection
+    {
+        $ranges = collect();
+
+        foreach ([0, 1] as $dayOffset) {
+            $date = Carbon::parse($bookingDate)->addDays($dayOffset)->toDateString();
+            $ranges = $ranges->concat($this->blockedRangesForRoom($room, $date));
+        }
+
+        return $this->mergeRanges(
+            $ranges
+                ->concat($this->scheduleAndCalendarBlockedRangesForHorizon($room, $bookingDate))
+                ->sortBy(fn (array $range): int => $range['start']->timestamp)
+                ->values()
+        );
+    }
+
+    /**
+     * @return Collection<int, array{start: Carbon, end: Carbon}>
+     */
+    private function scheduleAndCalendarBlockedRangesForHorizon(HyveRoom $room, string $bookingDate): Collection
+    {
+        $ranges = collect();
+
+        foreach ([0, 1] as $dayOffset) {
+            $date = Carbon::parse($bookingDate)->addDays($dayOffset)->toDateString();
+            $dateStart = Carbon::parse($date)->startOfDay();
+            $dateEnd = $dateStart->copy()->addDay();
+            $schedule = $this->scheduleWindowForDate($date, $room);
+
+            if ($schedule['closed'] || $this->isFullDayBlockedByCalendarEvent($room, $date)) {
+                $ranges->push(['start' => $dateStart, 'end' => $dateEnd]);
+                continue;
+            }
+
+            if ($schedule['start']->gt($dateStart)) {
+                $ranges->push(['start' => $dateStart, 'end' => $schedule['start']]);
+            }
+
+            if ($schedule['end']->lt($dateEnd)) {
+                $ranges->push(['start' => $schedule['end'], 'end' => $dateEnd]);
+            }
+
+            $ranges = $ranges->concat($this->calendarBlockedRangesForRoom($room, $date));
+        }
+
+        return $this->mergeRanges(
+            $ranges->sortBy(fn (array $range): int => $range['start']->timestamp)->values()
+        );
     }
 
     /**
@@ -1924,14 +2102,14 @@ class BookingController extends Controller
      * @param  Collection<int, array{start: Carbon, end: Carbon}>  $blockedRanges
      * @return Collection<int, array{value: string, label: string}>
      */
-    private function availableStartTimesForRoom(Collection $blockedRanges, Carbon $effectiveStart, Carbon $dayEnd, int $minimumDuration): Collection
+    private function availableStartTimesForRoom(Collection $blockedRanges, Carbon $effectiveStart, Carbon $dayEnd, Carbon $horizonEnd, int $minimumDuration): Collection
     {
         $slotIntervalMinutes = (int) config('hyve.booking.slot_interval_minutes', 30);
         $startTimes = collect();
         $cursor = $effectiveStart->copy();
 
-        while ($cursor->copy()->addMinutes($minimumDuration)->lte($dayEnd)) {
-            $availableUntil = $this->availableUntil($blockedRanges, $cursor, $dayEnd);
+        while ($cursor->lt($dayEnd) && $cursor->copy()->addMinutes($minimumDuration)->lte($horizonEnd)) {
+            $availableUntil = $this->availableUntil($blockedRanges, $cursor, $horizonEnd);
 
             if ($availableUntil && $cursor->diffInMinutes($availableUntil, true) >= $minimumDuration) {
                 $startTimes->push([
@@ -1946,13 +2124,13 @@ class BookingController extends Controller
         return $startTimes;
     }
 
-    private function availableStartTimesForCommonArea(Carbon $effectiveStart, Carbon $dayEnd, int $minimumDuration, array $occupancy, int $capacity, Collection $calendarBlockedRanges): Collection
+    private function availableStartTimesForCommonArea(Carbon $effectiveStart, Carbon $dayEnd, Carbon $horizonEnd, int $minimumDuration, array $occupancy, int $capacity, Collection $calendarBlockedRanges): Collection
     {
         $slotIntervalMinutes = (int) config('hyve.booking.slot_interval_minutes', 30);
         $startTimes = collect();
         $cursor = $effectiveStart->copy();
 
-        while ($cursor->copy()->addMinutes($minimumDuration)->lte($dayEnd)) {
+        while ($cursor->lt($dayEnd) && $cursor->copy()->addMinutes($minimumDuration)->lte($horizonEnd)) {
             $end = $cursor->copy()->addMinutes($minimumDuration);
 
             if ($this->commonAreaWindowAvailable($cursor, $end, $occupancy, $capacity, $calendarBlockedRanges)) {
@@ -1972,7 +2150,7 @@ class BookingController extends Controller
      * @param  Collection<int, array{start: Carbon, end: Carbon}>  $blockedRanges
      * @return Collection<int, array{value: string, label: string, range_label: string, duration_label: string}>
      */
-    private function availableEndTimesForRoom(Collection $blockedRanges, string $bookingDate, string $selectedStartTime, Carbon $effectiveStart, Carbon $dayEnd, int $minimumDuration): Collection
+    private function availableEndTimesForRoom(Collection $blockedRanges, string $bookingDate, string $selectedStartTime, Carbon $effectiveStart, Carbon $horizonEnd, int $minimumDuration): Collection
     {
         $start = Carbon::createFromFormat('Y-m-d H:i', $bookingDate.' '.$selectedStartTime)->seconds(0);
 
@@ -1984,7 +2162,7 @@ class BookingController extends Controller
             return collect();
         }
 
-        $availableUntil = $this->availableUntil($blockedRanges, $start, $dayEnd);
+        $availableUntil = $this->availableUntil($blockedRanges, $start, $horizonEnd);
 
         if (! $availableUntil || $start->diffInMinutes($availableUntil, true) < $minimumDuration) {
             return collect();
@@ -1993,7 +2171,7 @@ class BookingController extends Controller
         $slotIntervalMinutes = (int) config('hyve.booking.slot_interval_minutes', 30);
         $cursor = $start->copy()->addMinutes($minimumDuration);
         $endTimes = collect();
-        $endBoundary = $availableUntil->copy()->seconds(0);
+        $endBoundary = $availableUntil->copy()->min($start->copy()->addDay())->seconds(0);
 
         while ($cursor->timestamp <= $endBoundary->timestamp) {
             $endTimes->push([
@@ -2009,7 +2187,7 @@ class BookingController extends Controller
         return $endTimes;
     }
 
-    private function availableEndTimesForCommonArea(string $bookingDate, string $selectedStartTime, Carbon $effectiveStart, Carbon $dayEnd, int $minimumDuration, array $occupancy, int $capacity, Collection $calendarBlockedRanges): Collection
+    private function availableEndTimesForCommonArea(string $bookingDate, string $selectedStartTime, Carbon $effectiveStart, Carbon $horizonEnd, int $minimumDuration, array $occupancy, int $capacity, Collection $calendarBlockedRanges): Collection
     {
         $start = Carbon::createFromFormat('Y-m-d H:i', $bookingDate.' '.$selectedStartTime);
 
@@ -2021,7 +2199,9 @@ class BookingController extends Controller
         $cursor = $start->copy()->addMinutes($minimumDuration);
         $endTimes = collect();
 
-        while ($cursor->lte($dayEnd)) {
+        $endBoundary = $horizonEnd->copy()->min($start->copy()->addDay());
+
+        while ($cursor->lte($endBoundary)) {
             if (! $this->commonAreaWindowAvailable($start, $cursor, $occupancy, $capacity, $calendarBlockedRanges)) {
                 break;
             }
@@ -2172,6 +2352,23 @@ class BookingController extends Controller
     {
         $start = Carbon::parse($bookingDate.' '.$startTime);
         $end = Carbon::parse($bookingDate.' '.$endTime);
+
+        if ($end->lte($start)) {
+            $end->addDay();
+        }
+
+        return [$start, $end];
+    }
+
+    /**
+     * @return array{0: Carbon, 1: Carbon}
+     */
+    private function detailDateRange(BookingDetail $detail): array
+    {
+        $bookingDate = $this->detailDate($detail->booking_date)?->toDateString();
+        $endDate = ($this->detailDate($detail->booking_end_date) ?: $this->detailDate($detail->booking_date))?->toDateString();
+        $start = Carbon::parse($bookingDate.' '.$detail->start_time);
+        $end = Carbon::parse($endDate.' '.$detail->end_time);
 
         if ($end->lte($start)) {
             $end->addDay();

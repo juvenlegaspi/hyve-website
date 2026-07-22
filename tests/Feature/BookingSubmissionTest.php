@@ -170,6 +170,123 @@ class BookingSubmissionTest extends TestCase
         ]);
     }
 
+    public function test_common_area_long_stay_uses_another_table_when_one_table_has_an_hourly_conflict(): void
+    {
+        $selectedTable = HyveRoom::query()->where('room_name', 'Table 1-A')->firstOrFail();
+        $bookingDate = now()->addDays(5)->startOfDay();
+        $blockedHeader = BookingHeader::query()->create([
+            'reference_no' => 'HYVE-COMMON-POOL-ONE',
+            'customer_name' => 'Existing Common Area Guest',
+            'email' => 'existing-common@example.com',
+            'phone' => '09171234567',
+            'booking_type' => BookingHeader::TYPE_GUEST,
+            'source' => BookingHeader::SOURCE_WEB,
+            'status' => BookingHeader::STATUS_PENDING,
+        ]);
+        BookingDetail::query()->create([
+            'booking_header_id' => $blockedHeader->id,
+            'space_id' => Space::query()->where('slug', 'common-area')->value('id'),
+            'hyve_room_id' => $selectedTable->id,
+            'booking_date' => $bookingDate->toDateString(),
+            'booking_end_date' => $bookingDate->toDateString(),
+            'start_time' => '10:00',
+            'end_time' => '12:00',
+            'charge_period' => 'day',
+            'guests' => 1,
+            'status' => BookingDetail::STATUS_PENDING,
+        ]);
+
+        $totalTables = HyveRoom::query()->active()->where('room_name', 'like', 'Table %')->count();
+        $this->getJson(route('bookings.quote', [
+            'booking_mode' => 'monthly',
+            'hyve_room_id' => $selectedTable->id,
+            'booking_date' => $bookingDate->toDateString(),
+            'booking_end_date' => $bookingDate->copy()->addDays(2)->toDateString(),
+            'long_stay_use_type' => 'day',
+        ]))
+            ->assertOk()
+            ->assertJsonPath('common_area_availability.available_tables', $totalTables - 1)
+            ->assertJsonPath('common_area_availability.total_tables', $totalTables);
+
+        $response = $this->post(route('bookings.store'), [
+            'booking_mode' => 'monthly',
+            'full_name' => 'Common Area Day User',
+            'email' => 'common-day-user@example.com',
+            'phone' => '09181234567',
+            'hyve_room_id' => $selectedTable->id,
+            'booking_date' => $bookingDate->toDateString(),
+            'booking_end_date' => $bookingDate->copy()->addDays(2)->toDateString(),
+            'long_stay_use_type' => 'day',
+            'guests' => 1,
+            'downpayment_amount' => 0,
+            'payment_method' => 'pay_later',
+            'rules_agreement' => '1',
+        ]);
+
+        $response->assertRedirect(route('bookings.index'));
+        $response->assertSessionHas('booking_success');
+
+        $assignedDetail = BookingHeader::query()
+            ->where('email', 'common-day-user@example.com')
+            ->firstOrFail()
+            ->details()
+            ->firstOrFail();
+
+        $this->assertNotSame($selectedTable->id, $assignedDetail->hyve_room_id);
+        $this->assertTrue($assignedDetail->hyveRoom->isSharedTable());
+        $this->assertSame('daily', (string) $assignedDetail->charge_period);
+    }
+
+    public function test_common_area_long_stay_is_rejected_when_every_table_has_a_conflict(): void
+    {
+        $tables = HyveRoom::query()->active()->where('room_name', 'like', 'Table %')->orderBy('id')->get();
+        $this->assertNotEmpty($tables);
+        $bookingDate = now()->addDays(5)->startOfDay();
+        $blockedHeader = BookingHeader::query()->create([
+            'reference_no' => 'HYVE-COMMON-POOL-FULL',
+            'customer_name' => 'Existing Common Area Guests',
+            'email' => 'full-common@example.com',
+            'phone' => '09171234567',
+            'booking_type' => BookingHeader::TYPE_GUEST,
+            'source' => BookingHeader::SOURCE_WEB,
+            'status' => BookingHeader::STATUS_PENDING,
+        ]);
+
+        foreach ($tables as $table) {
+            BookingDetail::query()->create([
+                'booking_header_id' => $blockedHeader->id,
+                'space_id' => Space::query()->where('slug', 'common-area')->value('id'),
+                'hyve_room_id' => $table->id,
+                'booking_date' => $bookingDate->toDateString(),
+                'booking_end_date' => $bookingDate->toDateString(),
+                'start_time' => '10:00',
+                'end_time' => '12:00',
+                'charge_period' => 'day',
+                'guests' => 1,
+                'status' => BookingDetail::STATUS_PENDING,
+            ]);
+        }
+
+        $response = $this->from(route('bookings.index'))->post(route('bookings.store'), [
+            'booking_mode' => 'monthly',
+            'full_name' => 'Rejected Common Area User',
+            'email' => 'rejected-common@example.com',
+            'phone' => '09181234567',
+            'hyve_room_id' => $tables->first()->id,
+            'booking_date' => $bookingDate->toDateString(),
+            'booking_end_date' => $bookingDate->copy()->addDays(2)->toDateString(),
+            'long_stay_use_type' => 'day',
+            'guests' => 1,
+            'downpayment_amount' => 0,
+            'payment_method' => 'pay_later',
+            'rules_agreement' => '1',
+        ]);
+
+        $response->assertRedirect(route('bookings.index'));
+        $response->assertSessionHasErrors('booking_end_date');
+        $this->assertDatabaseMissing('booking_headers', ['email' => 'rejected-common@example.com']);
+    }
+
     public function test_online_private_room_cannot_use_pay_at_hyve_to_bypass_the_downpayment(): void
     {
         Storage::fake('public');
@@ -1381,6 +1498,90 @@ class BookingSubmissionTest extends TestCase
             'value' => '10:00',
             'duration_label' => '2 hours',
         ]);
+    }
+
+    public function test_book_by_room_offers_next_day_end_times_for_an_overnight_booking(): void
+    {
+        $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+        $bookingDate = now()->addDays(2)->toDateString();
+
+        $response = $this->getJson(route('bookings.availability', [
+            'hyve_room_id' => $room->id,
+            'booking_date' => $bookingDate,
+            'start_time' => '23:00',
+        ]));
+
+        $response->assertOk();
+        $response->assertJsonFragment([
+            'value' => '03:00',
+            'label' => '3:00 AM next day',
+            'duration_label' => '4 hours',
+        ]);
+    }
+
+    public function test_overnight_booking_saves_the_actual_next_day_end_date(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+        $bookingDate = now()->addDays(2);
+
+        $response = $this->actingAs($admin)->post(route('admin.bookings.store'), [
+            'booking_mode' => 'room',
+            'full_name' => 'Overnight Customer',
+            'email' => 'overnight@example.com',
+            'phone' => '09171234567',
+            'hyve_room_id' => $room->id,
+            'booking_date' => $bookingDate->toDateString(),
+            'start_time' => '23:00',
+            'end_time' => '03:00',
+            'guests' => 4,
+            'downpayment_amount' => 0,
+            'payment_method' => 'pay_later',
+        ]);
+
+        $response->assertRedirect(route('admin.bookings.index'));
+        $detail = BookingDetail::query()->where('hyve_room_id', $room->id)->latest('id')->firstOrFail();
+        $this->assertSame($bookingDate->toDateString(), $detail->booking_date->toDateString());
+        $this->assertSame($bookingDate->copy()->addDay()->toDateString(), $detail->booking_end_date->toDateString());
+        $this->assertSame('23:00', (string) $detail->start_time);
+        $this->assertSame('03:00', (string) $detail->end_time);
+    }
+
+    public function test_overnight_booking_blocks_its_early_morning_time_on_the_next_date(): void
+    {
+        $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+        $bookingDate = now()->addDays(2);
+        $header = BookingHeader::query()->create([
+            'reference_no' => 'HYVE-OVERNIGHT-001',
+            'customer_name' => 'Overnight Client',
+            'email' => 'overnight-conflict@example.com',
+            'phone' => '09171234567',
+            'booking_type' => BookingHeader::TYPE_GUEST,
+            'source' => BookingHeader::SOURCE_WEB,
+            'status' => BookingHeader::STATUS_PENDING,
+        ]);
+
+        BookingDetail::query()->create([
+            'booking_header_id' => $header->id,
+            'space_id' => Space::query()->where('slug', 'zeal-room-8-seats')->value('id'),
+            'hyve_room_id' => $room->id,
+            'booking_date' => $bookingDate->toDateString(),
+            'booking_end_date' => $bookingDate->copy()->addDay()->toDateString(),
+            'start_time' => '23:00',
+            'end_time' => '03:00',
+            'guests' => 4,
+            'charge_period' => 'hourly',
+            'status' => BookingDetail::STATUS_PENDING,
+        ]);
+
+        $response = $this->getJson(route('bookings.availability', [
+            'hyve_room_id' => $room->id,
+            'booking_date' => $bookingDate->copy()->addDay()->toDateString(),
+        ]));
+
+        $response->assertOk();
+        $response->assertJsonMissing(['value' => '01:00']);
+        $response->assertJsonFragment(['value' => '03:00']);
     }
 
     public function test_today_end_time_options_only_show_future_ranges_from_the_selected_start_time(): void

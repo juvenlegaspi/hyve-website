@@ -41,11 +41,7 @@ class AdminBookingRescheduleService
 
     public function isLongStay(BookingDetail $detail): bool
     {
-        $startDate = $detail->booking_date;
-        $endDate = $detail->booking_end_date ?: $startDate;
-
-        return in_array((string) $detail->charge_period, ['daily', 'weekly', 'monthly'], true)
-            || ($startDate && $endDate && $endDate->ne($startDate));
+        return in_array((string) $detail->charge_period, ['daily', 'weekly', 'monthly'], true);
     }
 
     /** @return Collection<int, HyveRoom> */
@@ -164,9 +160,11 @@ class AdminBookingRescheduleService
         }
 
         $bookingDate = (string) ($data['booking_date'] ?? '');
-        $bookingEndDate = $isLongStay ? (string) ($data['booking_end_date'] ?? '') : $bookingDate;
         $startTime = $isLongStay ? '00:00' : (string) ($data['start_time'] ?? '');
         $endTime = $isLongStay ? '23:59' : (string) ($data['end_time'] ?? '');
+        $bookingEndDate = $isLongStay
+            ? (string) ($data['booking_end_date'] ?? '')
+            : $this->dateRange($bookingDate, $startTime, $endTime)[1]->toDateString();
         $useType = filled($data['long_stay_use_type'] ?? null) ? (string) $data['long_stay_use_type'] : null;
         $newStart = $isLongStay
             ? Carbon::parse($bookingDate)->startOfDay()

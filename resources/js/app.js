@@ -2452,7 +2452,18 @@ const setupBookingPageV2 = () => {
             return;
         }
 
-        bookingEndDateInput.value = bookingDateInput.value || '';
+        const bookingDate = bookingDateInput.value || '';
+        const startMinutes = timeValueToMinutes(startSelect.value);
+        const endMinutes = timeValueToMinutes(endSelect.value);
+
+        if (!bookingDate || startMinutes === null || endMinutes === null || endMinutes > startMinutes) {
+            bookingEndDateInput.value = bookingDate;
+            return;
+        }
+
+        const nextDate = new Date(`${bookingDate}T00:00:00`);
+        nextDate.setDate(nextDate.getDate() + 1);
+        bookingEndDateInput.value = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}-${String(nextDate.getDate()).padStart(2, '0')}`;
     };
 
     const filterPastStartTimes = (items) => {
@@ -2584,7 +2595,10 @@ const setupBookingPageV2 = () => {
             return;
         }
 
-        checkoutEndDateRow.classList.add('hidden');
+        syncBookingEndDateForCurrentMode();
+        const crossesMidnight = bookingEndDateInput.value && bookingEndDateInput.value !== bookingDateInput.value;
+        checkoutEndDateRow.classList.toggle('hidden', !crossesMidnight);
+        checkoutEndDate.textContent = formatDate(bookingEndDateInput.value || bookingDateInput.value || todayValue);
         checkoutMonthlyPlanRow.classList.add('hidden');
         checkoutStart.textContent = startSelect.selectedOptions[0]?.textContent ?? startSelect.value ?? '--:--';
         checkoutEnd.textContent = endSelect.selectedOptions[0]?.textContent ?? endSelect.value ?? '--:--';
@@ -3319,9 +3333,13 @@ const setupBookingPageV2 = () => {
         monthlySummaryUseTypeRow.classList.toggle('hidden', !data.long_stay_use_label);
         monthlySummaryUnits.textContent = data.unit_label || '--';
         monthlySummaryTotal.textContent = formatCurrency(data.total_amount);
-        monthlyPlanDescription.textContent = data.long_stay_use_label
+        const commonAvailability = data.common_area_availability;
+        const commonAvailabilityMessage = commonAvailability
+            ? ` ${commonAvailability.available_tables} of ${commonAvailability.total_tables} Common Area tables remain available; HYVE will assign one table automatically.`
+            : '';
+        monthlyPlanDescription.textContent = (data.long_stay_use_label
             ? `Automatic breakdown applied: ${data.long_stay_use_label} - ${data.monthly_plan_label || '--'}. Review the total below, then continue to checkout.`
-            : `Automatic breakdown applied: ${data.monthly_plan_label || '--'}. Review the total below, then continue to checkout.`;
+            : `Automatic breakdown applied: ${data.monthly_plan_label || '--'}. Review the total below, then continue to checkout.`) + commonAvailabilityMessage;
         monthlyInlineSummary.classList.remove('hidden');
         monthlyContinue.disabled = false;
         syncLongStayUseSelection();
@@ -3889,6 +3907,7 @@ const setupBookingPageV2 = () => {
         const data = await fetchJson(`${quoteUrl}?hyve_room_id=${encodeURIComponent(roomSelect.value)}&booking_date=${encodeURIComponent(bookingDateInput.value)}&start_time=${encodeURIComponent(startSelect.value)}&end_time=${encodeURIComponent(endSelect.value)}`);
 
         currentQuote = data;
+        bookingEndDateInput.value = data.booking_end_date || bookingDateInput.value;
         const effectiveMinimum = isPayLaterSelected() ? 0 : Number(data.minimum_downpayment_amount || 0);
         quoteTotal.textContent = formatCurrency(data.total_amount);
         quoteMinimum.textContent = formatCurrency(effectiveMinimum);

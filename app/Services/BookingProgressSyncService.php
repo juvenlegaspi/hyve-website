@@ -22,7 +22,7 @@ class BookingProgressSyncService
             ->chunkById(100, function ($details) use ($actorUserId, $now, &$updated): void {
                 foreach ($details as $detail) {
                     $scheduledStart = $this->scheduledDateTime($detail, (string) $detail->start_time);
-                    $scheduledEnd = $this->scheduledDateTime($detail, (string) $detail->end_time);
+                    $scheduledEnd = $this->scheduledDateTime($detail, (string) $detail->end_time, true);
                     $header = $detail->bookingHeader;
 
                     if (! $detail->actual_start_at && $scheduledStart->lte($now) && $scheduledEnd->gt($now)) {
@@ -68,9 +68,20 @@ class BookingProgressSyncService
         return $updated;
     }
 
-    private function scheduledDateTime(BookingDetail $detail, string $time): Carbon
+    private function scheduledDateTime(BookingDetail $detail, string $time, bool $isEnd = false): Carbon
     {
-        return Carbon::parse(optional($detail->booking_date)->format('Y-m-d').' '.$time);
+        $date = $isEnd && $detail->booking_end_date ? $detail->booking_end_date : $detail->booking_date;
+        $result = Carbon::parse(optional($date)->format('Y-m-d').' '.$time);
+
+        if ($isEnd) {
+            $start = Carbon::parse(optional($detail->booking_date)->format('Y-m-d').' '.$detail->start_time);
+
+            if ($result->lte($start)) {
+                $result->addDay();
+            }
+        }
+
+        return $result;
     }
 
     private function recordActivity(
