@@ -99,6 +99,10 @@ Route::middleware('auth')->prefix('admin')->name('admin.')->group(function () {
         Route::post('/booking-details/{bookingDetail}/start', [AdminBookingController::class, 'startDetail'])->name('booking-details.start');
         Route::post('/booking-details/{bookingDetail}/end', [AdminBookingController::class, 'endDetail'])->name('booking-details.end');
         Route::post('/booking-details/{bookingDetail}/extend', [AdminBookingController::class, 'extendDetail'])->name('booking-details.extend');
+        Route::get('/booking-details/{bookingDetail}/reschedule', [AdminBookingController::class, 'reschedule'])->name('booking-details.reschedule');
+        Route::post('/booking-details/{bookingDetail}/reschedule/slots', [AdminBookingController::class, 'rescheduleSlots'])->name('booking-details.reschedule.slots');
+        Route::post('/booking-details/{bookingDetail}/reschedule/preview', [AdminBookingController::class, 'reschedulePreview'])->name('booking-details.reschedule.preview');
+        Route::patch('/booking-details/{bookingDetail}/reschedule', [AdminBookingController::class, 'updateReschedule'])->name('booking-details.reschedule.update');
     });
 
     Route::get('/rooms', [AdminSectionController::class, 'show'])->defaults('section', 'rooms')->middleware('permission:rooms.view')->name('sections.rooms');

@@ -233,9 +233,9 @@ class HyvePricing
     /**
      * @return array<int, array{label: string, amount: float, display_amount: string}>
      */
-    public function monthlyOptionsForRoom(HyveRoom $room): array
+    public function monthlyOptionsForRoom(HyveRoom $room, ?HyveRate $rateCard = null): array
     {
-        $rateCard = $this->rateForRoom($room);
+        $rateCard ??= $this->rateForRoom($room);
 
         if (! $rateCard) {
             return [];
@@ -274,9 +274,9 @@ class HyvePricing
      *     use_type_label: string|null
      * }>
      */
-    public function longStayOptionsForRoom(HyveRoom $room): array
+    public function longStayOptionsForRoom(HyveRoom $room, ?HyveRate $rateCard = null): array
     {
-        $rateCard = $this->rateForRoom($room);
+        $rateCard ??= $this->rateForRoom($room);
 
         if (! $rateCard) {
             return [];
@@ -327,7 +327,7 @@ class HyvePricing
                 ->all();
         });
 
-        $monthly = collect($this->monthlyOptionsForRoom($room))
+        $monthly = collect($this->monthlyOptionsForRoom($room, $rateCard))
             ->map(fn (array $option): array => [
                 ...$option,
                 'type' => 'monthly',

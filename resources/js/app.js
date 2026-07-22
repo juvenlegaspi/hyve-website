@@ -273,6 +273,115 @@ const setupReveal = () => {
     items.forEach((item) => observer.observe(item));
 };
 
+const setupHomepageMotion = () => {
+    const shell = document.querySelector('[data-home-shell]');
+
+    if (!shell) {
+        return;
+    }
+
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const revealGroups = [
+        '.service-rail',
+        '.space-list',
+        '.rate-list',
+        '.reason-list',
+        '.contact-layout',
+        '.three-grid',
+        '.spaces-browser__grid',
+    ];
+
+    revealGroups.forEach((selector) => {
+        shell.querySelectorAll(selector).forEach((group) => {
+            [...group.children].forEach((item, index) => {
+                if (!item.classList.contains('reveal')) {
+                    return;
+                }
+
+                item.style.setProperty('--reveal-order', index);
+            });
+        });
+    });
+
+    shell.querySelectorAll('.section-heading-block.reveal, .spaces-browser__intro.reveal, .contact-section-heading.reveal')
+        .forEach((item) => item.classList.add('reveal--heading'));
+
+    shell.querySelectorAll('.space-card.reveal, .amenities-gallery.reveal, .contact-location-card.reveal')
+        .forEach((item, index) => item.classList.add(index % 2 === 0 ? 'reveal--left' : 'reveal--right'));
+
+    requestAnimationFrame(() => shell.classList.add('home-motion-ready'));
+
+    if (reducedMotion) {
+        return;
+    }
+
+    const hero = shell.querySelector('.hero-section--video');
+    const depthImages = [...shell.querySelectorAll([
+        '.space-card__media img',
+        '.space-browser-card__media img',
+        '.amenities-gallery__media > img',
+    ].join(','))];
+    const interactiveCards = shell.querySelectorAll([
+        '.feature-card--service',
+        '.space-card--showcase',
+        '.rate-card--showcase',
+        '.reason-card',
+        '.flow-card',
+        '.contact-card',
+        '.space-browser-card',
+    ].join(','));
+    let frameRequested = false;
+
+    const renderDepth = () => {
+        frameRequested = false;
+
+        if (hero) {
+            const progress = Math.min(window.scrollY / Math.max(hero.offsetHeight, 1), 1);
+            hero.style.setProperty('--hero-scroll', progress.toFixed(3));
+        }
+
+        depthImages.forEach((image) => {
+            if (!image.offsetParent) {
+                return;
+            }
+
+            const rect = image.getBoundingClientRect();
+
+            if (rect.bottom < 0 || rect.top > window.innerHeight) {
+                return;
+            }
+
+            const centerOffset = (rect.top + rect.height / 2 - window.innerHeight / 2) / window.innerHeight;
+            image.style.setProperty('--media-shift', `${Math.max(-1, Math.min(1, centerOffset)) * -14}px`);
+        });
+    };
+
+    const requestDepthFrame = () => {
+        if (frameRequested) {
+            return;
+        }
+
+        frameRequested = true;
+        requestAnimationFrame(renderDepth);
+    };
+
+    interactiveCards.forEach((card) => {
+        card.addEventListener('pointermove', (event) => {
+            if (event.pointerType === 'touch') {
+                return;
+            }
+
+            const rect = card.getBoundingClientRect();
+            card.style.setProperty('--pointer-x', `${event.clientX - rect.left}px`);
+            card.style.setProperty('--pointer-y', `${event.clientY - rect.top}px`);
+        });
+    });
+
+    window.addEventListener('scroll', requestDepthFrame, { passive: true });
+    window.addEventListener('resize', requestDepthFrame, { passive: true });
+    requestDepthFrame();
+};
+
 const setupMemberMenu = () => {
     const menus = [...document.querySelectorAll('[data-member-menu]')];
 
@@ -4515,5 +4624,6 @@ document.addEventListener('DOMContentLoaded', () => {
     setupAgreementModals();
     setupSpacesBrowser();
     setupReveal();
+    setupHomepageMotion();
     setupBookingPageV2();
 });

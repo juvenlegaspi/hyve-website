@@ -1,6 +1,6 @@
 @php
     $amenityGallery = collect($spaces ?? [])->map(function (array $space): array {
-        $gallery = collect($space['gallery'] ?? [$space['image'] ?? 'images/office.png'])
+        $gallery = collect($space['gallery'] ?? [$space['image'] ?? 'images/optimized/office.webp'])
             ->filter()
             ->map(fn (string $image): string => asset($image))
             ->values()
@@ -11,7 +11,7 @@
             'tag' => $space['tag'] ?? 'Workspace',
             'description' => $space['description'] ?? 'A polished workspace experience at HYVE.',
             'features' => array_slice($space['features'] ?? [], 0, 3),
-            'images' => $gallery !== [] ? $gallery : [asset('images/office.png')],
+            'images' => $gallery !== [] ? $gallery : [asset('images/optimized/office.webp')],
         ];
     })->values();
 @endphp

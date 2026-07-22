@@ -177,11 +177,17 @@
                                         data-room-space="{{ $room->mappedSpaceLabel() }}"
                                         data-room-description="{{ $room->isSharedTable() ? 'A shared seating area. Your exact table will be assigned automatically based on availability.' : $room->description }}"
                                         data-room-rate="{{ $rateMap[$room->mappedSpaceLabel()] ?? 'Ask HYVE' }}"
-                                        data-room-gallery='@json($spaceGalleryMap[$room->mappedSpaceLabel()] ?? [asset('images/office.png')])'
+                                        data-room-gallery='@json($spaceGalleryMap[$room->mappedSpaceLabel()] ?? [asset('images/optimized/office.webp')])'
                                         data-room-monthly-options='@json($monthlyOptions)'
                                         data-common-area="{{ $room->isSharedTable() ? 'true' : 'false' }}"
                                     >
-                                        <img src="{{ $spaceImageMap[$room->mappedSpaceLabel()] ?? asset('images/office.png') }}" alt="{{ $displayName }}">
+                                        <img
+                                            src="{{ $spaceImageMap[$room->mappedSpaceLabel()] ?? asset('images/optimized/office.webp') }}"
+                                            alt="{{ $displayName }}"
+                                            loading="{{ $loop->first ? 'eager' : 'lazy' }}"
+                                            decoding="async"
+                                            @if ($loop->first) fetchpriority="high" @else fetchpriority="low" @endif
+                                        >
                                         <span class="booking-room-card__body">
                                             <strong>{{ $displayName }}</strong>
                                             <small>{{ $room->mappedSpaceLabel() }}</small>
@@ -758,9 +764,11 @@
 
                     <div class="booking-room-preview-modal__hero">
                         <img
-                            src="{{ ($spaceGalleryMap[$initialDisplaySpace][0] ?? asset('images/office.png')) }}"
+                            src="{{ ($spaceGalleryMap[$initialDisplaySpace][0] ?? asset('images/optimized/office.webp')) }}"
                             alt="{{ $initialDisplayName }}"
                             data-room-preview-image
+                            loading="lazy"
+                            decoding="async"
                         >
                     </div>
 

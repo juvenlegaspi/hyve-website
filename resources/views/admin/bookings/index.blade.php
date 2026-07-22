@@ -613,6 +613,13 @@
             color: #b14635;
         }
 
+        .admin-bookings-modal__button--reschedule {
+            border-color: #d9c593;
+            background: #fff9e9;
+            color: #80601d;
+            text-decoration: none;
+        }
+
         .admin-bookings-modal__button[disabled] {
             opacity: 0.65;
             cursor: wait;
@@ -1512,12 +1519,16 @@
                             const proofButton = booking.proof_visible && booking.proof
                                 ? `<a href="${booking.proof}" target="_blank" class="admin-bookings-modal__proof">View proof</a>`
                                 : '<span class="admin-bookings-modal__booking-proof-text">No proof</span>';
+                            const rescheduleButton = booking.can_reschedule && booking.reschedule_url
+                                ? `<a href="${booking.reschedule_url}" class="admin-bookings-modal__button admin-bookings-modal__button--reschedule">Reschedule</a>`
+                                : '';
 
                             const actionButtons = booking.can_review
                                 ? `
                                     <div class="admin-bookings-modal__actions">
                                         <button type="button" class="admin-bookings-modal__button admin-bookings-modal__button--primary" data-admin-booking-action="approve" data-booking-id="${booking.id}" data-url="${booking.approve_url}">Approve</button>
                                         <button type="button" class="admin-bookings-modal__button admin-bookings-modal__button--danger" data-admin-booking-action="reject" data-booking-id="${booking.id}" data-url="${booking.reject_url}">Reject</button>
+                                        ${rescheduleButton}
                                     </div>
                                 `
                                 : '';
@@ -1528,6 +1539,7 @@
                                         ${booking.can_start ? `<button type="button" class="admin-bookings-modal__button admin-bookings-modal__button--primary" data-admin-booking-action="start" data-booking-id="${booking.id}" data-url="${booking.start_url}">Start</button>` : ''}
                                         ${booking.can_end ? `<button type="button" class="admin-bookings-modal__button" data-admin-booking-action="end" data-booking-id="${booking.id}" data-url="${booking.end_url}">End</button>` : ''}
                                         ${booking.can_extend ? `<button type="button" class="admin-bookings-modal__button" data-admin-booking-action="extend" data-booking-id="${booking.id}" data-url="${booking.extend_url}" data-current-end="${booking.end_time_value || ''}">Extend</button>` : ''}
+                                        ${rescheduleButton}
                                     </div>
                                 `
                                 : '';

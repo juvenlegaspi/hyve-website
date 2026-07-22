@@ -82,9 +82,17 @@ class BookingController extends Controller
             ->active()
             ->orderBy('sort_order')
             ->get();
-        $longStayPlansByRoom = $displayRooms->mapWithKeys(fn (HyveRoom $room): array => [
-            $room->id => $this->pricing->longStayOptionsForRoom($this->pricingRoomForSelection($room, $sharedTableRepresentative)),
-        ]);
+        $rateCardsBySlug = $rateCards->keyBy('space_slug');
+        $longStayPlansByRoom = $displayRooms->mapWithKeys(function (HyveRoom $room) use ($rateCardsBySlug, $sharedTableRepresentative): array {
+            $pricingRoom = $this->pricingRoomForSelection($room, $sharedTableRepresentative);
+
+            return [
+                $room->id => $this->pricing->longStayOptionsForRoom(
+                    $pricingRoom,
+                    $rateCardsBySlug->get($pricingRoom->mappedSpaceSlug()),
+                ),
+            ];
+        });
 
         if ($user) {
             $memberBookings = BookingHeader::query()

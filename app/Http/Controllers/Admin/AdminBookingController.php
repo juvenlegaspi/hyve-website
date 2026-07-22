@@ -5,12 +5,15 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Mail\BookingApprovedMail;
 use App\Mail\BookingRejectedMail;
+use App\Mail\BookingRescheduledMail;
 use App\Models\BookingActivity;
 use App\Models\BookingDetail;
 use App\Models\BookingHeader;
 use App\Models\BookingPayment;
+use App\Services\AdminBookingRescheduleService;
 use App\Services\BookingApprovalTextService;
 use App\Services\BookingProgressSyncService;
+use App\Services\BookingRescheduledTextService;
 use App\Services\BookingWifiVoucherService;
 use App\Support\HyvePricing;
 use Illuminate\Http\JsonResponse;
@@ -22,6 +25,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
@@ -31,6 +35,7 @@ class AdminBookingController extends Controller
         private readonly BookingWifiVoucherService $wifiVoucherService,
         private readonly HyvePricing $pricing,
         private readonly BookingProgressSyncService $progressSync,
+        private readonly AdminBookingRescheduleService $rescheduleService,
     ) {}
 
     public function index(Request $request): View
@@ -90,6 +95,90 @@ class AdminBookingController extends Controller
             'Content-Type' => $mimeType,
             'Content-Disposition' => 'inline; filename="'.basename($path).'"',
         ]);
+    }
+
+    public function reschedule(Request $request, BookingDetail $bookingDetail): View|RedirectResponse
+    {
+        $bookingDetail->loadMissing(['bookingHeader.payments', 'hyveRoom', 'space']);
+
+        if (! $this->rescheduleService->canReschedule($bookingDetail)) {
+            return redirect()->route('admin.bookings.index')
+                ->with('admin_success', 'This booking can no longer be rescheduled because its scheduled start has arrived or it has already started.');
+        }
+
+        $rooms = $this->rescheduleService->selectableRooms();
+
+        return view('admin.bookings.reschedule', [
+            'meta' => [
+                'title' => 'Reschedule Booking | HYVE Admin',
+                'description' => 'Move a future booking while preserving its reference and payment history.',
+            ],
+            'adminUser' => $request->user(),
+            'bookingDetail' => $bookingDetail,
+            'bookingHeader' => $bookingDetail->bookingHeader,
+            'displayRooms' => $rooms,
+            'selectedRoomId' => $this->rescheduleService->selectedRoomId($bookingDetail, $rooms),
+            'isLongStay' => $this->rescheduleService->isLongStay($bookingDetail),
+            'slotsUrl' => route('admin.booking-details.reschedule.slots', $bookingDetail),
+            'previewUrl' => route('admin.booking-details.reschedule.preview', $bookingDetail),
+        ]);
+    }
+
+    public function rescheduleSlots(Request $request, BookingDetail $bookingDetail): JsonResponse
+    {
+        $validated = $request->validate([
+            'hyve_room_id' => ['required', 'integer', Rule::exists('hyve_rooms', 'id')->where(fn ($query) => $query->where('status', 0))],
+            'booking_date' => ['required', 'date', 'after_or_equal:today'],
+            'start_time' => ['nullable', 'regex:/^(?:[01]\d|2[0-3]):[0-5]\d$/'],
+        ]);
+
+        return response()->json($this->rescheduleService->availableSlots(
+            $bookingDetail,
+            (int) $validated['hyve_room_id'],
+            (string) $validated['booking_date'],
+            filled($validated['start_time'] ?? null) ? (string) $validated['start_time'] : null,
+        ));
+    }
+
+    public function reschedulePreview(Request $request, BookingDetail $bookingDetail): JsonResponse
+    {
+        $data = $this->validatedRescheduleData($request, $bookingDetail);
+        $preview = $this->rescheduleService->preview($bookingDetail, $data);
+
+        return response()->json([
+            'available' => true,
+            'rate_name' => $preview['quote']['rate_name'] ?? 'Updated rate',
+            'old_line_total' => $preview['old_line_total'],
+            'new_line_total' => $preview['new_line_total'],
+            'price_difference' => $preview['price_difference'],
+            'new_total' => $preview['new_effective_total'],
+            'approved_total' => $preview['approved_total'],
+            'new_balance' => $preview['new_balance'],
+            'overpayment' => $preview['overpayment'],
+            'requires_price_confirmation' => $preview['requires_price_confirmation'],
+        ]);
+    }
+
+    public function updateReschedule(Request $request, BookingDetail $bookingDetail): RedirectResponse
+    {
+        $data = $this->validatedRescheduleData($request, $bookingDetail);
+        $result = $this->rescheduleService->reschedule($bookingDetail, $data, $request->user()?->getKey());
+        /** @var BookingHeader $header */
+        $header = $result['header'];
+
+        if ((string) $header->status === 'confirmed') {
+            $this->wifiVoucherService->ensureVoucherForBooking($header);
+        }
+
+        $this->sendRescheduleNotifications($result);
+
+        $message = 'Booking rescheduled successfully. The reference and approved payments were preserved.';
+
+        if ((float) $result['overpayment'] > 0) {
+            $message .= ' Review the Php '.number_format((float) $result['overpayment'], 2).' excess payment with the customer.';
+        }
+
+        return redirect()->route('admin.bookings.index')->with('admin_success', $message);
     }
 
     public function approve(Request $request, BookingHeader $bookingHeader): RedirectResponse
@@ -1267,6 +1356,10 @@ class AdminBookingController extends Controller
                     'can_start' => $canManageBookings && $this->canStartDetail($detail),
                     'can_end' => $canManageBookings && $this->canEndDetail($detail),
                     'can_extend' => $canManageBookings && $this->canExtendDetail($detail),
+                    'can_reschedule' => $canManageBookings && $this->rescheduleService->canReschedule($detail),
+                    'reschedule_url' => $canManageBookings && $this->rescheduleService->canReschedule($detail)
+                        ? route('admin.booking-details.reschedule', ['bookingDetail' => $detail->getKey()])
+                        : null,
                     'end_time_value' => substr((string) $detail->end_time, 0, 5),
                     'created_at' => optional($header->created_at)->format('M j, Y g:i A'),
                 ];
@@ -1320,6 +1413,71 @@ class AdminBookingController extends Controller
             'bookings' => $bookingSummaries->all(),
             'preview_rooms' => $previewRooms->take(3)->all(),
         ];
+    }
+
+    /** @return array<string, mixed> */
+    private function validatedRescheduleData(Request $request, BookingDetail $bookingDetail): array
+    {
+        $isLongStay = $this->rescheduleService->isLongStay($bookingDetail);
+        $rules = [
+            'hyve_room_id' => ['required', 'integer', Rule::exists('hyve_rooms', 'id')->where(fn ($query) => $query->where('status', 0))],
+            'booking_date' => ['required', 'date', 'after_or_equal:today'],
+            'confirm_price_change' => ['sometimes', 'boolean'],
+        ];
+
+        if ($isLongStay) {
+            $rules['booking_end_date'] = ['required', 'date', 'after_or_equal:booking_date'];
+            $rules['long_stay_use_type'] = ['nullable', Rule::in(['day', 'night'])];
+        } else {
+            $rules['start_time'] = ['required', 'regex:/^(?:[01]\d|2[0-3]):[0-5]\d$/'];
+            $rules['end_time'] = ['required', 'regex:/^(?:(?:[01]\d|2[0-3]):[0-5]\d|24:00)$/'];
+        }
+
+        return $request->validate($rules, [], [
+            'hyve_room_id' => 'room',
+            'booking_date' => 'booking date',
+            'booking_end_date' => 'end date',
+            'start_time' => 'start time',
+            'end_time' => 'end time',
+            'long_stay_use_type' => 'use period',
+        ]);
+    }
+
+    /** @param array<string, mixed> $result */
+    private function sendRescheduleNotifications(array $result): void
+    {
+        /** @var BookingHeader $header */
+        $header = $result['header'];
+        $context = [
+            'customer_name' => (string) $header->customer_name,
+            'reference_no' => (string) $header->reference_no,
+            'old_room' => (string) $result['old_room'],
+            'old_schedule' => (string) $result['old_schedule'],
+            'new_room' => (string) $result['new_room'],
+            'new_schedule' => (string) $result['new_schedule'],
+            'total_amount' => (float) $result['new_effective_total'],
+            'paid_amount' => (float) $result['approved_total'],
+            'balance_amount' => (float) $result['new_balance'],
+            'overpayment' => (float) $result['overpayment'],
+        ];
+        $email = trim((string) $header->email);
+        $phone = trim((string) $header->phone);
+
+        if ($email !== '') {
+            try {
+                Mail::to($email)->send(new BookingRescheduledMail($context));
+            } catch (\Throwable $exception) {
+                Log::warning('Failed to send booking reschedule email.', [
+                    'reference_no' => $header->reference_no,
+                    'email' => $email,
+                    'error' => $exception->getMessage(),
+                ]);
+            }
+        }
+
+        if ($phone !== '') {
+            app(BookingRescheduledTextService::class)->send($phone, $context);
+        }
     }
 
     private function syncWifiVoucher(BookingHeader $bookingHeader): void
