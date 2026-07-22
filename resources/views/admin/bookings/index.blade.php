@@ -354,25 +354,65 @@
         }
 
         .admin-bookings-scroll--fixed {
-            overflow: hidden;
+            overflow-x: auto;
         }
 
         .admin-bookings-scroll--fixed .admin-bookings-table {
             table-layout: fixed;
+            min-width: 68rem;
         }
 
-        .admin-bookings-scroll--fixed .admin-bookings-table thead,
-        .admin-bookings-scroll--fixed .admin-bookings-table tbody tr {
-            display: table;
-            width: 100%;
-            table-layout: fixed;
+        .admin-bookings-pagination {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            padding: 0.15rem 0.1rem;
         }
 
-        .admin-bookings-scroll--fixed .admin-bookings-table tbody {
-            display: block;
-            max-height: 31.5rem;
-            overflow-y: auto;
-            overflow-x: hidden;
+        .admin-bookings-pagination__summary {
+            color: #7f857c;
+            font-size: 0.76rem;
+        }
+
+        .admin-bookings-pagination__controls {
+            display: flex;
+            align-items: center;
+            gap: 0.35rem;
+        }
+
+        .admin-bookings-pagination__link,
+        .admin-bookings-pagination__ellipsis {
+            display: inline-flex;
+            min-width: 2.35rem;
+            height: 2.35rem;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #dfe6da;
+            border-radius: 0.72rem;
+            background: #fff;
+            padding: 0 0.72rem;
+            color: #38543d;
+            font-size: 0.76rem;
+            font-weight: 700;
+        }
+
+        .admin-bookings-pagination__link:hover {
+            border-color: #b9cfaa;
+            background: #f4f8ee;
+        }
+
+        .admin-bookings-pagination__link.is-current {
+            border-color: #44793b;
+            background: #44793b;
+            color: #fff;
+        }
+
+        .admin-bookings-pagination__link.is-disabled,
+        .admin-bookings-pagination__ellipsis {
+            cursor: default;
+            opacity: 0.48;
         }
 
         .admin-bookings-modal {
@@ -899,9 +939,56 @@
             </div>
         </div>
 
-        <div class="mt-3">
-            {{ $bookings->links() }}
-        </div>
+        @if ($bookings->hasPages())
+            <div class="admin-bookings-pagination mt-3">
+                <p class="admin-bookings-pagination__summary">
+                    Showing {{ $bookings->firstItem() }}–{{ $bookings->lastItem() }} of {{ $bookings->total() }} bookings
+                </p>
+
+                <nav class="admin-bookings-pagination__controls" aria-label="Booking list pagination">
+                    @php
+                        $currentPage = $bookings->currentPage();
+                        $lastPage = $bookings->lastPage();
+                        $startPage = max(1, $currentPage - 1);
+                        $endPage = min($lastPage, $currentPage + 1);
+                    @endphp
+
+                    @if ($bookings->onFirstPage())
+                        <span class="admin-bookings-pagination__link is-disabled" aria-disabled="true">Previous</span>
+                    @else
+                        <a class="admin-bookings-pagination__link" href="{{ $bookings->previousPageUrl() }}" rel="prev">Previous</a>
+                    @endif
+
+                    @if ($startPage > 1)
+                        <a class="admin-bookings-pagination__link" href="{{ $bookings->url(1) }}">1</a>
+                        @if ($startPage > 2)
+                            <span class="admin-bookings-pagination__ellipsis">&hellip;</span>
+                        @endif
+                    @endif
+
+                    @foreach (range($startPage, $endPage) as $page)
+                        @if ($page === $currentPage)
+                            <span class="admin-bookings-pagination__link is-current" aria-current="page">{{ $page }}</span>
+                        @else
+                            <a class="admin-bookings-pagination__link" href="{{ $bookings->url($page) }}">{{ $page }}</a>
+                        @endif
+                    @endforeach
+
+                    @if ($endPage < $lastPage)
+                        @if ($endPage < $lastPage - 1)
+                            <span class="admin-bookings-pagination__ellipsis">&hellip;</span>
+                        @endif
+                        <a class="admin-bookings-pagination__link" href="{{ $bookings->url($lastPage) }}">{{ $lastPage }}</a>
+                    @endif
+
+                    @if ($bookings->hasMorePages())
+                        <a class="admin-bookings-pagination__link" href="{{ $bookings->nextPageUrl() }}" rel="next">Next</a>
+                    @else
+                        <span class="admin-bookings-pagination__link is-disabled" aria-disabled="true">Next</span>
+                    @endif
+                </nav>
+            </div>
+        @endif
     </div>
 
     <div class="admin-bookings-modal hidden" data-admin-bookings-modal>
@@ -1400,6 +1487,12 @@
 
                         try {
                             const params = new URLSearchParams(new FormData(filterForm));
+                            const currentPage = new URL(window.location.href).searchParams.get('page');
+
+                            if (currentPage) {
+                                params.set('page', currentPage);
+                            }
+
                             const response = await fetch(`${bookingsFeedUrl}?${params.toString()}`, {
                                 headers: {
                                     'Accept': 'application/json',

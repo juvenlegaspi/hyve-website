@@ -1263,7 +1263,7 @@ class AdminBookingController extends Controller
     {
         return $this->bookingHeadersQuery($filters)
             ->latest('created_at')
-            ->paginate(12)
+            ->paginate(10)
             ->withQueryString()
             ->through(fn (BookingHeader $header): array => $this->bookingRowPayload($header));
     }
