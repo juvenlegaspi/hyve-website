@@ -1974,6 +1974,7 @@ const setupBookingPageV2 = () => {
     const scheduleCartHeading = form.querySelector('[data-schedule-cart-heading]');
     const scheduleCartEmpty = form.querySelector('[data-schedule-cart-empty]');
     const scheduleCartTotal = form.querySelector('[data-schedule-cart-total]');
+    const scheduleClear = form.querySelector('[data-schedule-clear]');
     const monthlyStartDateInput = form.querySelector('[data-monthly-start-date]');
     const monthlyEndDateInput = form.querySelector('[data-monthly-end-date]');
     const monthlyCalendarTitle = form.querySelector('[data-monthly-calendar-title]');
@@ -2766,6 +2767,7 @@ const setupBookingPageV2 = () => {
     const renderScheduleCart = () => {
         const summary = summarizeScheduleCart();
         scheduleCartList.innerHTML = '';
+        scheduleClear?.classList.toggle('hidden', scheduleCart.length === 0);
         scheduleCartCount.textContent = `${scheduleCart.length} item${scheduleCart.length === 1 ? '' : 's'}`;
         scheduleCartHeading.textContent = `Your bookings (${scheduleCart.length})`;
         scheduleCartEmpty.classList.toggle('hidden', scheduleCart.length !== 0);
@@ -4223,6 +4225,19 @@ const setupBookingPageV2 = () => {
     modeTriggers.forEach((trigger) => {
         trigger.addEventListener('click', async () => {
             const mode = trigger.dataset.bookingModeValue || 'room';
+
+            if (bookingMode === 'schedule' && mode !== 'schedule' && scheduleCart.length) {
+                const shouldClear = window.confirm(`You have ${scheduleCart.length} selected schedule item${scheduleCart.length === 1 ? '' : 's'}. Switching booking modes will clear them. Continue?`);
+
+                if (!shouldClear) {
+                    return;
+                }
+
+                scheduleCart = [];
+                updateScheduleSelection();
+                updateCheckoutSummary();
+            }
+
             setBookingMode(mode);
 
             if (mode === 'schedule') {
@@ -4250,6 +4265,17 @@ const setupBookingPageV2 = () => {
             paymentMethod.value = card.dataset.paymentChoice || '';
             updatePaymentDestination();
         });
+    });
+
+    scheduleClear?.addEventListener('click', () => {
+        if (!scheduleCart.length || !window.confirm('Clear all selected schedule items?')) {
+            return;
+        }
+
+        scheduleCart = [];
+        updateScheduleSelection();
+        updateCheckoutSummary();
+        messageBody.textContent = 'All previous schedule selections were cleared.';
     });
 
     paymentMethod.addEventListener('change', updatePaymentDestination);
@@ -4684,6 +4710,47 @@ const setupAgreementModals = () => {
     });
 };
 
+const setupBookingSubmissionGuards = () => {
+    document.querySelectorAll('[data-booking-form]').forEach((form) => {
+        const submit = form.querySelector('[data-checkout-submit]');
+
+        if (!submit) {
+            return;
+        }
+
+        const originalLabel = submit.textContent;
+        let submitting = false;
+
+        form.addEventListener('submit', (event) => {
+            if (event.defaultPrevented) {
+                return;
+            }
+
+            if (submitting) {
+                event.preventDefault();
+                return;
+            }
+
+            submitting = true;
+            submit.disabled = true;
+            submit.setAttribute('aria-busy', 'true');
+            submit.textContent = 'Processing booking...';
+        });
+
+        window.addEventListener('pageshow', (event) => {
+            if (!event.persisted) {
+                return;
+            }
+
+            submitting = false;
+            submit.removeAttribute('aria-busy');
+            submit.textContent = originalLabel;
+            const agreement = form.querySelector('[data-agreement-checkbox]');
+            submit.disabled = agreement ? !agreement.checked : false;
+        });
+    });
+};
+
 document.addEventListener('DOMContentLoaded', () => {
     setupNav();
     setupAmenitiesGallery();
@@ -4696,4 +4763,5 @@ document.addEventListener('DOMContentLoaded', () => {
     setupReveal();
     setupHomepageMotion();
     setupBookingPageV2();
+    setupBookingSubmissionGuards();
 });

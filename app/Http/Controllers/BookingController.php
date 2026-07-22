@@ -16,6 +16,7 @@ use App\Models\Space;
 use App\Support\HyveCalendarService;
 use App\Support\HyvePricing;
 use Illuminate\Database\DatabaseManager;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -616,6 +617,12 @@ class BookingController extends Controller
     {
         $user = $request->user();
         $validated = $request->validated();
+        $submissionToken = (string) $validated['submission_token'];
+
+        if ($existingHeader = $this->bookingHeaderForSubmissionToken($submissionToken)) {
+            return $this->bookingSubmissionSuccessResponse($existingHeader, $adminMode, true);
+        }
+
         $isScheduleMode = ($validated['booking_mode'] ?? 'room') === 'schedule';
         $isMonthlyMode = ($validated['booking_mode'] ?? 'room') === 'monthly';
         $bookingItems = [];
@@ -848,7 +855,7 @@ class BookingController extends Controller
             ];
 
         try {
-            $header = $this->database->transaction(function () use ($user, $contactDetails, $validated, $bookingItems, $grandTotal, $paymentProofPath, $paymentProofName, $customerDownpayment, $remainingBalance, $paymentStatus, $adminMode, $isCashWalkIn): BookingHeader {
+            $header = $this->database->transaction(function () use ($user, $contactDetails, $validated, $bookingItems, $grandTotal, $paymentProofPath, $paymentProofName, $customerDownpayment, $remainingBalance, $paymentStatus, $adminMode, $isCashWalkIn, $submissionToken): BookingHeader {
                 $bookingItems = $this->lockAndResolveBookingItemsAvailable($bookingItems);
 
                 $header = null;
@@ -899,7 +906,7 @@ class BookingController extends Controller
                     ]);
                 }
 
-                foreach ($bookingItems as $bookingItem) {
+                foreach ($bookingItems as $submissionItemIndex => $bookingItem) {
                     /** @var Space $space */
                     $space = $bookingItem['space'];
                     /** @var HyveRoom $room */
@@ -908,6 +915,8 @@ class BookingController extends Controller
                     $quote = $bookingItem['quote'];
 
                     $detail = $header->details()->create([
+                        'submission_token' => $submissionToken,
+                        'submission_item_index' => $submissionItemIndex,
                         'space_id' => $space->id,
                         'hyve_room_id' => $room->id,
                         'booking_date' => $bookingItem['booking_date'],
@@ -974,6 +983,18 @@ class BookingController extends Controller
             }
 
             throw $exception;
+        } catch (QueryException $exception) {
+            $existingHeader = $this->bookingHeaderForSubmissionToken($submissionToken);
+
+            if (! $existingHeader) {
+                throw $exception;
+            }
+
+            if ($paymentProofPath) {
+                Storage::disk('public')->delete($paymentProofPath);
+            }
+
+            $header = $existingHeader;
         } catch (\Throwable $exception) {
             Log::error('Booking submission failed.', [
                 'booking_mode' => $validated['booking_mode'] ?? 'room',
@@ -984,16 +1005,28 @@ class BookingController extends Controller
             throw $exception;
         }
 
+        return $this->bookingSubmissionSuccessResponse($header, $adminMode);
+    }
+
+    private function bookingHeaderForSubmissionToken(string $submissionToken): ?BookingHeader
+    {
+        return BookingHeader::query()
+            ->whereHas('details', fn ($query) => $query->where('submission_token', $submissionToken))
+            ->first();
+    }
+
+    private function bookingSubmissionSuccessResponse(BookingHeader $header, bool $adminMode, bool $duplicate = false): RedirectResponse
+    {
         if ($adminMode) {
             return redirect()->route('admin.bookings.index')->with(
                 'admin_success',
-                'Walk-in booking created successfully under reference '.$header->reference_no.'.',
+                ($duplicate ? 'This booking was already received' : 'Walk-in booking created successfully').' under reference '.$header->reference_no.'.',
             );
         }
 
         return redirect()->route('bookings.index')->with(
             'booking_success',
-            'Your booking request has been submitted under reference '.$header->reference_no.'. HYVE will contact you soon to confirm the details.',
+            ($duplicate ? 'Your booking was already received' : 'Your booking request has been submitted').' under reference '.$header->reference_no.'. HYVE will contact you soon to confirm the details.',
         );
     }
 

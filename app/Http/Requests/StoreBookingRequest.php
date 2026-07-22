@@ -29,6 +29,10 @@ class StoreBookingRequest extends FormRequest
             $this->merge(['downpayment_amount' => 0]);
         }
 
+        if (! is_string($this->input('submission_token')) || $this->input('submission_token') === '') {
+            $this->merge(['submission_token' => (string) \Illuminate\Support\Str::uuid()]);
+        }
+
         if (
             $this->input('booking_mode', 'room') === 'room'
             && is_string($this->input('booking_date'))
@@ -74,6 +78,7 @@ class StoreBookingRequest extends FormRequest
             : ['required', 'accepted'];
 
         $rules = [
+            'submission_token' => ['required', 'uuid'],
             'booking_mode' => ['nullable', Rule::in(['room', 'schedule', 'monthly'])],
             'hyve_room_id' => ['required_unless:booking_mode,schedule', 'integer', Rule::exists(HyveRoom::class, 'id')->where(fn ($query) => $query->where('status', 0))],
             'booking_date' => ['required_unless:booking_mode,schedule', 'date', 'after_or_equal:today'],

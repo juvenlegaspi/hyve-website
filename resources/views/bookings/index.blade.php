@@ -124,6 +124,7 @@
                 data-admin-mode="{{ $adminMode ? 'true' : 'false' }}"
             >
                 @csrf
+                <input type="hidden" name="submission_token" value="{{ old('submission_token', (string) \Illuminate\Support\Str::uuid()) }}" data-booking-submission-token>
 
                 <select name="hyve_room_id" data-room-select class="hidden">
                     <option value="">Select a room</option>
@@ -358,6 +359,7 @@
                             </div>
                             <div class="booking-schedule__cart-list" data-schedule-cart-list></div>
                             <div class="booking-schedule__cart-footer">
+                                <button type="button" class="button button--ghost hidden" data-schedule-clear>Clear all selections</button>
                                 <div class="booking-schedule__cart-total">
                                     <span>Combined total</span>
                                     <strong data-schedule-cart-total>Php 0.00</strong>

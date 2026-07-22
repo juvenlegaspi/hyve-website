@@ -170,6 +170,37 @@ class BookingSubmissionTest extends TestCase
         ]);
     }
 
+    public function test_repeated_checkout_submission_token_creates_only_one_booking(): void
+    {
+        $commonArea = HyveRoom::query()->where('room_name', 'Table 1-A')->firstOrFail();
+        $submissionToken = fake()->uuid();
+        $payload = [
+            'submission_token' => $submissionToken,
+            'booking_mode' => 'room',
+            'full_name' => 'Single Submit Customer',
+            'email' => 'single-submit@example.com',
+            'phone' => '09191234567',
+            'hyve_room_id' => $commonArea->id,
+            'booking_date' => now()->addDays(3)->toDateString(),
+            'start_time' => '08:00',
+            'end_time' => '10:00',
+            'guests' => 1,
+            'downpayment_amount' => 0,
+            'payment_method' => 'pay_later',
+            'rules_agreement' => '1',
+        ];
+
+        $this->post(route('bookings.store'), $payload)
+            ->assertRedirect(route('bookings.index'))
+            ->assertSessionHas('booking_success');
+        $this->post(route('bookings.store'), $payload)
+            ->assertRedirect(route('bookings.index'))
+            ->assertSessionHas('booking_success');
+
+        $this->assertSame(1, BookingHeader::query()->where('email', 'single-submit@example.com')->count());
+        $this->assertSame(1, BookingDetail::query()->where('submission_token', $submissionToken)->count());
+    }
+
     public function test_common_area_long_stay_uses_another_table_when_one_table_has_an_hourly_conflict(): void
     {
         $selectedTable = HyveRoom::query()->where('room_name', 'Table 1-A')->firstOrFail();

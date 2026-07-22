@@ -30,6 +30,8 @@ class BookingDetail extends Model
      */
     protected $fillable = [
         'booking_header_id',
+        'submission_token',
+        'submission_item_index',
         'space_id',
         'hyve_room_id',
         'booking_date',
@@ -56,6 +58,7 @@ class BookingDetail extends Model
     protected $casts = [
         'booking_date' => 'date',
         'booking_end_date' => 'date',
+        'submission_item_index' => 'integer',
         'duration_hours' => 'decimal:2',
         'billed_hours' => 'decimal:2',
         'guests' => 'integer',
