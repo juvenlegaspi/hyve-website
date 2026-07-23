@@ -1954,6 +1954,13 @@ const setupBookingPageV2 = () => {
     const guestFirstName = form.querySelector('[data-guest-first-name]');
     const guestLastName = form.querySelector('[data-guest-last-name]');
     const guestFullName = form.querySelector('[data-guest-full-name]');
+    const guestEmail = form.querySelector('[data-guest-email]');
+    const guestPhone = form.querySelector('[data-guest-phone]');
+    const returningCustomerSearch = form.querySelector('[data-returning-customer-search]');
+    const returningCustomerResults = form.querySelector('[data-returning-customer-results]');
+    const returningCustomerSelected = form.querySelector('[data-returning-customer-selected]');
+    const returningCustomerEmpty = form.querySelector('[data-returning-customer-empty]');
+    const returningCustomerOptions = Array.from(form.querySelectorAll('[data-returning-customer-option]'));
     const scheduleDateTitle = form.querySelector('[data-schedule-date-title]');
     const schedulePrev = form.querySelector('[data-schedule-prev]');
     const scheduleNext = form.querySelector('[data-schedule-next]');
@@ -2287,6 +2294,61 @@ const setupBookingPageV2 = () => {
             .join(' ');
 
         guestFullName.value = fullName;
+    };
+
+    const applyReturningCustomer = (option) => {
+        const nameParts = String(option.dataset.name || '').trim().split(/\s+/);
+
+        if (guestFirstName) {
+            guestFirstName.value = nameParts.shift() || '';
+        }
+
+        if (guestLastName) {
+            guestLastName.value = nameParts.join(' ');
+        }
+
+        if (guestEmail) {
+            guestEmail.value = option.dataset.email || '';
+        }
+
+        if (guestPhone) {
+            guestPhone.value = option.dataset.phone || '';
+        }
+
+        syncGuestFullName();
+
+        if (returningCustomerSearch) {
+            returningCustomerSearch.value = option.dataset.name || '';
+        }
+
+        if (returningCustomerSelected) {
+            returningCustomerSelected.textContent = `Selected previous customer: ${option.dataset.name || 'Customer'} · ${option.dataset.phone || option.dataset.email || ''}`;
+            returningCustomerSelected.classList.remove('hidden');
+        }
+
+        returningCustomerResults?.classList.add('hidden');
+    };
+
+    const filterReturningCustomers = () => {
+        if (!returningCustomerSearch || !returningCustomerResults) {
+            return;
+        }
+
+        const query = String(returningCustomerSearch.value || '').trim().toLowerCase();
+        let visibleCount = 0;
+
+        returningCustomerOptions.forEach((option) => {
+            const matches = query !== '' && option.textContent.toLowerCase().includes(query);
+            option.classList.toggle('hidden', !matches);
+            visibleCount += matches ? 1 : 0;
+        });
+
+        returningCustomerEmpty?.classList.toggle('hidden', visibleCount > 0);
+        returningCustomerResults.classList.toggle('hidden', query === '');
+
+        if (returningCustomerSelected && query !== String(returningCustomerSelected.dataset.selectedName || '').toLowerCase()) {
+            returningCustomerSelected.classList.add('hidden');
+        }
     };
 
     const syncScheduleScrollbars = () => {
@@ -4315,6 +4377,25 @@ const setupBookingPageV2 = () => {
     if (guestLastName) {
         guestLastName.addEventListener('input', syncGuestFullName);
     }
+    returningCustomerSearch?.addEventListener('input', filterReturningCustomers);
+    returningCustomerResults?.addEventListener('click', (event) => {
+        const option = event.target.closest('[data-returning-customer-option]');
+
+        if (!option) {
+            return;
+        }
+
+        applyReturningCustomer(option);
+
+        if (returningCustomerSelected) {
+            returningCustomerSelected.dataset.selectedName = String(option.dataset.name || '').toLowerCase();
+        }
+    });
+    document.addEventListener('click', (event) => {
+        if (!returningCustomerResults?.contains(event.target) && event.target !== returningCustomerSearch) {
+            returningCustomerResults?.classList.add('hidden');
+        }
+    });
     roomScrollPrev?.addEventListener('click', () => {
         roomRail.scrollBy({ left: -320, behavior: 'smooth' });
     });

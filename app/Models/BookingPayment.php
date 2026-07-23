@@ -22,6 +22,7 @@ class BookingPayment extends Model
      */
     protected $fillable = [
         'booking_header_id',
+        'submission_token',
         'booking_detail_id',
         'user_id',
         'payment_type',

@@ -1261,11 +1261,21 @@ class AdminBookingController extends Controller
      */
     private function bookingListingPaginator(Request $request, array $filters)
     {
-        return $this->bookingHeadersQuery($filters)
+        $paginator = $this->bookingHeadersQuery($filters)
             ->latest('created_at')
             ->paginate(10)
-            ->withQueryString()
-            ->through(fn (BookingHeader $header): array => $this->bookingRowPayload($header));
+            ->withQueryString();
+        $identityStats = $this->bookingIdentityStats();
+
+        return $paginator->through(function (BookingHeader $header) use ($identityStats): array {
+            $stats = $identityStats->get($this->bookingContactIdentity($header->phone, $header->email), []);
+
+            return $this->bookingRowPayload(
+                $header,
+                ($stats['count'] ?? 0) > 1,
+                (int) ($stats['latest_id'] ?? 0) === (int) $header->getKey(),
+            );
+        });
     }
 
     /**
@@ -1286,7 +1296,7 @@ class AdminBookingController extends Controller
                         ->orWhere('phone', 'like', '%'.$search.'%');
 
                     if (ctype_digit($search)) {
-                        $builder->orWhereKey((int) $search);
+                        $builder->orWhere('booking_headers.id', (int) $search);
                     }
                 });
             })
@@ -1302,8 +1312,15 @@ class AdminBookingController extends Controller
     /**
      * @return array<string, mixed>
      */
-    private function bookingRowPayload(BookingHeader $header): array
+    private function bookingRowPayload(BookingHeader $header, ?bool $isReturning = null, ?bool $isLatestForCustomer = null): array
     {
+        if ($isReturning === null || $isLatestForCustomer === null) {
+            $identity = $this->bookingContactIdentity($header->phone, $header->email);
+            $stats = $this->bookingIdentityStats()->get($identity, []);
+            $isReturning ??= ($stats['count'] ?? 0) > 1;
+            $isLatestForCustomer ??= (int) ($stats['latest_id'] ?? 0) === (int) $header->getKey();
+        }
+
         $canManageBookings = request()->user()?->hasPermission('bookings.manage') ?? false;
 
         $bookingSummaries = $header->details
@@ -1406,6 +1423,8 @@ class AdminBookingController extends Controller
             'customer_name' => $header->customer_name,
             'email' => $header->email,
             'phone' => $header->phone,
+            'source_label' => $header->source === BookingHeader::SOURCE_ADMIN ? 'Walk-in' : 'Online',
+            'source_key' => $header->source === BookingHeader::SOURCE_ADMIN ? 'walk_in' : 'online',
             'booking_type' => ucfirst((string) $header->booking_type),
             'payment_method' => ucfirst(str_replace('_', ' ', (string) $header->payment_method)),
             'reference' => $header->reference_no,
@@ -1413,6 +1432,11 @@ class AdminBookingController extends Controller
             'slot_count' => $bookingSummaries->count(),
             'latest_timestamp' => optional($header->created_at)?->timestamp ?? 0,
             'latest_date' => optional($header->created_at)->format('M j, Y'),
+            'latest_time' => optional($header->created_at)->format('g:i A'),
+            'is_new' => $isLatestForCustomer
+                && $header->status === BookingHeader::STATUS_PENDING
+                && optional($header->created_at)?->greaterThanOrEqualTo(now()->subDay()),
+            'is_returning' => $isReturning,
             'total_amount' => 'Php '.number_format((float) ($header->total_amount ?? 0), 2),
             'downpayment_amount' => 'Php '.number_format((float) ($header->downpayment_amount ?? 0), 2),
             'balance_amount' => 'Php '.number_format((float) ($header->balance_amount ?? 0), 2),
@@ -1427,6 +1451,40 @@ class AdminBookingController extends Controller
             'bookings' => $bookingSummaries->all(),
             'preview_rooms' => $previewRooms->take(3)->all(),
         ];
+    }
+
+    /** @return Collection<string, array{count:int,latest_id:int}> */
+    private function bookingIdentityStats(): Collection
+    {
+        return BookingHeader::query()
+            ->latest('created_at')
+            ->latest('id')
+            ->get(['id', 'phone', 'email'])
+            ->groupBy(fn (BookingHeader $header): string => $this->bookingContactIdentity($header->phone, $header->email))
+            ->filter(fn (Collection $headers, string $identity): bool => $identity !== '')
+            ->map(fn (Collection $headers): array => [
+                'count' => $headers->count(),
+                'latest_id' => (int) $headers->first()->getKey(),
+            ]);
+    }
+
+    private function bookingContactIdentity(?string $phone, ?string $email): string
+    {
+        $digits = preg_replace('/\D+/', '', (string) $phone) ?? '';
+
+        if (str_starts_with($digits, '09')) {
+            $digits = '63'.substr($digits, 1);
+        } elseif (strlen($digits) === 10 && str_starts_with($digits, '9')) {
+            $digits = '63'.$digits;
+        }
+
+        if (strlen($digits) >= 7) {
+            return 'phone:'.$digits;
+        }
+
+        $normalizedEmail = strtolower(trim((string) $email));
+
+        return $normalizedEmail !== '' ? 'email:'.$normalizedEmail : '';
     }
 
     /** @return array<string, mixed> */

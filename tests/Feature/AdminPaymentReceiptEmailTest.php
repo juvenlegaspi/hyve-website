@@ -12,6 +12,7 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class AdminPaymentReceiptEmailTest extends TestCase
@@ -78,6 +79,31 @@ class AdminPaymentReceiptEmailTest extends TestCase
         $this->assertSame('partially_paid', (string) $header->fresh()->payment_status);
         $this->assertSame(500.0, (float) $header->fresh()->balance_amount);
         Mail::assertNothingSent();
+    }
+
+    public function test_manual_payment_submission_token_prevents_duplicate_records(): void
+    {
+        Mail::fake();
+        [$admin, $header] = $this->createBookingWithPayments(400, 100);
+        $token = (string) Str::uuid();
+        $payload = [
+            'payment_submission_token' => $token,
+            'amount' => 600,
+            'payment_method' => 'cash',
+            'discount_code' => 'none',
+        ];
+
+        $this->actingAs($admin)->post(route('admin.payments.record', $header), $payload)->assertRedirect();
+        $this->actingAs($admin)->post(route('admin.payments.record', $header), $payload)->assertRedirect();
+
+        $this->assertDatabaseCount('booking_payments', 3);
+        $this->assertSame(0.0, (float) $header->fresh()->balance_amount);
+        $this->assertDatabaseHas('booking_payments', [
+            'booking_header_id' => $header->id,
+            'submission_token' => $token,
+            'amount' => 600,
+            'status' => BookingPayment::STATUS_APPROVED,
+        ]);
     }
 
     /**

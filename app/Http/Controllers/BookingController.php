@@ -68,6 +68,7 @@ class BookingController extends Controller
         }
 
         $memberBookings = collect();
+        $returningCustomers = $adminMode ? $this->returningCustomerOptions() : collect();
         $spaces = Space::query()
             ->active()
             ->orderBy('sort_order')
@@ -200,10 +201,62 @@ class BookingController extends Controller
             'rates' => $rateCards->map(fn (HyveRate $rate): array => $rate->toDisplayArray())->all(),
             'monthlyPlansByRoom' => $longStayPlansByRoom,
             'memberBookings' => $memberBookings,
+            'returningCustomers' => $returningCustomers,
             'oldScheduleSummary' => $oldScheduleSummary,
             'user' => $user,
             'adminMode' => $adminMode,
         ]);
+    }
+
+    private function returningCustomerOptions(): Collection
+    {
+        return BookingHeader::query()
+            ->where(function ($query): void {
+                $query->whereNotNull('phone')
+                    ->where('phone', '!=', '')
+                    ->orWhere(function ($emailQuery): void {
+                        $emailQuery->whereNotNull('email')->where('email', '!=', '');
+                    });
+            })
+            ->latest('created_at')
+            ->limit(2000)
+            ->get(['id', 'customer_name', 'email', 'phone', 'created_at'])
+            ->groupBy(fn (BookingHeader $header): string => $this->bookingContactIdentity($header->phone, $header->email))
+            ->filter(fn (Collection $bookings, string $identity): bool => $identity !== '')
+            ->map(function (Collection $bookings): array {
+                /** @var BookingHeader $latest */
+                $latest = $bookings->first();
+
+                return [
+                    'id' => $latest->getKey(),
+                    'name' => (string) $latest->customer_name,
+                    'email' => (string) $latest->email,
+                    'phone' => (string) $latest->phone,
+                    'booking_count' => $bookings->count(),
+                    'last_booked' => optional($latest->created_at)->format('M j, Y g:i A'),
+                ];
+            })
+            ->values()
+            ->take(300);
+    }
+
+    private function bookingContactIdentity(?string $phone, ?string $email): string
+    {
+        $digits = preg_replace('/\D+/', '', (string) $phone) ?? '';
+
+        if (str_starts_with($digits, '09')) {
+            $digits = '63'.substr($digits, 1);
+        } elseif (strlen($digits) === 10 && str_starts_with($digits, '9')) {
+            $digits = '63'.$digits;
+        }
+
+        if (strlen($digits) >= 7) {
+            return 'phone:'.$digits;
+        }
+
+        $normalizedEmail = strtolower(trim((string) $email));
+
+        return $normalizedEmail !== '' ? 'email:'.$normalizedEmail : '';
     }
 
     public function quote(Request $request): JsonResponse

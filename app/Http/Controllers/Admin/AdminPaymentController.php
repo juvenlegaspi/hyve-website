@@ -10,6 +10,7 @@ use App\Models\BookingPayment;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -64,7 +65,7 @@ class AdminPaymentController extends Controller
                         });
 
                     if (ctype_digit($search)) {
-                        $builder->orWhereKey((int) $search);
+                        $builder->orWhere('booking_headers.id', (int) $search);
                     }
                 });
             })
@@ -76,7 +77,7 @@ class AdminPaymentController extends Controller
             })
             ->orderByRaw("(select count(*) from booking_payments where booking_payments.booking_header_id = booking_headers.id and booking_payments.status = 'pending') desc")
             ->latest('updated_at')
-            ->paginate(12)
+            ->paginate(10)
             ->withQueryString();
 
         $paymentSummary = [
@@ -101,6 +102,8 @@ class AdminPaymentController extends Controller
                 ->count('user_id'),
         ];
 
+        $identityStats = $this->bookingIdentityStats();
+
         return view('admin.payments.index', [
             'meta' => [
                 'title' => 'Payments | HYVE Admin',
@@ -109,7 +112,14 @@ class AdminPaymentController extends Controller
             'adminUser' => $request->user(),
             'filters' => $filters,
             'bookings' => $bookings,
-            'bookingRows' => $bookings->getCollection()->map(fn (BookingHeader $header): array => $this->bookingRowPayload($header)),
+            'bookingRows' => $bookings->getCollection()->map(function (BookingHeader $header) use ($identityStats): array {
+                $stats = $identityStats->get($this->bookingContactIdentity($header->phone, $header->email), []);
+
+                return $this->bookingRowPayload(
+                    $header,
+                    (int) ($stats['latest_id'] ?? 0) === (int) $header->getKey(),
+                );
+            }),
             'discountOptions' => $this->discountOptions(),
             'paymentSummary' => $paymentSummary,
         ]);
@@ -280,6 +290,7 @@ class AdminPaymentController extends Controller
     public function record(Request $request, BookingHeader $bookingHeader): RedirectResponse
     {
         $validated = $request->validate([
+            'payment_submission_token' => ['required', 'uuid'],
             'amount' => ['required', 'numeric', 'gt:0'],
             'payment_method' => ['required', Rule::in(['gcash', 'bank_transfer', 'cash'])],
             'discount_code' => ['nullable', Rule::in(array_keys(self::DISCOUNT_PRESETS))],
@@ -289,6 +300,17 @@ class AdminPaymentController extends Controller
         if ((string) $bookingHeader->status !== 'confirmed') {
             return back()
                 ->with('admin_error', 'Only approved bookings can receive payments here.')
+                ->with('admin_open_payment_modal', $bookingHeader->getKey());
+        }
+
+        $existingSubmission = BookingPayment::query()
+            ->where('submission_token', $validated['payment_submission_token'])
+            ->first();
+
+        if ($existingSubmission && (int) $existingSubmission->booking_header_id === (int) $bookingHeader->getKey()) {
+            return back()
+                ->with('admin_success', 'This payment was already recorded.')
+                ->with('admin_trigger_bookings_refresh', $bookingHeader->getKey())
                 ->with('admin_open_payment_modal', $bookingHeader->getKey());
         }
 
@@ -302,9 +324,26 @@ class AdminPaymentController extends Controller
         }
 
         $shouldSendReceiptEmail = false;
+        $duplicateSubmission = false;
 
-        DB::transaction(function () use ($request, $bookingHeader, $validated, $amount, &$shouldSendReceiptEmail): void {
+        DB::transaction(function () use ($request, $bookingHeader, $validated, $amount, &$shouldSendReceiptEmail, &$duplicateSubmission): void {
             $header = BookingHeader::query()->lockForUpdate()->findOrFail($bookingHeader->getKey());
+            $existingPayment = BookingPayment::query()
+                ->where('submission_token', $validated['payment_submission_token'])
+                ->first();
+
+            if ($existingPayment) {
+                if ((int) $existingPayment->booking_header_id !== (int) $header->getKey()) {
+                    throw ValidationException::withMessages([
+                        'payment_submission_token' => 'This payment request is no longer valid. Refresh the page and try again.',
+                    ]);
+                }
+
+                $duplicateSubmission = true;
+
+                return;
+            }
+
             $discountCode = (string) ($validated['discount_code'] ?? $header->discount_code ?? 'none');
 
             $header->update($this->discountColumnPayload($header, $discountCode));
@@ -320,6 +359,7 @@ class AdminPaymentController extends Controller
 
             BookingPayment::query()->create([
                 'booking_header_id' => $header->getKey(),
+                'submission_token' => $validated['payment_submission_token'],
                 'user_id' => $header->user_id,
                 'payment_type' => BookingPayment::TYPE_BALANCE,
                 'amount' => $amount,
@@ -339,12 +379,12 @@ class AdminPaymentController extends Controller
                 && trim((string) ($freshHeader->email ?? '')) !== '';
         });
 
-        if ($shouldSendReceiptEmail) {
+        if ($shouldSendReceiptEmail && ! $duplicateSubmission) {
             $this->sendPaymentReceiptEmail($bookingHeader->fresh(['details.hyveRoom', 'details.space', 'payments']));
         }
 
         return back()
-            ->with('admin_success', 'Payment recorded successfully.')
+            ->with('admin_success', $duplicateSubmission ? 'This payment was already recorded.' : 'Payment recorded successfully.')
             ->with('admin_trigger_bookings_refresh', $bookingHeader->getKey())
             ->with('admin_open_payment_modal', $bookingHeader->getKey());
     }
@@ -475,7 +515,7 @@ class AdminPaymentController extends Controller
     /**
      * @return array<string, mixed>
      */
-    public function bookingRowPayload(BookingHeader $header): array
+    public function bookingRowPayload(BookingHeader $header, bool $isLatestForCustomer = false): array
     {
         $canManagePayments = request()->user()?->hasPermission('payments.manage') ?? false;
 
@@ -511,6 +551,8 @@ class AdminPaymentController extends Controller
             'customer_name' => (string) $header->customer_name,
             'email' => (string) $header->email,
             'phone' => (string) $header->phone,
+            'source_label' => $header->source === BookingHeader::SOURCE_ADMIN ? 'Walk-in' : 'Online',
+            'source_key' => $header->source === BookingHeader::SOURCE_ADMIN ? 'walk_in' : 'online',
             'booking_type' => ucfirst((string) $header->booking_type),
             'payment_method' => ucfirst(str_replace('_', ' ', (string) ($header->payment_method ?? 'direct_payment'))),
             'payment_status' => $this->paymentStatusLabel((string) ($header->payment_status ?? 'pending_verification')),
@@ -526,6 +568,9 @@ class AdminPaymentController extends Controller
             'balance_amount' => 'Php '.number_format((float) ($header->balance_amount ?? 0), 2),
             'booking_count' => $details->count(),
             'latest_date' => optional($header->created_at)->format('M j, Y'),
+            'latest_time' => optional($header->created_at)->format('g:i A'),
+            'is_new' => $isLatestForCustomer
+                && optional($header->created_at)?->greaterThanOrEqualTo(now()->subDay()),
             'pending_count' => $pendingCount,
             'approved_total' => 'Php '.number_format($approvedTotal, 2),
             'latest_payment_label' => $latestPayment
@@ -567,6 +612,39 @@ class AdminPaymentController extends Controller
             'record_payment_url' => $canManagePayments ? route('admin.payments.record', $header) : null,
             'can_record_payment' => $canManagePayments,
         ];
+    }
+
+    /** @return Collection<string, array{latest_id:int}> */
+    private function bookingIdentityStats(): Collection
+    {
+        return BookingHeader::query()
+            ->latest('created_at')
+            ->latest('id')
+            ->get(['id', 'phone', 'email'])
+            ->groupBy(fn (BookingHeader $header): string => $this->bookingContactIdentity($header->phone, $header->email))
+            ->filter(fn (Collection $headers, string $identity): bool => $identity !== '')
+            ->map(fn (Collection $headers): array => [
+                'latest_id' => (int) $headers->first()->getKey(),
+            ]);
+    }
+
+    private function bookingContactIdentity(?string $phone, ?string $email): string
+    {
+        $digits = preg_replace('/\D+/', '', (string) $phone) ?? '';
+
+        if (str_starts_with($digits, '09')) {
+            $digits = '63'.substr($digits, 1);
+        } elseif (strlen($digits) === 10 && str_starts_with($digits, '9')) {
+            $digits = '63'.$digits;
+        }
+
+        if (strlen($digits) >= 7) {
+            return 'phone:'.$digits;
+        }
+
+        $normalizedEmail = strtolower(trim((string) $email));
+
+        return $normalizedEmail !== '' ? 'email:'.$normalizedEmail : '';
     }
 
     private function paymentStatusClass(string $status): string

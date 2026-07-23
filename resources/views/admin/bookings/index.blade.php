@@ -292,6 +292,36 @@
             line-height: 1.35;
         }
 
+        .admin-bookings-table__customer-flags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.3rem;
+            margin-top: 0.25rem;
+        }
+
+        .admin-bookings-table__source {
+            display: grid;
+            justify-items: start;
+            gap: 0.18rem;
+        }
+
+        .admin-bookings-table__source > span:last-child {
+            color: #837c71;
+            font-size: 0.68rem;
+        }
+
+        .admin-bookings-table__date {
+            display: grid;
+            gap: 0.08rem;
+            white-space: nowrap;
+        }
+
+        .admin-bookings-table__date strong {
+            color: #45574f;
+            font-size: 0.74rem;
+            font-weight: 600;
+        }
+
         .admin-bookings-badge {
             display: inline-flex;
             align-items: center;
@@ -309,6 +339,16 @@
             color: #3156cb;
         }
 
+        .admin-bookings-badge--online {
+            background: #e9f0ff;
+            color: #3156cb;
+        }
+
+        .admin-bookings-badge--walk-in {
+            background: #e9f7ea;
+            color: #39703d;
+        }
+
         .admin-bookings-badge--member {
             background: #edf6e8;
             color: #3f6a34;
@@ -317,6 +357,17 @@
         .admin-bookings-badge--guest {
             background: #f5f4ee;
             color: #6f766f;
+        }
+
+        .admin-bookings-badge--new {
+            background: #e9f8df;
+            color: #39702f;
+            box-shadow: inset 0 0 0 1px #cfe8bf;
+        }
+
+        .admin-bookings-badge--returning {
+            background: #fff3d8;
+            color: #8b6620;
         }
 
         .admin-bookings-badge--confirmed,
@@ -881,6 +932,8 @@
                                 data-name="{{ $group['customer_name'] }}"
                                 data-email="{{ $group['email'] }}"
                                 data-phone="{{ $group['phone'] }}"
+                                data-source-label="{{ $group['source_label'] }}"
+                                data-source-key="{{ $group['source_key'] }}"
                                 data-booking-type="{{ $group['booking_type'] }}"
                                 data-payment-method="{{ $group['payment_method'] }}"
                                 data-total="{{ $group['total_amount'] }}"
@@ -893,6 +946,8 @@
                                 data-payment-status-class="{{ $group['payment_status_class'] }}"
                                 data-booking-count="{{ $group['booking_count'] }}"
                                 data-slot-count="{{ $group['slot_count'] }}"
+                                data-is-new="{{ $group['is_new'] ? '1' : '0' }}"
+                                data-is-returning="{{ $group['is_returning'] ? '1' : '0' }}"
                                 data-bookings='@json($group['bookings'])'
                             >
                                 <td class="admin-bookings-table__reference">#{{ $group['id'] }}</td>
@@ -900,10 +955,23 @@
                                     <div class="admin-bookings-table__customer">
                                         <strong>{{ $group['customer_name'] }}</strong>
                                         <span>{{ $group['email'] }}</span>
+                                        @if ($group['is_new'] || $group['is_returning'])
+                                            <div class="admin-bookings-table__customer-flags">
+                                                @if ($group['is_new'])
+                                                    <span class="admin-bookings-badge admin-bookings-badge--new" data-new-booking-badge>New booking</span>
+                                                @endif
+                                                @if ($group['is_returning'])
+                                                    <span class="admin-bookings-badge admin-bookings-badge--returning">Returning</span>
+                                                @endif
+                                            </div>
+                                        @endif
                                     </div>
                                 </td>
                                 <td>
-                                    <span class="admin-bookings-badge admin-bookings-badge--booking">{{ $group['booking_type'] }}</span>
+                                    <div class="admin-bookings-table__source">
+                                        <span class="admin-bookings-badge admin-bookings-badge--{{ $group['source_key'] === 'walk_in' ? 'walk-in' : 'online' }}">{{ $group['source_label'] }}</span>
+                                        <span>{{ $group['booking_type'] }}</span>
+                                    </div>
                                 </td>
                                 <td class="admin-bookings-table__details">
                                     @if (! empty($group['has_long_stay']) && ! empty($group['preview_summary']))
@@ -915,7 +983,8 @@
                                     @endif
                                 </td>
                                 <td class="admin-bookings-table__date">
-                                    {{ $group['latest_date'] }}
+                                    <strong>{{ $group['latest_date'] }}</strong>
+                                    <span>{{ $group['latest_time'] }}</span>
                                 </td>
                                 <td class="admin-bookings-amount">{{ $group['total_amount'] }}</td>
                                 <td>
@@ -1091,6 +1160,42 @@
                     let activeRow = null;
                     let currentBookings = [];
                     let notificationsMarkedRead = false;
+                    const viewedBookingsStorageKey = 'hyve-admin-viewed-bookings';
+                    let viewedBookingIds = new Set();
+
+                    try {
+                        const storedViewedBookings = JSON.parse(window.localStorage.getItem(viewedBookingsStorageKey) || '[]');
+                        viewedBookingIds = new Set(Array.isArray(storedViewedBookings) ? storedViewedBookings.map(String) : []);
+                    } catch (error) {
+                        viewedBookingIds = new Set();
+                    }
+
+                    const markBookingViewed = (row) => {
+                        const bookingId = String(row?.dataset?.id || '');
+
+                        if (!bookingId || row.dataset.isNew !== '1') {
+                            return;
+                        }
+
+                        viewedBookingIds.add(bookingId);
+                        row.dataset.isNew = '0';
+                        row.querySelector('[data-new-booking-badge]')?.remove();
+
+                        try {
+                            window.localStorage.setItem(viewedBookingsStorageKey, JSON.stringify(Array.from(viewedBookingIds).slice(-200)));
+                        } catch (error) {
+                            // The badge can still disappear for the current page when storage is unavailable.
+                        }
+                    };
+
+                    const hidePreviouslyViewedBadges = () => {
+                        document.querySelectorAll('[data-admin-booking-open][data-is-new="1"]').forEach((row) => {
+                            if (viewedBookingIds.has(String(row.dataset.id || ''))) {
+                                row.dataset.isNew = '0';
+                                row.querySelector('[data-new-booking-badge]')?.remove();
+                            }
+                        });
+                    };
 
                     if (filterForm) {
                         const searchInput = filterForm.querySelector('[data-admin-bookings-search]');
@@ -1210,6 +1315,8 @@
                         row.dataset.name = String(group.customer_name ?? '');
                         row.dataset.email = String(group.email ?? '');
                         row.dataset.phone = String(group.phone ?? '');
+                        row.dataset.sourceLabel = String(group.source_label ?? '');
+                        row.dataset.sourceKey = String(group.source_key ?? '');
                         row.dataset.bookingType = String(group.booking_type ?? '');
                         row.dataset.paymentMethod = String(group.payment_method ?? '');
                         row.dataset.total = String(group.total_amount ?? '');
@@ -1222,6 +1329,8 @@
                         row.dataset.paymentStatusClass = String(group.payment_status_class ?? '');
                         row.dataset.bookingCount = String(group.booking_count ?? '');
                         row.dataset.slotCount = String(group.slot_count ?? '');
+                        row.dataset.isNew = group.is_new ? '1' : '0';
+                        row.dataset.isReturning = group.is_returning ? '1' : '0';
                         row.dataset.wifiVoucher = JSON.stringify(group.wifi_voucher || null);
                         row.dataset.bookings = JSON.stringify(group.bookings || []);
 
@@ -1333,6 +1442,13 @@
                         const detailText = preview.length
                             ? `${escapeHtml(preview.join(', '))} - ${group.slot_count} slot${Number(group.slot_count) !== 1 ? 's' : ''}`
                             : 'Room booking';
+                        const isNew = Boolean(group.is_new) && !viewedBookingIds.has(String(group.id));
+                        const customerFlags = `
+                            <div class="admin-bookings-table__customer-flags">
+                                ${isNew ? '<span class="admin-bookings-badge admin-bookings-badge--new" data-new-booking-badge>New booking</span>' : ''}
+                                ${group.is_returning ? '<span class="admin-bookings-badge admin-bookings-badge--returning">Returning</span>' : ''}
+                            </div>
+                        `;
 
                         return `
                             <tr
@@ -1342,6 +1458,8 @@
                                 data-name="${escapeHtml(group.customer_name)}"
                                 data-email="${escapeHtml(group.email)}"
                                 data-phone="${escapeHtml(group.phone)}"
+                                data-source-label="${escapeHtml(group.source_label || '')}"
+                                data-source-key="${escapeHtml(group.source_key || '')}"
                                 data-booking-type="${escapeHtml(group.booking_type)}"
                                 data-payment-method="${escapeHtml(group.payment_method)}"
                                 data-total="${escapeHtml(group.total_amount)}"
@@ -1354,6 +1472,8 @@
                                 data-payment-status-class="${escapeHtml(group.payment_status_class)}"
                                 data-booking-count="${escapeHtml(group.booking_count)}"
                                 data-slot-count="${escapeHtml(group.slot_count)}"
+                                data-is-new="${isNew ? '1' : '0'}"
+                                data-is-returning="${group.is_returning ? '1' : '0'}"
                                 data-wifi-voucher='${escapeHtml(JSON.stringify(group.wifi_voucher || null))}'
                                 data-bookings='${escapeHtml(JSON.stringify(group.bookings || []))}'
                             >
@@ -1362,13 +1482,20 @@
                                     <div class="admin-bookings-table__customer">
                                         <strong>${escapeHtml(group.customer_name)}</strong>
                                         <span>${escapeHtml(group.email)}</span>
+                                        ${isNew || group.is_returning ? customerFlags : ''}
                                     </div>
                                 </td>
                                 <td>
-                                    <span class="admin-bookings-badge admin-bookings-badge--booking">${escapeHtml(group.booking_type)}</span>
+                                    <div class="admin-bookings-table__source">
+                                        <span class="admin-bookings-badge admin-bookings-badge--${group.source_key === 'walk_in' ? 'walk-in' : 'online'}">${escapeHtml(group.source_label || 'Online')}</span>
+                                        <span>${escapeHtml(group.booking_type)}</span>
+                                    </div>
                                 </td>
                                 <td class="admin-bookings-table__details">${detailText}</td>
-                                <td class="admin-bookings-table__date">${escapeHtml(group.latest_date)}</td>
+                                <td class="admin-bookings-table__date">
+                                    <strong>${escapeHtml(group.latest_date)}</strong>
+                                    <span>${escapeHtml(group.latest_time || '')}</span>
+                                </td>
                                 <td class="admin-bookings-amount">${escapeHtml(group.total_amount)}</td>
                                 <td>
                                     <span class="admin-bookings-badge admin-bookings-badge--member">${escapeHtml(group.payment_method)}</span>
@@ -1382,6 +1509,7 @@
 
                     const openBookingRow = (row) => {
                         activeRow = row;
+                        markBookingViewed(row);
                         modal.classList.remove('hidden');
                         document.body.classList.add('overflow-hidden');
                         setNotice('', false);
@@ -1470,6 +1598,7 @@
                         }
 
                         bindBookingRowEvents();
+                        hidePreviouslyViewedBadges();
 
                         if (activeBookingId) {
                             const refreshedRow = document.querySelector(`[data-admin-booking-open][data-id="${activeBookingId}"]`);
@@ -1810,6 +1939,7 @@
             });
 
             bindBookingRowEvents();
+            hidePreviouslyViewedBadges();
 
                     slotsWrap.addEventListener('click', async (event) => {
                 const button = event.target.closest('[data-admin-booking-action]');

@@ -489,6 +489,44 @@
 
                                 <div class="booking-details-main">
                                     @if ($adminMode || auth()->guest())
+                                        @if ($adminMode)
+                                            <div class="mb-4 rounded-[1rem] border border-[#dce8d4] bg-[#f7faf2] p-4">
+                                                <div class="mb-3">
+                                                    <strong class="block text-[0.82rem] text-[#294531]">Returning customer</strong>
+                                                    <span class="mt-1 block text-[0.72rem] text-[#758076]">Search a previous online or walk-in customer, then select the correct phone or email to fill the details automatically.</span>
+                                                </div>
+                                                <label class="relative block">
+                                                    <span class="mb-1.5 block text-[0.72rem] font-semibold text-[#526358]">Search name, phone, or email</span>
+                                                    <input
+                                                        type="search"
+                                                        data-returning-customer-search
+                                                        class="w-full rounded-[0.8rem] border border-[#d9e4d2] bg-white px-3 py-2.5 text-[0.82rem] text-[#24372f]"
+                                                        placeholder="Start typing a customer..."
+                                                        autocomplete="off"
+                                                    >
+                                                    <div
+                                                        data-returning-customer-results
+                                                        class="absolute left-0 right-0 top-full z-30 mt-1 hidden max-h-64 overflow-y-auto rounded-[0.8rem] border border-[#d9e4d2] bg-white p-1.5 shadow-[0_18px_45px_rgba(35,58,42,0.16)]"
+                                                    >
+                                                        @foreach ($returningCustomers as $customer)
+                                                            <button
+                                                                type="button"
+                                                                data-returning-customer-option
+                                                                data-name="{{ $customer['name'] }}"
+                                                                data-email="{{ $customer['email'] }}"
+                                                                data-phone="{{ $customer['phone'] }}"
+                                                                class="block w-full rounded-[0.65rem] px-3 py-2.5 text-left transition hover:bg-[#f0f6eb]"
+                                                            >
+                                                                <strong class="block text-[0.78rem] text-[#24372f]">{{ $customer['name'] }}</strong>
+                                                                <span class="mt-0.5 block text-[0.68rem] text-[#7f857c]">{{ $customer['phone'] ?: $customer['email'] }} · {{ $customer['booking_count'] }} previous booking{{ $customer['booking_count'] !== 1 ? 's' : '' }}</span>
+                                                            </button>
+                                                        @endforeach
+                                                        <p data-returning-customer-empty class="hidden px-3 py-3 text-[0.72rem] text-[#7f857c]">No previous customer found. Enter the new customer details below.</p>
+                                                    </div>
+                                                </label>
+                                                <div data-returning-customer-selected class="mt-3 hidden rounded-[0.7rem] bg-[#eaf5e3] px-3 py-2 text-[0.72rem] font-semibold text-[#39623a]"></div>
+                                            </div>
+                                        @endif
                                         <div class="field-grid field-grid--guest">
                                             <label>
                                                 <span>First name</span>
@@ -502,12 +540,12 @@
                                             @error('full_name') <small class="field-error field-error--full">{{ $message }}</small> @enderror
                                             <label class="field-grid__wide">
                                                 <span>Email address</span>
-                                                <input type="email" name="email" value="{{ old('email') }}" placeholder="maria@email.com">
+                                                <input type="email" name="email" value="{{ old('email') }}" placeholder="maria@email.com" data-guest-email>
                                                 @error('email') <small class="field-error">{{ $message }}</small> @enderror
                                             </label>
                                             <label class="field-grid__wide">
                                                 <span>Phone number</span>
-                                                <input type="text" name="phone" value="{{ old('phone') }}" placeholder="+63 912 345 6789">
+                                                <input type="text" name="phone" value="{{ old('phone') }}" placeholder="+63 912 345 6789" data-guest-phone>
                                                 @error('phone') <small class="field-error">{{ $message }}</small> @enderror
                                             </label>
                                         </div>

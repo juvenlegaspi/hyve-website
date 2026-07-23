@@ -476,6 +476,59 @@
             background: #fff;
         }
 
+        .admin-payments-pagination {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+        }
+
+        .admin-payments-pagination__summary {
+            color: #7f857c;
+            font-size: 0.76rem;
+        }
+
+        .admin-payments-pagination__controls {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.35rem;
+        }
+
+        .admin-payments-pagination__link,
+        .admin-payments-pagination__ellipsis {
+            display: inline-flex;
+            min-width: 2.35rem;
+            height: 2.35rem;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #dfe6da;
+            border-radius: 0.72rem;
+            background: #fff;
+            padding: 0 0.72rem;
+            color: #38543d;
+            font-size: 0.76rem;
+            font-weight: 700;
+        }
+
+        .admin-payments-pagination__link:hover {
+            border-color: #b9cfaa;
+            background: #f4f8ee;
+        }
+
+        .admin-payments-pagination__link.is-current {
+            border-color: #44793b;
+            background: #44793b;
+            color: #fff;
+        }
+
+        .admin-payments-pagination__link.is-disabled,
+        .admin-payments-pagination__ellipsis {
+            cursor: default;
+            opacity: 0.48;
+        }
+
         @media (max-width: 980px) {
             .admin-payments-modal__details {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -613,6 +666,9 @@
                                     'partially_paid' => 'bg-[#fff3d9] text-[#9a7832]',
                                     default => 'bg-[#f8efdd] text-[#9a7832]',
                                 };
+                                $rowSourceTone = $row['source_key'] === 'walk_in'
+                                    ? 'bg-[#e9f7ea] text-[#39703d]'
+                                    : 'bg-[#e9f0ff] text-[#3156cb]';
                             @endphp
                             <tr
                                 class="cursor-pointer transition hover:bg-[#f9fbf5]"
@@ -622,7 +678,9 @@
                                 data-name="{{ $row['customer_name'] }}"
                                 data-email="{{ $row['email'] }}"
                                 data-phone="{{ $row['phone'] }}"
+                                data-source-label="{{ $row['source_label'] }}"
                                 data-booking-type="{{ $row['booking_type'] }}"
+                                data-is-new="{{ $row['is_new'] ? '1' : '0' }}"
                                 data-payment-method="{{ $row['payment_method'] }}"
                                 data-payment-status="{{ $row['payment_status'] }}"
                                 data-payment-status-key="{{ $row['payment_status_key'] }}"
@@ -648,10 +706,17 @@
                                     <div class="text-[#1a2a26]">
                                         <div class="font-semibold">{{ $row['customer_name'] }}</div>
                                         <div class="mt-1 text-[0.74rem] text-[#8f887d]">{{ $row['email'] }}</div>
+                                        @if ($row['is_new'])
+                                            <span class="mt-1.5 inline-flex rounded-full bg-[#e9f8df] px-2.5 py-1 text-[0.64rem] font-bold uppercase tracking-[0.04em] text-[#39702f]" data-new-payment-booking-badge>New booking</span>
+                                        @endif
+                                        <div class="mt-1 text-[0.68rem] text-[#a0988b]">Booked {{ $row['latest_date'] }} · {{ $row['latest_time'] }}</div>
                                     </div>
                                 </td>
                                 <td class="py-3">
-                                    <span class="inline-flex rounded-full bg-[#eef2ff] px-2.5 py-0.75 text-[0.66rem] font-semibold text-[#4e5ec3]">{{ $row['booking_type'] }}</span>
+                                    <div class="grid justify-items-start gap-1">
+                                        <span class="inline-flex rounded-full px-2.5 py-0.75 text-[0.66rem] font-semibold {{ $rowSourceTone }}">{{ $row['source_label'] }}</span>
+                                        <span class="text-[0.68rem] text-[#8f887d]">{{ $row['booking_type'] }}</span>
+                                    </div>
                                 </td>
                                 <td class="py-3 text-[#5f6f67]">
                                     @if (! empty($row['preview_rooms']))
@@ -693,8 +758,53 @@
         </div>
 
         @if ($bookings->hasPages())
-            <div class="mt-4">
-                {{ $bookings->links() }}
+            <div class="admin-payments-pagination mt-4">
+                <p class="admin-payments-pagination__summary">
+                    Showing {{ $bookings->firstItem() }}–{{ $bookings->lastItem() }} of {{ $bookings->total() }} bookings
+                </p>
+
+                <nav class="admin-payments-pagination__controls" aria-label="Payment booking list pagination">
+                    @php
+                        $currentPage = $bookings->currentPage();
+                        $lastPage = $bookings->lastPage();
+                        $startPage = max(1, $currentPage - 1);
+                        $endPage = min($lastPage, $currentPage + 1);
+                    @endphp
+
+                    @if ($bookings->onFirstPage())
+                        <span class="admin-payments-pagination__link is-disabled" aria-disabled="true">Previous</span>
+                    @else
+                        <a class="admin-payments-pagination__link" href="{{ $bookings->previousPageUrl() }}" rel="prev">Previous</a>
+                    @endif
+
+                    @if ($startPage > 1)
+                        <a class="admin-payments-pagination__link" href="{{ $bookings->url(1) }}">1</a>
+                        @if ($startPage > 2)
+                            <span class="admin-payments-pagination__ellipsis">&hellip;</span>
+                        @endif
+                    @endif
+
+                    @foreach (range($startPage, $endPage) as $page)
+                        @if ($page === $currentPage)
+                            <span class="admin-payments-pagination__link is-current" aria-current="page">{{ $page }}</span>
+                        @else
+                            <a class="admin-payments-pagination__link" href="{{ $bookings->url($page) }}">{{ $page }}</a>
+                        @endif
+                    @endforeach
+
+                    @if ($endPage < $lastPage)
+                        @if ($endPage < $lastPage - 1)
+                            <span class="admin-payments-pagination__ellipsis">&hellip;</span>
+                        @endif
+                        <a class="admin-payments-pagination__link" href="{{ $bookings->url($lastPage) }}">{{ $lastPage }}</a>
+                    @endif
+
+                    @if ($bookings->hasMorePages())
+                        <a class="admin-payments-pagination__link" href="{{ $bookings->nextPageUrl() }}" rel="next">Next</a>
+                    @else
+                        <span class="admin-payments-pagination__link is-disabled" aria-disabled="true">Next</span>
+                    @endif
+                </nav>
             </div>
         @endif
     </section>
@@ -794,6 +904,7 @@
                     <form method="POST" class="admin-payments-modal__record-form" data-payment-modal-record-form>
                         @csrf
                         <input type="hidden" name="payment_booking_id" value="">
+                        <input type="hidden" name="payment_submission_token" value="{{ old('payment_submission_token', (string) \Illuminate\Support\Str::uuid()) }}">
                         <label>
                             <span>Amount</span>
                             <input type="number" name="amount" min="0.01" step="0.01" required>
@@ -814,7 +925,9 @@
                                 @endforeach
                             </select>
                         </label>
-                        <button type="submit" class="admin-payments-modal__button admin-payments-modal__button--primary">Record Payment</button>
+                        <button type="submit" class="admin-payments-modal__button admin-payments-modal__button--primary" data-payment-record-submit>
+                            <span data-payment-record-submit-label>Record Payment</span>
+                        </button>
                     </form>
 
                     <div class="admin-payments-modal__record-note" data-payment-modal-record-note hidden>
@@ -884,6 +997,8 @@
             const discountOptions = @json($discountOptions);
             const amountInput = recordForm?.querySelector('input[name="amount"]');
             const bookingIdInput = recordForm?.querySelector('input[name="payment_booking_id"]');
+            const recordSubmitButton = recordForm?.querySelector('[data-payment-record-submit]');
+            const recordSubmitLabel = recordForm?.querySelector('[data-payment-record-submit-label]');
             const reopenBookingId = @json(session('admin_open_payment_modal', old('payment_booking_id')));
             const oldAmount = @json(old('amount'));
             const oldMethod = @json(old('payment_method'));
@@ -892,6 +1007,34 @@
             const discountLabelMap = Object.fromEntries(discountOptions.map((option) => [String(option.value), String(option.label || option.value)]));
             let activeReceiptUrl = '';
             let activeFinancials = null;
+            let paymentSubmissionInProgress = false;
+            const viewedPaymentBookingsStorageKey = 'hyve-admin-viewed-payment-bookings';
+            let viewedPaymentBookingIds = new Set();
+
+            try {
+                const storedViewedBookings = JSON.parse(window.localStorage.getItem(viewedPaymentBookingsStorageKey) || '[]');
+                viewedPaymentBookingIds = new Set(Array.isArray(storedViewedBookings) ? storedViewedBookings.map(String) : []);
+            } catch (error) {
+                viewedPaymentBookingIds = new Set();
+            }
+
+            const markPaymentBookingViewed = (row) => {
+                const bookingId = String(row?.dataset?.id || '');
+
+                if (!bookingId || row.dataset.isNew !== '1') {
+                    return;
+                }
+
+                viewedPaymentBookingIds.add(bookingId);
+                row.dataset.isNew = '0';
+                row.querySelector('[data-new-payment-booking-badge]')?.remove();
+
+                try {
+                    window.localStorage.setItem(viewedPaymentBookingsStorageKey, JSON.stringify(Array.from(viewedPaymentBookingIds).slice(-200)));
+                } catch (error) {
+                    // Keep the current page state even when browser storage is unavailable.
+                }
+            };
 
             const parseMoneyValue = (value) => {
                 const cleaned = String(value ?? '').replace(/[^\d.]/g, '');
@@ -996,13 +1139,14 @@
 
             const openModal = (row) => {
                 const payments = JSON.parse(row.dataset.payments || '[]');
+                markPaymentBookingViewed(row);
 
                 reference.textContent = `Booking ${row.dataset.reference || '--'}`;
                 name.textContent = row.dataset.name || 'Customer';
                 subtitle.textContent = `${row.dataset.email || '--'} - ${row.dataset.phone || '--'}`;
                 email.textContent = row.dataset.email || '--';
                 phone.textContent = row.dataset.phone || '--';
-                type.textContent = row.dataset.bookingType || '--';
+                type.textContent = `${row.dataset.sourceLabel || '--'} · ${row.dataset.bookingType || '--'}`;
                 method.textContent = row.dataset.paymentMethod || '--';
                 total.textContent = row.dataset.grossTotal || '--';
                 discount.textContent = row.dataset.discountRate && Number.parseFloat(row.dataset.discountRate) > 0
@@ -1178,6 +1322,11 @@
             };
 
             document.querySelectorAll('[data-payment-booking-open]').forEach((row) => {
+                if (viewedPaymentBookingIds.has(String(row.dataset.id || ''))) {
+                    row.dataset.isNew = '0';
+                    row.querySelector('[data-new-payment-booking-badge]')?.remove();
+                }
+
                 row.addEventListener('click', () => openModal(row));
             });
 
@@ -1236,6 +1385,12 @@
 
             if (recordForm) {
                 recordForm.addEventListener('submit', (event) => {
+                    if (paymentSubmissionInProgress) {
+                        event.preventDefault();
+
+                        return;
+                    }
+
                     const max = Number.parseFloat(amountInput?.max || '0');
                     const value = Number.parseFloat(amountInput?.value || '0');
 
@@ -1256,8 +1411,33 @@
                     }
 
                     amountInput?.setCustomValidity('');
+                    paymentSubmissionInProgress = true;
+                    recordForm.setAttribute('aria-busy', 'true');
+
+                    if (recordSubmitButton) {
+                        recordSubmitButton.disabled = true;
+                        recordSubmitButton.classList.add('cursor-wait', 'opacity-70');
+                    }
+
+                    if (recordSubmitLabel) {
+                        recordSubmitLabel.textContent = 'Processing…';
+                    }
                 });
             }
+
+            window.addEventListener('pageshow', () => {
+                paymentSubmissionInProgress = false;
+                recordForm?.removeAttribute('aria-busy');
+
+                if (recordSubmitButton) {
+                    recordSubmitButton.disabled = false;
+                    recordSubmitButton.classList.remove('cursor-wait', 'opacity-70');
+                }
+
+                if (recordSubmitLabel) {
+                    recordSubmitLabel.textContent = 'Record Payment';
+                }
+            });
 
             const bookingRefreshId = @json(session('admin_trigger_bookings_refresh'));
 
