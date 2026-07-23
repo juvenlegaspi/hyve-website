@@ -357,6 +357,23 @@ class BookingController extends Controller
         ]);
     }
 
+    public function paymentQr(string $type)
+    {
+        abort_unless(in_array($type, ['gcash', 'bank'], true), 404);
+
+        $paymentSetting = $this->pricing->activePaymentSetting();
+        $path = $type === 'gcash'
+            ? $paymentSetting?->gcash_qr_path
+            : $paymentSetting?->bank_qr_path;
+
+        abort_if(blank($path) || ! Storage::disk('public')->exists((string) $path), 404);
+
+        return Storage::disk('public')->response((string) $path, null, [
+            'Cache-Control' => 'no-store, no-cache, must-revalidate',
+            'Pragma' => 'no-cache',
+        ]);
+    }
+
     public function availability(Request $request): JsonResponse
     {
         $validated = $request->validate([

@@ -703,7 +703,7 @@
                                         <p>{{ $paymentSetting?->gcash_number ?? '0917 123 4567' }}</p>
                                         @if ($paymentSetting?->gcash_qr_path)
                                             <div style="margin-top:0.75rem;">
-                                                <img src="{{ url('storage/'.$paymentSetting->gcash_qr_path) }}" alt="GCash QR code" style="width:min(100%, 220px); border-radius:1rem; border:1px solid #dfe7d8; background:#fff; padding:0.7rem;">
+                                                <img src="{{ route('payment-qr.show', 'gcash') }}" alt="GCash QR code" style="width:min(100%, 220px); border-radius:1rem; border:1px solid #dfe7d8; background:#fff; padding:0.7rem;">
                                             </div>
                                         @endif
                                     </div>
@@ -713,7 +713,7 @@
                                         <p>{{ $paymentSetting?->bank_account_number ?? '012345678901' }}</p>
                                         @if ($paymentSetting?->bank_qr_path)
                                             <div style="margin-top:0.75rem;">
-                                                <img src="{{ url('storage/'.$paymentSetting->bank_qr_path) }}" alt="Bank transfer QR code" style="width:min(100%, 220px); border-radius:1rem; border:1px solid #dfe7d8; background:#fff; padding:0.7rem;">
+                                                <img src="{{ route('payment-qr.show', 'bank') }}" alt="Bank transfer QR code" style="width:min(100%, 220px); border-radius:1rem; border:1px solid #dfe7d8; background:#fff; padding:0.7rem;">
                                             </div>
                                         @endif
                                     </div>

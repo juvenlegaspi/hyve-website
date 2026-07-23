@@ -274,7 +274,7 @@
                                 <p>Upload the QR image that customers can scan during checkout.</p>
                                 @if ($setting?->gcash_qr_path)
                                     <div class="admin-settings-qr-preview">
-                                        <img src="{{ url('storage/'.$setting->gcash_qr_path) }}" alt="GCash QR code preview">
+                                        <img src="{{ route('payment-qr.show', 'gcash') }}" alt="GCash QR code preview">
                                     </div>
                                 @endif
                             </div>
@@ -300,7 +300,7 @@
                                 <p>Upload the bank QR image that customers can scan during checkout.</p>
                                 @if ($setting?->bank_qr_path)
                                     <div class="admin-settings-qr-preview">
-                                        <img src="{{ url('storage/'.$setting->bank_qr_path) }}" alt="Bank transfer QR code preview">
+                                        <img src="{{ route('payment-qr.show', 'bank') }}" alt="Bank transfer QR code preview">
                                     </div>
                                 @endif
                             </div>

@@ -66,6 +66,9 @@ Route::get('/bookings/availability', [BookingController::class, 'availability'])
 Route::get('/bookings/unavailable-dates', [BookingController::class, 'unavailableDates'])->name('bookings.unavailable-dates');
 Route::get('/bookings/room-layout', [BookingController::class, 'roomLayout'])->name('bookings.room-layout');
 Route::get('/bookings/quote', [BookingController::class, 'quote'])->name('bookings.quote');
+Route::get('/payment-qr/{type}', [BookingController::class, 'paymentQr'])
+    ->whereIn('type', ['gcash', 'bank'])
+    ->name('payment-qr.show');
 Route::post('/bookings', [BookingController::class, 'store'])->name('bookings.store');
 
 Route::middleware('auth')->group(function () {
