@@ -11,6 +11,7 @@ use App\Http\Controllers\Admin\AdminRoomController;
 use App\Http\Controllers\Admin\AdminRoomScheduleController;
 use App\Http\Controllers\Admin\AdminSectionController;
 use App\Http\Controllers\Admin\AdminSettingController;
+use App\Http\Controllers\Admin\AdminSalesMonitoringController;
 use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\NewPasswordController;
@@ -19,6 +20,7 @@ use App\Http\Controllers\Auth\RegisteredUserController;
 use App\Http\Controllers\BookingController;
 use App\Http\Controllers\HomeController;
 use App\Http\Controllers\MemberPortalController;
+use App\Http\Controllers\OwnerAuthController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', HomeController::class)->name('home');
@@ -60,6 +62,8 @@ Route::middleware('guest')->group(function () {
 
 Route::get('/admin/login', [AdminAuthController::class, 'create'])->name('admin.login');
 Route::post('/admin/login', [AdminAuthController::class, 'store'])->name('admin.login.store');
+Route::get('/owner/login', [OwnerAuthController::class, 'create'])->name('owner.login');
+Route::post('/owner/login', [OwnerAuthController::class, 'store'])->name('owner.login.store');
 
 Route::get('/bookings', [BookingController::class, 'index'])->name('bookings.index');
 Route::get('/bookings/availability', [BookingController::class, 'availability'])->name('bookings.availability');
@@ -100,6 +104,7 @@ Route::middleware('auth')->prefix('admin')->name('admin.')->group(function () {
 
     Route::middleware('permission:bookings.manage')->group(function () {
         Route::get('/bookings/create', [BookingController::class, 'adminCreate'])->name('bookings.create');
+        Route::get('/bookings/open-time-quote', [BookingController::class, 'adminOpenTimeQuote'])->name('bookings.open-time-quote');
         Route::post('/bookings/create', [BookingController::class, 'adminStore'])->name('bookings.store');
         Route::post('/bookings/{bookingHeader}/approve', [AdminBookingController::class, 'approve'])->name('bookings.approve');
         Route::post('/bookings/{bookingHeader}/reject', [AdminBookingController::class, 'reject'])->name('bookings.reject');
@@ -107,6 +112,7 @@ Route::middleware('auth')->prefix('admin')->name('admin.')->group(function () {
         Route::post('/booking-details/{bookingDetail}/reject', [AdminBookingController::class, 'rejectDetail'])->name('booking-details.reject');
         Route::post('/booking-details/{bookingDetail}/start', [AdminBookingController::class, 'startDetail'])->name('booking-details.start');
         Route::post('/booking-details/{bookingDetail}/end', [AdminBookingController::class, 'endDetail'])->name('booking-details.end');
+        Route::get('/booking-details/{bookingDetail}/extension-options', [AdminBookingController::class, 'extensionOptions'])->name('booking-details.extension-options');
         Route::post('/booking-details/{bookingDetail}/extend', [AdminBookingController::class, 'extendDetail'])->name('booking-details.extend');
         Route::get('/booking-details/{bookingDetail}/reschedule', [AdminBookingController::class, 'reschedule'])->name('booking-details.reschedule');
         Route::post('/booking-details/{bookingDetail}/reschedule/slots', [AdminBookingController::class, 'rescheduleSlots'])->name('booking-details.reschedule.slots');
@@ -142,6 +148,8 @@ Route::middleware('auth')->prefix('admin')->name('admin.')->group(function () {
     Route::get('/venue-stock', [AdminSectionController::class, 'show'])->defaults('section', 'venue-stock')->middleware('permission:venue_stock.view')->name('sections.venue-stock');
     Route::get('/shop-products', [AdminSectionController::class, 'show'])->defaults('section', 'shop-products')->middleware('permission:shop_products.view')->name('sections.shop-products');
     Route::get('/reports', [AdminSectionController::class, 'show'])->defaults('section', 'reports')->middleware('permission:reports.view')->name('sections.reports');
+    Route::get('/sales-monitoring', [AdminSalesMonitoringController::class, 'index'])->middleware('permission:sales_monitoring.view')->name('sales-monitoring.index');
+    Route::get('/sales-monitoring/export', [AdminSalesMonitoringController::class, 'export'])->middleware('permission:sales_monitoring.view')->name('sales-monitoring.export');
     Route::get('/settings', [AdminSettingController::class, 'index'])->middleware('permission:settings.view')->name('sections.settings');
     Route::patch('/settings', [AdminSettingController::class, 'update'])->middleware('permission:settings.manage')->name('settings.update');
     Route::post('/settings/test-mikrotik', [AdminSettingController::class, 'testMikrotik'])->middleware('permission:settings.manage')->name('settings.test-mikrotik');

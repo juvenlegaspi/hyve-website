@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
-class AdminLoginRequest extends FormRequest
+class OwnerLoginRequest extends FormRequest
 {
     public function authorize(): bool
     {
@@ -40,36 +40,24 @@ class AdminLoginRequest extends FormRequest
             RateLimiter::hit($this->throttleKey());
 
             throw ValidationException::withMessages([
-                'login' => 'These admin credentials do not match our records.',
+                'login' => 'These owner credentials do not match our records.',
             ]);
         }
 
         $user = $this->user();
 
-        if ($user?->isOwner()) {
+        if (! $user || ! $user->isOwner()) {
             Auth::logout();
             RateLimiter::hit($this->throttleKey());
 
             throw ValidationException::withMessages([
-                'login' => 'Please use the dedicated HYVE Owner login page.',
-            ]);
-        }
-
-        if (! $user || ! $user->canAccessAdminPanel()) {
-            Auth::logout();
-            RateLimiter::hit($this->throttleKey());
-
-            throw ValidationException::withMessages([
-                'login' => 'This account does not have admin access.',
+                'login' => 'This sign-in page is exclusively for the HYVE Owner account.',
             ]);
         }
 
         RateLimiter::clear($this->throttleKey());
     }
 
-    /**
-     * @throws ValidationException
-     */
     private function ensureIsNotRateLimited(): void
     {
         if (! RateLimiter::tooManyAttempts($this->throttleKey(), 5)) {
@@ -95,6 +83,6 @@ class AdminLoginRequest extends FormRequest
 
     private function throttleKey(): string
     {
-        return Str::transliterate(Str::lower($this->string('login')->toString()).'|'.$this->ip());
+        return Str::transliterate('owner|'.Str::lower($this->string('login')->toString()).'|'.$this->ip());
     }
 }

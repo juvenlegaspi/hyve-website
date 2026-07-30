@@ -16,6 +16,7 @@
 
         $storeErrors = $errors->adminRoleStore;
         $updateErrors = $errors->adminRoleUpdate;
+        $ownerShareUrl = rtrim((string) config('hyve.website.public_url'), '/').'/owner/login';
     @endphp
 
     <style>
@@ -162,6 +163,11 @@
         .admin-roles-role-badge--audit {
             background: #eef2f6;
             color: #556474;
+        }
+
+        .admin-roles-role-badge--owner {
+            background: #efe8fa;
+            color: #68478c;
         }
 
         .admin-roles-avatar {
@@ -324,6 +330,33 @@
             </div>
         @endif
 
+        <section class="admin-roles-card flex flex-col gap-4 border-[#ded5ec] bg-[#fbf8ff] p-5 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+                <p class="text-[0.7rem] font-bold uppercase tracking-[0.16em] text-[#79569c]">Dedicated owner access</p>
+                <h2 class="mt-1 text-[1.05rem] font-semibold text-[#2f2538]">
+                    {{ ($summary['owners'] ?? 0) > 0 ? 'HYVE Owner account is configured' : 'HYVE Owner account is not created yet' }}
+                </h2>
+                <p class="mt-1 text-[0.78rem] text-[#83788c]">Only one Owner account is allowed. It uses a private login and can only view Dashboard, Sales Monitoring, and Reports.</p>
+            </div>
+            <div class="flex w-full max-w-[34rem] flex-col gap-2 sm:flex-row">
+                <input
+                    type="text"
+                    value="{{ $ownerShareUrl }}"
+                    readonly
+                    aria-label="Owner login link"
+                    class="min-w-0 flex-1 rounded-[0.9rem] border border-[#ded5ec] bg-white px-3.5 py-2.5 text-[0.78rem] text-[#594b65] outline-none"
+                    data-owner-login-link
+                >
+                <button
+                    type="button"
+                    class="admin-roles-button whitespace-nowrap"
+                    data-owner-link-copy
+                    data-owner-url="{{ $ownerShareUrl }}"
+                >Copy Owner Link</button>
+                <a href="{{ $ownerShareUrl }}" target="_blank" rel="noopener" class="admin-roles-button--soft whitespace-nowrap">Preview</a>
+            </div>
+        </section>
+
         <section class="admin-roles-card p-5">
             <div class="flex flex-wrap items-start justify-between gap-3">
                 <div>
@@ -380,6 +413,7 @@
                     <option value="admin" @selected(($filters['role'] ?? '') === 'admin')>Admins</option>
                     <option value="front_desk" @selected(($filters['role'] ?? '') === 'front_desk')>Front desk</option>
                     <option value="audit" @selected(($filters['role'] ?? '') === 'audit')>Audit</option>
+                    <option value="owner" @selected(($filters['role'] ?? '') === 'owner')>HYVE Owner</option>
                     <option value="super_admin" @selected(($filters['role'] ?? '') === 'super_admin')>Super admins</option>
                 </select>
                 <select name="status" class="admin-roles-toolbar__select">
@@ -425,7 +459,7 @@
                                 </td>
                                 <td class="text-[0.84rem] text-[#4f5d54]">{{ $row['email'] }}</td>
                                 <td>
-                                    <span class="admin-roles-role-badge {{ $row['role_key'] === 'super_admin' ? 'admin-roles-role-badge--super' : ($row['role_key'] === 'front_desk' ? 'admin-roles-role-badge--frontdesk' : ($row['role_key'] === 'audit' ? 'admin-roles-role-badge--audit' : 'admin-roles-role-badge--admin')) }}">
+                                    <span class="admin-roles-role-badge {{ $row['role_key'] === 'super_admin' ? 'admin-roles-role-badge--super' : ($row['role_key'] === 'owner' ? 'admin-roles-role-badge--owner' : ($row['role_key'] === 'front_desk' ? 'admin-roles-role-badge--frontdesk' : ($row['role_key'] === 'audit' ? 'admin-roles-role-badge--audit' : 'admin-roles-role-badge--admin'))) }}">
                                         {{ $row['role'] }}
                                     </span>
                                     <div class="admin-roles-status-note mt-2">{{ $row['status'] }}</div>
@@ -463,7 +497,7 @@
                 <div>
                     <p class="admin-roles-modal__eyebrow">Admin account</p>
                     <h2 class="admin-roles-modal__title">Add admin</h2>
-                    <p class="admin-roles-modal__subtitle">Create a new admin account and choose if this person should be a regular admin or a super admin.</p>
+                    <p class="admin-roles-modal__subtitle">Create a staff account or the single read-only HYVE Owner account.</p>
                 </div>
 
                 <button type="button" class="admin-roles-modal__close" data-admin-roles-add-close aria-label="Close add admin modal">&times;</button>
@@ -471,6 +505,13 @@
 
             <form action="{{ route('admin.admin-roles.store') }}" method="POST" class="mt-5 grid gap-3">
                 @csrf
+                @if ($storeErrors->any())
+                    <div class="rounded-[0.9rem] border border-[#f1d7d2] bg-[#fff5f3] px-3.5 py-3 text-[0.78rem] leading-6 text-[#ab4f43]">
+                        @foreach ($storeErrors->all() as $error)
+                            <p>{{ $error }}</p>
+                        @endforeach
+                    </div>
+                @endif
                 <input type="text" name="username" value="{{ old('username') }}" placeholder="Username" class="rounded-[0.85rem] border border-[#dfe7d8] px-3.5 py-2.5 text-[0.82rem]">
                 <input type="text" name="first_name" value="{{ old('first_name') }}" placeholder="First name" class="rounded-[0.85rem] border border-[#dfe7d8] px-3.5 py-2.5 text-[0.82rem]">
                 <input type="text" name="last_name" value="{{ old('last_name') }}" placeholder="Last name" class="rounded-[0.85rem] border border-[#dfe7d8] px-3.5 py-2.5 text-[0.82rem]">
@@ -480,9 +521,10 @@
                     <option value="admin" @selected(old('role', 'admin') === 'admin')>Admin</option>
                     <option value="front_desk" @selected(old('role') === 'front_desk')>Front Desk</option>
                     <option value="audit" @selected(old('role') === 'audit')>Audit</option>
+                    <option value="owner" @selected(old('role') === 'owner')>HYVE Owner (one account only)</option>
                     <option value="super_admin" @selected(old('role') === 'super_admin')>Super Admin</option>
                 </select>
-                <input type="text" name="password" value="{{ old('password') }}" placeholder="Temporary password" class="rounded-[0.85rem] border border-[#dfe7d8] px-3.5 py-2.5 text-[0.82rem]">
+                <input type="password" name="password" placeholder="Temporary password" autocomplete="new-password" class="rounded-[0.85rem] border border-[#dfe7d8] px-3.5 py-2.5 text-[0.82rem]">
 
                 <button type="submit" class="mt-2 rounded-[0.9rem] bg-[#3f7b3d] px-4 py-2.5 text-[0.82rem] font-semibold text-white">
                     Create admin account
@@ -508,6 +550,13 @@
             <form method="POST" class="mt-5 grid gap-3" data-admin-roles-edit-form>
                 @csrf
                 @method('PATCH')
+                @if ($updateErrors->any())
+                    <div class="rounded-[0.9rem] border border-[#f1d7d2] bg-[#fff5f3] px-3.5 py-3 text-[0.78rem] leading-6 text-[#ab4f43]">
+                        @foreach ($updateErrors->all() as $error)
+                            <p>{{ $error }}</p>
+                        @endforeach
+                    </div>
+                @endif
                 <input type="hidden" name="user_id" value="{{ old('user_id') }}">
                 <input type="text" name="first_name" placeholder="First name" class="rounded-[0.85rem] border border-[#dfe7d8] px-3.5 py-2.5 text-[0.82rem]">
                 <input type="text" name="last_name" placeholder="Last name" class="rounded-[0.85rem] border border-[#dfe7d8] px-3.5 py-2.5 text-[0.82rem]">
@@ -517,6 +566,7 @@
                     <option value="admin">Admin</option>
                     <option value="front_desk">Front Desk</option>
                     <option value="audit">Audit</option>
+                    <option value="owner">HYVE Owner</option>
                     <option value="super_admin">Super Admin</option>
                 </select>
                 <select name="status" class="rounded-[0.85rem] border border-[#dfe7d8] px-3.5 py-2.5 text-[0.82rem] text-[#173029]">
@@ -539,6 +589,30 @@
             const addModal = document.querySelector('[data-admin-roles-add-modal]');
             const editModal = document.querySelector('[data-admin-roles-edit-modal]');
             const editForm = document.querySelector('[data-admin-roles-edit-form]');
+            const ownerLinkCopy = document.querySelector('[data-owner-link-copy]');
+
+            ownerLinkCopy?.addEventListener('click', async () => {
+                const url = ownerLinkCopy.dataset.ownerUrl || '';
+                const originalLabel = ownerLinkCopy.textContent;
+
+                try {
+                    await navigator.clipboard.writeText(url);
+                } catch (error) {
+                    const temporaryInput = document.createElement('textarea');
+                    temporaryInput.value = url;
+                    temporaryInput.style.position = 'fixed';
+                    temporaryInput.style.opacity = '0';
+                    document.body.appendChild(temporaryInput);
+                    temporaryInput.select();
+                    document.execCommand('copy');
+                    temporaryInput.remove();
+                }
+
+                ownerLinkCopy.textContent = 'Link Copied!';
+                window.setTimeout(() => {
+                    ownerLinkCopy.textContent = originalLabel;
+                }, 1800);
+            });
 
             if (!addModal || !editModal || !editForm) {
                 return;

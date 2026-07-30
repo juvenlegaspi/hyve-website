@@ -20,7 +20,7 @@
                 <div class="border-b border-[#163129]/10 px-7 py-4 text-center sm:px-8">
                     <p class="text-[0.78rem] font-bold uppercase tracking-[0.22em] text-[#b39a5a]">Admin access</p>
                     <h1 class="mt-2 text-[1.8rem] font-semibold tracking-[-0.04em] text-[#1d1d1d]">Sign in to the HYVE console</h1>
-                    <p class="mt-1 text-[0.92rem] text-[#9a9a9a]">For admin and super admin accounts only</p>
+                    <p class="mt-1 text-[0.92rem] text-[#9a9a9a]">For HYVE staff and administrator accounts</p>
                 </div>
 
                 <div class="px-7 py-7 sm:px-8">
@@ -52,6 +52,12 @@
                             Enter admin dashboard
                         </button>
                     </form>
+
+                    <div class="mt-6 border-t border-[#ece8df] pt-5 text-center">
+                        <a href="{{ route('owner.login') }}" class="text-[0.82rem] font-semibold text-[#6a4b88] transition hover:text-[#4f356b]">
+                            HYVE Owner? Use the private Owner Portal
+                        </a>
+                    </div>
                 </div>
             </div>
         </div>

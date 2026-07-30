@@ -33,6 +33,11 @@
             color: #556474;
         }
 
+        .admin-users-badge--owner {
+            background: #efe8fa;
+            color: #68478c;
+        }
+
         .admin-users-badge--member {
             background: #eef2f6;
             color: #596975;
@@ -434,6 +439,7 @@
                     <option value="admin" @selected(($filters['role'] ?? '') === 'admin')>Admins</option>
                     <option value="front_desk" @selected(($filters['role'] ?? '') === 'front_desk')>Front desk</option>
                     <option value="audit" @selected(($filters['role'] ?? '') === 'audit')>Audit</option>
+                    <option value="owner" @selected(($filters['role'] ?? '') === 'owner')>HYVE Owner</option>
                     <option value="super_admin" @selected(($filters['role'] ?? '') === 'super_admin')>Super admins</option>
                 </select>
                 <select name="status" class="admin-users-toolbar__select">
@@ -609,6 +615,7 @@
                             <option value="admin" @selected(old('role', 'admin') === 'admin')>Admin</option>
                             <option value="front_desk" @selected(old('role') === 'front_desk')>Front Desk</option>
                             <option value="audit" @selected(old('role') === 'audit')>Audit</option>
+                            <option value="owner" @selected(old('role') === 'owner')>HYVE Owner (one account only)</option>
                             <option value="super_admin" @selected(old('role') === 'super_admin')>Super Admin</option>
                         </select>
                         <input type="text" name="password" value="{{ old('password') }}" placeholder="Temporary password" class="rounded-[0.85rem] border border-[#dfe7d8] px-3.5 py-2.5 text-[0.82rem]">
@@ -652,6 +659,7 @@
                             <option value="admin">Admin</option>
                             <option value="front_desk">Front Desk</option>
                             <option value="audit">Audit</option>
+                            <option value="owner">HYVE Owner</option>
                             <option value="super_admin">Super Admin</option>
                         </select>
                         <select name="status" class="rounded-[0.85rem] border border-[#dfe7d8] px-3.5 py-2.5 text-[0.82rem] text-[#173029]">
@@ -750,6 +758,7 @@
                     if (text.includes('super')) return 'admin-users-badge admin-users-badge--super';
                     if (text.includes('admin')) return 'admin-users-badge admin-users-badge--admin';
                     if (text.includes('front')) return 'admin-users-badge admin-users-badge--frontdesk';
+                    if (text.includes('owner')) return 'admin-users-badge admin-users-badge--owner';
                     if (text.includes('audit')) return 'admin-users-badge admin-users-badge--audit';
 
                     return 'admin-users-badge admin-users-badge--member';

@@ -41,7 +41,7 @@ class AdminRoleController extends Controller
             ->when($filters['role'] !== 'all', fn ($query) => $query->where('role', $filters['role']))
             ->when($filters['status'] === 'active', fn ($query) => $query->where('status', 0))
             ->when($filters['status'] === 'inactive', fn ($query) => $query->where('status', '!=', 0))
-            ->orderByRaw("case when role = 'super_admin' then 1 when role = 'admin' then 2 when role = 'front_desk' then 3 when role = 'audit' then 4 else 5 end")
+            ->orderByRaw("case when role = 'super_admin' then 1 when role = 'owner' then 2 when role = 'admin' then 3 when role = 'front_desk' then 4 when role = 'audit' then 5 else 6 end")
             ->orderBy('first_name')
             ->paginate(10)
             ->withQueryString();
@@ -58,6 +58,7 @@ class AdminRoleController extends Controller
             'summary' => [
                 'total_admins' => User::query()->whereIn('role', User::adminPanelRoles())->count(),
                 'super_admins' => User::query()->where('role', User::ROLE_SUPER_ADMIN)->count(),
+                'owners' => User::query()->where('role', User::ROLE_OWNER)->count(),
                 'active_admins' => User::query()->whereIn('role', User::adminPanelRoles())->where('status', 0)->count(),
                 'inactive_admins' => User::query()->whereIn('role', User::adminPanelRoles())->where('status', '!=', 0)->count(),
             ],
@@ -82,6 +83,15 @@ class AdminRoleController extends Controller
 
         $actingUser = $request->user();
         $requestedStatus = $validated['status'] === 'active' ? 0 : 1;
+
+        if ($validated['role'] === User::ROLE_OWNER && User::query()
+            ->where('role', User::ROLE_OWNER)
+            ->where('id', '!=', $user->getKey())
+            ->exists()) {
+            return back()->withErrors([
+                'role' => 'Only one HYVE Owner account can exist.',
+            ], 'adminRoleUpdate');
+        }
 
         if ($actingUser && (int) $actingUser->getKey() === (int) $user->getKey()) {
             if ($validated['role'] !== (string) $user->role || $requestedStatus !== (int) $user->status) {
@@ -124,6 +134,12 @@ class AdminRoleController extends Controller
             'password' => ['required', 'string', 'min:8'],
             'role' => ['required', Rule::in(User::adminPanelRoles())],
         ]);
+
+        if ($validated['role'] === User::ROLE_OWNER && User::query()->where('role', User::ROLE_OWNER)->exists()) {
+            return back()->withErrors([
+                'role' => 'The HYVE Owner account already exists. Update the existing owner account instead.',
+            ], 'adminRoleStore')->withInput();
+        }
 
         User::query()->create([
             'username' => strtolower(trim($validated['username'])),

@@ -82,6 +82,9 @@
                             Register for free ->
                         </a>
                     </p>
+                    <p class="mt-3 text-center text-[0.78rem]">
+                        <a href="{{ route('owner.login') }}" class="font-semibold text-[#6a4b88]">HYVE Owner Portal</a>
+                    </p>
                 </div>
             </div>
         </div>

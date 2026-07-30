@@ -35,11 +35,14 @@
             'Pricing Rules' => 'tag',
             'Bookings' => 'calendar-check',
             'Payments' => 'card',
+            'Sales Monitoring' => 'chart',
             'Users' => 'users',
             'Reports' => 'chart',
             'Admin Roles' => 'shield',
             'Settings' => 'gear',
         ];
+        $isOwnerPortal = $adminUser->isOwner();
+        $panelLabel = $isOwnerPortal ? 'Owner Portal' : 'Admin';
     @endphp
 
     <div class="flex min-h-screen">
@@ -47,7 +50,7 @@
             <div class="border-b border-[#edf1ea] px-4 py-6">
                 <a href="{{ route('admin.dashboard') }}" class="flex items-baseline gap-2">
                     <span class="text-[1.18rem] font-black tracking-[-0.04em] text-black">HYVE</span>
-                    <span class="text-[0.78rem] font-medium text-black">Admin</span>
+                    <span class="text-[0.78rem] font-medium text-black">{{ $panelLabel }}</span>
                 </a>
             </div>
 
@@ -150,7 +153,7 @@
                     </div>
                     <div class="min-w-0 flex-1">
                         <p class="truncate text-[0.78rem] font-semibold text-[#163128]">{{ $adminUser->name ?? 'Admin' }}</p>
-                        <p class="truncate text-[0.68rem] text-[#8c9682]">{{ $adminUser->email ?? str_replace('_', ' ', (string) ($adminUser->role ?? 'admin')) }}</p>
+                        <p class="truncate text-[0.68rem] text-[#8c9682]">{{ $isOwnerPortal ? 'HYVE Owner · Read only' : ($adminUser->email ?? str_replace('_', ' ', (string) ($adminUser->role ?? 'admin'))) }}</p>
                     </div>
                     <form action="{{ route('logout') }}" method="POST">
                         @csrf
@@ -168,7 +171,7 @@
         <main class="min-w-0 flex-1">
             <div class="border-b border-[#e6eadf] bg-white px-4 py-4 lg:hidden">
                 <div class="flex items-center justify-between gap-3">
-                    <a href="{{ route('admin.dashboard') }}" class="text-[1.2rem] font-black tracking-[-0.05em] text-black">HYVE Admin</a>
+                    <a href="{{ route('admin.dashboard') }}" class="text-[1.2rem] font-black tracking-[-0.05em] text-black">HYVE {{ $panelLabel }}</a>
                     <form action="{{ route('logout') }}" method="POST">
                         @csrf
                         <button type="submit" class="rounded-full border border-[#dbe5d1] px-3 py-2 text-[0.74rem] font-semibold text-[#48624f]">

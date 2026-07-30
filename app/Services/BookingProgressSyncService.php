@@ -23,9 +23,12 @@ class BookingProgressSyncService
                 foreach ($details as $detail) {
                     $scheduledStart = $this->scheduledDateTime($detail, (string) $detail->start_time);
                     $scheduledEnd = $this->scheduledDateTime($detail, (string) $detail->end_time, true);
+                    $completionDeadline = $scheduledEnd->copy()->addMinutes(
+                        max(0, (int) config('hyve.booking.extension_grace_minutes', 30))
+                    );
                     $header = $detail->bookingHeader;
 
-                    if (! $detail->actual_start_at && $scheduledStart->lte($now) && $scheduledEnd->gt($now)) {
+                    if (! $detail->actual_start_at && $scheduledStart->lte($now) && $completionDeadline->gte($now)) {
                         $detail->update([
                             'progress_status' => BookingDetail::PROGRESS_IN_PROGRESS,
                             'actual_start_at' => $scheduledStart,
@@ -44,7 +47,7 @@ class BookingProgressSyncService
                         }
                     }
 
-                    if ($scheduledEnd->lte($now)) {
+                    if ($completionDeadline->lt($now)) {
                         $detail->update([
                             'progress_status' => BookingDetail::PROGRESS_COMPLETED,
                             'actual_start_at' => $detail->actual_start_at ?: $scheduledStart,

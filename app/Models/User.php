@@ -30,6 +30,7 @@ class User extends Authenticatable
     public const ROLE_SUPER_ADMIN = 'super_admin';
     public const ROLE_FRONT_DESK = 'front_desk';
     public const ROLE_AUDIT = 'audit';
+    public const ROLE_OWNER = 'owner';
 
     protected $table = 'booking_users';
 
@@ -92,6 +93,11 @@ class User extends Authenticatable
         return (string) $this->role === self::ROLE_SUPER_ADMIN;
     }
 
+    public function isOwner(): bool
+    {
+        return (string) $this->role === self::ROLE_OWNER;
+    }
+
     public function canAccessAdminPanel(): bool
     {
         return in_array((string) $this->role, self::adminPanelRoles(), true);
@@ -118,6 +124,7 @@ class User extends Authenticatable
             self::ROLE_SUPER_ADMIN,
             self::ROLE_FRONT_DESK,
             self::ROLE_AUDIT,
+            self::ROLE_OWNER,
         ];
     }
 }

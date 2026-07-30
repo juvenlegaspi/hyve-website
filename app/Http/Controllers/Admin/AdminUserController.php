@@ -50,7 +50,7 @@ class AdminUserController extends Controller
             ->when($filters['role'] !== 'all', fn ($query) => $query->where('role', $filters['role']))
             ->when($filters['status'] === 'active', fn ($query) => $query->where('status', 0))
             ->when($filters['status'] === 'inactive', fn ($query) => $query->where('status', '!=', 0))
-            ->orderByRaw("case when role = 'super_admin' then 1 when role = 'admin' then 2 when role = 'front_desk' then 3 when role = 'audit' then 4 else 5 end")
+            ->orderByRaw("case when role = 'super_admin' then 1 when role = 'owner' then 2 when role = 'admin' then 3 when role = 'front_desk' then 4 when role = 'audit' then 5 else 6 end")
             ->orderBy('first_name')
             ->paginate(12)
             ->withQueryString();
@@ -94,6 +94,12 @@ class AdminUserController extends Controller
             'role' => ['required', Rule::in(User::adminPanelRoles())],
         ]);
 
+        if ($validated['role'] === User::ROLE_OWNER && User::query()->where('role', User::ROLE_OWNER)->exists()) {
+            return back()->withErrors([
+                'role' => 'The HYVE Owner account already exists.',
+            ])->withInput();
+        }
+
         User::query()->create([
             'username' => strtolower(trim($validated['username'])),
             'first_name' => trim($validated['first_name']),
@@ -119,6 +125,15 @@ class AdminUserController extends Controller
             'role' => ['required', Rule::in(array_merge([User::ROLE_MEMBER], User::adminPanelRoles()))],
             'status' => ['required', Rule::in(['active', 'inactive'])],
         ]);
+
+        if ($validated['role'] === User::ROLE_OWNER && User::query()
+            ->where('role', User::ROLE_OWNER)
+            ->where('id', '!=', $user->getKey())
+            ->exists()) {
+            return back()->withErrors([
+                'role' => 'Only one HYVE Owner account can exist.',
+            ])->withInput();
+        }
 
         $user->update([
             'username' => strtolower(trim($validated['username'])),
@@ -253,6 +268,7 @@ class AdminUserController extends Controller
             User::ROLE_ADMIN => 'admin-users-badge--admin',
             User::ROLE_FRONT_DESK => 'admin-users-badge--frontdesk',
             User::ROLE_AUDIT => 'admin-users-badge--audit',
+            User::ROLE_OWNER => 'admin-users-badge--owner',
             default => 'admin-users-badge--member',
         };
     }

@@ -9,6 +9,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 class AuthenticatedSessionController extends Controller
@@ -27,6 +28,14 @@ class AuthenticatedSessionController extends Controller
 
         /** @var User|null $user */
         $user = $request->user();
+
+        if ($user?->isOwner()) {
+            Auth::logout();
+
+            throw ValidationException::withMessages([
+                'login' => 'Please use the dedicated HYVE Owner login page.',
+            ]);
+        }
 
         if ($user?->isAdmin()) {
             return redirect()->route('admin.dashboard');

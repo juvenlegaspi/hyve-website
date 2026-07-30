@@ -188,6 +188,94 @@ const setupSpacesBrowser = () => {
     });
 };
 
+const animateGalleryImage = (image, direction = 1) => {
+    if (!image || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        return;
+    }
+
+    image.animate([
+        {
+            opacity: 0.35,
+            transform: `translate3d(${direction * 8}%, 0, 0) scale(1.045)`,
+            filter: 'blur(3px)',
+        },
+        {
+            opacity: 1,
+            transform: 'translate3d(0, 0, 0) scale(1.07)',
+            filter: 'blur(0)',
+        },
+    ], {
+        duration: 360,
+        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+    });
+};
+
+const bindHorizontalSwipe = (surface, onSwipe) => {
+    if (!surface || surface.dataset.swipeBound === 'true') {
+        return;
+    }
+
+    surface.dataset.swipeBound = 'true';
+    let pointerId = null;
+    let startX = 0;
+    let startY = 0;
+    let currentX = 0;
+    let horizontalDrag = false;
+
+    const finish = (event, cancelled = false) => {
+        if (pointerId === null || event.pointerId !== pointerId) {
+            return;
+        }
+
+        const distance = currentX - startX;
+        surface.classList.remove('is-dragging');
+        surface.style.removeProperty('--swipe-offset');
+        pointerId = null;
+
+        if (!cancelled && horizontalDrag && Math.abs(distance) >= 44) {
+            onSwipe(distance < 0 ? 1 : -1);
+        }
+
+        horizontalDrag = false;
+    };
+
+    surface.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0 || event.target.closest('button, a')) {
+            return;
+        }
+
+        pointerId = event.pointerId;
+        startX = event.clientX;
+        startY = event.clientY;
+        currentX = event.clientX;
+        horizontalDrag = false;
+        surface.setPointerCapture?.(event.pointerId);
+    });
+
+    surface.addEventListener('pointermove', (event) => {
+        if (pointerId === null || event.pointerId !== pointerId) {
+            return;
+        }
+
+        currentX = event.clientX;
+        const deltaX = currentX - startX;
+        const deltaY = event.clientY - startY;
+
+        if (!horizontalDrag && Math.abs(deltaX) > 8 && Math.abs(deltaX) > Math.abs(deltaY)) {
+            horizontalDrag = true;
+            surface.classList.add('is-dragging');
+        }
+
+        if (horizontalDrag) {
+            event.preventDefault();
+            surface.style.setProperty('--swipe-offset', `${Math.max(-72, Math.min(72, deltaX * 0.32))}px`);
+        }
+    });
+
+    surface.addEventListener('pointerup', (event) => finish(event));
+    surface.addEventListener('pointercancel', (event) => finish(event, true));
+};
+
 const setupAmenitiesGallery = () => {
     const gallery = document.querySelector('[data-amenities-gallery]');
 
@@ -209,46 +297,105 @@ const setupAmenitiesGallery = () => {
         currentIndex = 0;
     }
 
-    const syncThumbs = (slide) => {
+    const getThumbs = (slide) => [...slide.querySelectorAll('[data-amenities-thumb]')];
+
+    const syncPhotoState = (slide) => {
         const mainImage = slide.querySelector('[data-amenities-main-image]');
-        const thumbs = [...slide.querySelectorAll('[data-amenities-thumb]')];
+        const counter = slide.querySelector('[data-amenities-photo-counter]');
+        const thumbs = getThumbs(slide);
 
         if (!mainImage || !thumbs.length) {
             return;
         }
 
+        const activeIndex = Math.max(0, thumbs.findIndex((thumb) => thumb.dataset.imageSrc === mainImage.getAttribute('src')));
+
         thumbs.forEach((thumb) => {
             thumb.classList.toggle('is-active', thumb.dataset.imageSrc === mainImage.getAttribute('src'));
         });
+
+        if (counter) {
+            counter.textContent = `${activeIndex + 1} / ${thumbs.length}`;
+        }
     };
 
-    const showSlide = (index) => {
+    const showPhoto = (slide, photoIndex, direction = 1) => {
+        const mainImage = slide.querySelector('[data-amenities-main-image]');
+        const thumbs = getThumbs(slide);
+
+        if (!mainImage || !thumbs.length) {
+            return;
+        }
+
+        const normalizedIndex = (photoIndex + thumbs.length) % thumbs.length;
+        const source = thumbs[normalizedIndex].dataset.imageSrc;
+
+        if (source && mainImage.getAttribute('src') !== source) {
+            mainImage.setAttribute('src', source);
+            animateGalleryImage(mainImage, direction);
+        }
+
+        syncPhotoState(slide);
+    };
+
+    const showSlide = (index, photoIndex = 0, direction = 1) => {
         currentIndex = (index + slides.length) % slides.length;
 
         slides.forEach((slide, slideIndex) => {
             slide.classList.toggle('is-active', slideIndex === currentIndex);
         });
 
-        syncThumbs(slides[currentIndex]);
+        showPhoto(slides[currentIndex], photoIndex, direction);
+    };
+
+    const stepPhotos = (direction) => {
+        const slide = slides[currentIndex];
+        const mainImage = slide.querySelector('[data-amenities-main-image]');
+        const thumbs = getThumbs(slide);
+
+        if (!mainImage || !thumbs.length) {
+            return;
+        }
+
+        const activeIndex = Math.max(0, thumbs.findIndex((thumb) => thumb.dataset.imageSrc === mainImage.getAttribute('src')));
+        const nextIndex = activeIndex + direction;
+
+        if (nextIndex >= 0 && nextIndex < thumbs.length) {
+            showPhoto(slide, nextIndex, direction);
+            return;
+        }
+
+        const targetSlideIndex = (currentIndex + direction + slides.length) % slides.length;
+        const targetThumbs = getThumbs(slides[targetSlideIndex]);
+        showSlide(targetSlideIndex, direction > 0 ? 0 : Math.max(0, targetThumbs.length - 1), direction);
     };
 
     slides.forEach((slide) => {
-        const mainImage = slide.querySelector('[data-amenities-main-image]');
+        const swipeSurface = slide.querySelector('[data-amenities-swipe]');
 
-        slide.querySelectorAll('[data-amenities-thumb]').forEach((thumb) => {
+        getThumbs(slide).forEach((thumb, index) => {
             thumb.addEventListener('click', () => {
-                if (!mainImage || !thumb.dataset.imageSrc) {
-                    return;
-                }
-
-                mainImage.setAttribute('src', thumb.dataset.imageSrc);
-                syncThumbs(slide);
+                const mainImage = slide.querySelector('[data-amenities-main-image]');
+                const currentPhotoIndex = getThumbs(slide).findIndex((item) => item.dataset.imageSrc === mainImage?.getAttribute('src'));
+                showPhoto(slide, index, index >= currentPhotoIndex ? 1 : -1);
             });
+        });
+
+        bindHorizontalSwipe(swipeSurface, stepPhotos);
+        swipeSurface?.addEventListener('keydown', (event) => {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
+                return;
+            }
+
+            event.preventDefault();
+            stepPhotos(event.key === 'ArrowRight' ? 1 : -1);
         });
     });
 
-    prev.addEventListener('click', () => showSlide(currentIndex - 1));
-    next.addEventListener('click', () => showSlide(currentIndex + 1));
+    prev.setAttribute('aria-label', 'Previous gallery photo');
+    next.setAttribute('aria-label', 'Next gallery photo');
+    prev.addEventListener('click', () => stepPhotos(-1));
+    next.addEventListener('click', () => stepPhotos(1));
     showSlide(currentIndex);
 };
 
@@ -1875,6 +2022,7 @@ const setupBookingPageV2 = () => {
     const availabilityUrl = form.dataset.availabilityUrl;
     const unavailableDatesUrl = form.dataset.unavailableDatesUrl;
     const quoteUrl = form.dataset.quoteUrl;
+    const openTimeQuoteUrl = form.dataset.openTimeQuoteUrl || '';
     const layoutUrl = form.dataset.layoutUrl;
     const minimumDuration = Number(form.dataset.minimumDuration || '60');
     const horizonDays = Number(form.dataset.unavailableDatesHorizon || '30');
@@ -1912,6 +2060,11 @@ const setupBookingPageV2 = () => {
     const paymentProofWrap = form.querySelector('[data-payment-proof-wrap]');
     const paymentProofInput = form.querySelector('input[name="payment_proof"]');
     const isAdminMode = form.dataset.adminMode === 'true';
+    const openTimeStart = form.querySelector('[data-open-time-start]');
+    const openTimeCutoff = form.querySelector('[data-open-time-cutoff]');
+    const openTimeMinimum = form.querySelector('[data-open-time-minimum]');
+    const openTimeMessage = form.querySelector('[data-open-time-message]');
+    const openTimeContinue = form.querySelector('[data-open-time-continue]');
     const roomCards = [...form.querySelectorAll('[data-room-card]')];
     const roomRail = form.querySelector('[data-room-cards]');
     const roomScrollPrev = form.querySelector('[data-room-scroll-prev]');
@@ -2023,6 +2176,8 @@ const setupBookingPageV2 = () => {
     const roomPreviewDescription = document.querySelector('[data-room-preview-description]');
     const roomPreviewImage = document.querySelector('[data-room-preview-image]');
     const roomPreviewThumbs = document.querySelector('[data-room-preview-thumbs]');
+    const roomPreviewSwipe = document.querySelector('[data-room-preview-swipe]');
+    const roomPreviewCounter = document.querySelector('[data-room-preview-counter]');
     const roomPreviewTriggers = [...document.querySelectorAll('[data-room-preview-open]')];
     const roomPreviewClosers = [...document.querySelectorAll('[data-room-preview-close]')];
     const shouldShowCheckout = form.dataset.showCheckout === 'true';
@@ -2037,6 +2192,7 @@ const setupBookingPageV2 = () => {
     let blockedDates = new Set();
     let unavailableDatesRoomId = '';
     let currentQuote = null;
+    let openTimeQuote = null;
     let bookingMode = bookingModeInput.value || 'room';
     let scheduleCart = [];
     let monthlyRangeAnchor = bookingDateInput.value || '';
@@ -2429,6 +2585,37 @@ const setupBookingPageV2 = () => {
 
     const getSelectedRoomCard = () => roomCardMap.get(roomSelect.value);
 
+    let roomPreviewImages = [];
+    let roomPreviewIndex = 0;
+
+    const renderRoomPreviewImage = (index, direction = 1) => {
+        if (!roomPreviewImage || !roomPreviewImages.length) {
+            return;
+        }
+
+        roomPreviewIndex = (index + roomPreviewImages.length) % roomPreviewImages.length;
+        const image = roomPreviewImages[roomPreviewIndex];
+
+        if (roomPreviewImage.getAttribute('src') !== image) {
+            roomPreviewImage.setAttribute('src', image);
+            animateGalleryImage(roomPreviewImage, direction);
+        }
+
+        roomPreviewThumbs?.querySelectorAll('.booking-room-preview-modal__thumb').forEach((item, itemIndex) => {
+            item.classList.toggle('is-active', itemIndex === roomPreviewIndex);
+        });
+
+        if (roomPreviewCounter) {
+            roomPreviewCounter.textContent = `${roomPreviewIndex + 1} / ${roomPreviewImages.length}`;
+        }
+    };
+
+    const stepRoomPreview = (direction) => {
+        if (roomPreviewImages.length > 1) {
+            renderRoomPreviewImage(roomPreviewIndex + direction, direction);
+        }
+    };
+
     const closeRoomPreview = () => {
         if (!roomPreviewModal) {
             return;
@@ -2453,16 +2640,17 @@ const setupBookingPageV2 = () => {
                 return [];
             }
         })();
-        const images = gallery.length ? gallery : [roomPreviewImage.getAttribute('src') || ''];
+        roomPreviewImages = gallery.length ? gallery : [roomPreviewImage.getAttribute('src') || ''];
+        roomPreviewIndex = 0;
 
         roomPreviewTitle.textContent = roomCard.dataset.roomName || 'Room preview';
         roomPreviewSpace.textContent = roomCard.dataset.roomSpace || '';
         roomPreviewDescription.textContent = roomCard.dataset.roomDescription || 'See the selected room before continuing your booking.';
-        roomPreviewImage.setAttribute('src', images[0] || '');
+        roomPreviewImage.setAttribute('src', roomPreviewImages[0] || '');
         roomPreviewImage.setAttribute('alt', roomCard.dataset.roomName || 'Room preview');
         roomPreviewThumbs.innerHTML = '';
 
-        images.forEach((image, index) => {
+        roomPreviewImages.forEach((image, index) => {
             const thumb = document.createElement('button');
             thumb.type = 'button';
             thumb.className = 'booking-room-preview-modal__thumb';
@@ -2473,17 +2661,25 @@ const setupBookingPageV2 = () => {
             img.alt = `${roomCard.dataset.roomName || 'Room'} preview ${index + 1}`;
             thumb.append(img);
             thumb.addEventListener('click', () => {
-                roomPreviewImage.setAttribute('src', image);
-                roomPreviewThumbs.querySelectorAll('.booking-room-preview-modal__thumb').forEach((item, itemIndex) => {
-                    item.classList.toggle('is-active', itemIndex === index);
-                });
+                renderRoomPreviewImage(index, index >= roomPreviewIndex ? 1 : -1);
             });
             roomPreviewThumbs.append(thumb);
         });
 
+        renderRoomPreviewImage(0);
         roomPreviewModal.classList.remove('hidden');
         document.body.classList.add('modal-open');
     };
+
+    bindHorizontalSwipe(roomPreviewSwipe, stepRoomPreview);
+    roomPreviewSwipe?.addEventListener('keydown', (event) => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') {
+            return;
+        }
+
+        event.preventDefault();
+        stepRoomPreview(event.key === 'ArrowRight' ? 1 : -1);
+    });
 
     const getMonthlyOptionsForRoom = (roomId) => {
         const roomCard = roomCardMap.get(String(roomId));
@@ -2507,6 +2703,12 @@ const setupBookingPageV2 = () => {
         modePanels.forEach((panel) => {
             panel.classList.toggle('hidden', panel.dataset.bookingModePanel !== mode);
         });
+
+        if (mode === 'open_time') {
+            paymentMethod.value = 'pay_later';
+            downpaymentInput.value = '0';
+            updatePaymentDestination();
+        }
     };
 
     const syncBookingEndDateForCurrentMode = () => {
@@ -2556,6 +2758,10 @@ const setupBookingPageV2 = () => {
     const isPayLaterSelected = () => payLaterIsAllowed() && paymentMethod.value === 'pay_later';
 
     const updatePaymentDestination = () => {
+        if (bookingMode === 'open_time') {
+            paymentMethod.value = 'pay_later';
+        }
+
         if (paymentMethod.value === 'pay_later' && !payLaterIsAllowed()) {
             paymentMethod.value = '';
         }
@@ -2587,6 +2793,12 @@ const setupBookingPageV2 = () => {
         }
 
         paymentMethodCards.forEach((card) => {
+            if (bookingMode === 'open_time') {
+                card.classList.toggle('hidden', card.dataset.paymentChoice !== 'pay_later');
+            } else if (card.dataset.paymentChoice !== 'pay_later') {
+                card.classList.remove('hidden');
+            }
+
             if (card.dataset.paymentChoice === 'pay_later') {
                 card.classList.toggle('hidden', !payLaterIsAllowed());
             }
@@ -2611,6 +2823,21 @@ const setupBookingPageV2 = () => {
     };
 
     const updateCheckoutSummary = () => {
+        if (bookingMode === 'open_time' && openTimeQuote) {
+            checkoutStandardSummary.classList.remove('hidden');
+            checkoutScheduleCount.classList.add('hidden');
+            checkoutScheduleList.classList.add('hidden');
+            checkoutRoom.textContent = getSelectedRoomCard()?.dataset.roomName || 'Open Time room';
+            checkoutDate.textContent = formatDate(openTimeQuote.booking_date);
+            checkoutEndDateRow.classList.remove('hidden');
+            checkoutEndDate.textContent = formatDate(openTimeQuote.cutoff_date);
+            checkoutStart.textContent = `${openTimeQuote.start_label} (starts now)`;
+            checkoutEnd.textContent = `${openTimeQuote.cutoff_label} hard cutoff`;
+            checkoutDuration.textContent = `Open Time · ${openTimeQuote.minimum_hours}-hour minimum`;
+            checkoutMonthlyPlanRow.classList.add('hidden');
+            return;
+        }
+
         if ((isScheduleModeActive() || bookingModeInput.value === 'schedule') && scheduleCart.length) {
             const summary = summarizeScheduleCart();
             checkoutEndDateRow.classList.add('hidden');
@@ -3648,6 +3875,54 @@ const setupBookingPageV2 = () => {
         updateScheduleSelection();
     };
 
+    const refreshOpenTimeQuote = async () => {
+        openTimeQuote = null;
+        openTimeContinue && (openTimeContinue.disabled = true);
+
+        if (!isAdminMode || bookingMode !== 'open_time' || !openTimeQuoteUrl || !roomSelect.value) {
+            if (openTimeMessage) {
+                openTimeMessage.textContent = 'Choose a room to check the safe Open Time window.';
+            }
+            return;
+        }
+
+        if (openTimeStart) openTimeStart.textContent = 'Checking...';
+        if (openTimeCutoff) openTimeCutoff.textContent = 'Checking availability...';
+        if (openTimeMinimum) openTimeMinimum.textContent = '--';
+        if (openTimeMessage) openTimeMessage.textContent = 'Checking the next booking and safe cutoff...';
+
+        try {
+            const data = await fetchJson(`${openTimeQuoteUrl}?hyve_room_id=${encodeURIComponent(roomSelect.value)}`);
+            openTimeQuote = data;
+            currentQuote = data.quote;
+            bookingDateInput.value = data.booking_date;
+            bookingEndDateInput.value = data.cutoff_date;
+            startSelect.innerHTML = `<option value="${data.start_time}">${data.start_label}</option>`;
+            endSelect.innerHTML = `<option value="${data.cutoff_time}">${data.cutoff_label}</option>`;
+            paymentMethod.value = 'pay_later';
+            downpaymentInput.value = '0';
+
+            if (openTimeStart) openTimeStart.textContent = `${data.start_label} (now)`;
+            if (openTimeCutoff) openTimeCutoff.textContent = data.cutoff_label;
+            if (openTimeMinimum) openTimeMinimum.textContent = data.minimum_charge_label;
+            if (openTimeMessage) {
+                openTimeMessage.textContent = `Safe to start. Final billing is computed when End & Checkout is pressed. The room must be released by ${data.cutoff_label}.`;
+            }
+            if (openTimeContinue) openTimeContinue.disabled = false;
+            updatePaymentDestination();
+            updateCheckoutSummary();
+            updateBalance(false);
+        } catch (error) {
+            currentQuote = null;
+            if (openTimeStart) openTimeStart.textContent = '--';
+            if (openTimeCutoff) openTimeCutoff.textContent = 'Not available';
+            if (openTimeMinimum) openTimeMinimum.textContent = '--';
+            if (openTimeMessage) {
+                openTimeMessage.textContent = error?.message || 'No safe Open Time window is available for this room right now.';
+            }
+        }
+    };
+
     const resetSlots = (message = 'Select a room and date first. Available times will appear here.') => {
         startSelect.innerHTML = '';
         endSelect.innerHTML = '';
@@ -4012,8 +4287,10 @@ const setupBookingPageV2 = () => {
         currentMonth = new Date(`${bookingDate}T00:00:00`);
         updateSlotHeading();
         renderCalendar();
-        await fetchUnavailableDates();
-        await fetchStartTimes();
+        await Promise.all([
+            fetchUnavailableDates(),
+            fetchStartTimes(),
+        ]);
 
         startSelect.value = startSlot.value;
         renderSlotButtons(
@@ -4211,8 +4488,10 @@ const setupBookingPageV2 = () => {
         renderCalendar();
 
         try {
-            await fetchUnavailableDates();
-            await fetchStartTimes();
+            await Promise.all([
+                fetchUnavailableDates(),
+                fetchStartTimes(),
+            ]);
             await renderSchedule();
         } catch (error) {
             scheduleBody.innerHTML = '<tr><td class="booking-schedule__loading" colspan="99">Unable to load the full schedule right now.</td></tr>';
@@ -4234,8 +4513,15 @@ const setupBookingPageV2 = () => {
                     return;
                 }
 
-                await fetchUnavailableDates();
-                await fetchStartTimes();
+                if (bookingMode === 'open_time') {
+                    await refreshOpenTimeQuote();
+                    return;
+                }
+
+                await Promise.all([
+                    fetchUnavailableDates(),
+                    fetchStartTimes(),
+                ]);
 
                 if (bookingMode === 'schedule') {
                     await renderSchedule();
@@ -4319,14 +4605,34 @@ const setupBookingPageV2 = () => {
                 renderMonthlyCalendar();
                 await refreshMonthlySelection();
             }
+
+            if (mode === 'open_time') {
+                await refreshOpenTimeQuote();
+            }
         });
     });
 
     paymentMethodCards.forEach((card) => {
         card.addEventListener('click', () => {
+            if (bookingMode === 'open_time' && card.dataset.paymentChoice !== 'pay_later') {
+                return;
+            }
+
             paymentMethod.value = card.dataset.paymentChoice || '';
             updatePaymentDestination();
         });
+    });
+
+    openTimeContinue?.addEventListener('click', () => {
+        if (!openTimeQuote) {
+            return;
+        }
+
+        paymentMethod.value = 'pay_later';
+        downpaymentInput.value = '0';
+        updatePaymentDestination();
+        updateCheckoutSummary();
+        showCheckout();
     });
 
     scheduleClear?.addEventListener('click', () => {
@@ -4527,12 +4833,24 @@ const setupBookingPageV2 = () => {
 
     calendarPrev.addEventListener('click', async () => {
         currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1);
-        await fetchUnavailableDatesForMonth(currentMonth);
+        renderCalendar();
+
+        try {
+            await fetchUnavailableDatesForMonth(currentMonth);
+        } catch (error) {
+            messageBody.textContent = 'The calendar moved to the previous month, but availability could not be refreshed. Please try again.';
+        }
     });
 
     calendarNext.addEventListener('click', async () => {
         currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1);
-        await fetchUnavailableDatesForMonth(currentMonth);
+        renderCalendar();
+
+        try {
+            await fetchUnavailableDatesForMonth(currentMonth);
+        } catch (error) {
+            messageBody.textContent = 'The calendar moved to the next month, but availability could not be refreshed. Please try again.';
+        }
     });
 
     monthlyStartDateInput.addEventListener('change', async () => {
@@ -4628,8 +4946,10 @@ const setupBookingPageV2 = () => {
 
     if (roomSelect.value) {
         setActiveRoom(roomSelect.value);
-        fetchUnavailableDates()
-            .then(fetchStartTimes)
+        Promise.all([
+            fetchUnavailableDates(),
+            fetchStartTimes(),
+        ])
             .then(async () => {
                 if (!initialStartTime) {
                     return;
@@ -4678,6 +4998,10 @@ const setupBookingPageV2 = () => {
                 bookingEndDateInput.value || monthDateRange(monthlyCalendarMonth)[1],
             );
             await refreshMonthlySelection();
+        }
+
+        if (bookingMode === 'open_time') {
+            await refreshOpenTimeQuote();
         }
     });
 };

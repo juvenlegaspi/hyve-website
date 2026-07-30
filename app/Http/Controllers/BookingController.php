@@ -43,6 +43,15 @@ class BookingController extends Controller
 
     private ?Collection $unavailableDateSpacesBySlug = null;
 
+    /** @var array<string, Collection<int, HyveCalendarEvent>> */
+    private array $calendarEventsByRoomAndDate = [];
+
+    /** @var array<string, HyveScheduleOverride|null> */
+    private array $scheduleOverridesByRoomAndDate = [];
+
+    /** @var array<string, Space> */
+    private array $spacesBySlug = [];
+
     public function __construct(
         private readonly DatabaseManager $database,
         private readonly HyvePricing $pricing,
@@ -187,6 +196,7 @@ class BookingController extends Controller
                 'unavailable_dates_url' => route('bookings.unavailable-dates'),
                 'layout_url' => route('bookings.room-layout'),
                 'quote_url' => route('bookings.quote'),
+                'open_time_quote_url' => $adminMode ? route('admin.bookings.open-time-quote') : null,
                 'slot_interval_minutes' => (int) config('hyve.booking.slot_interval_minutes', 30),
                 'minimum_duration_minutes' => (int) config('hyve.booking.minimum_duration_minutes', 120),
                 'unavailable_dates_horizon' => 365,
@@ -683,6 +693,49 @@ class BookingController extends Controller
         return $this->submitBooking($request, true);
     }
 
+    public function adminOpenTimeQuote(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'hyve_room_id' => [
+                'required',
+                'integer',
+                Rule::exists(HyveRoom::class, 'id')->where(fn ($query) => $query->where('status', 0)),
+            ],
+        ]);
+        $selectedRoom = HyveRoom::query()->active()->findOrFail((int) $validated['hyve_room_id']);
+        $slot = $this->resolveOpenTimeSlot($selectedRoom);
+
+        if (! $slot) {
+            return response()->json([
+                'message' => 'No conflict-free Open Time window of at least 2 hours is available for this room right now.',
+            ], 422);
+        }
+
+        $quote = $this->pricing->quoteForRoom(
+            $this->pricingRoomForSelection($selectedRoom),
+            $slot['booking_date'],
+            $slot['start_time'],
+            $slot['minimum_end_time'],
+        );
+
+        if (! $quote) {
+            return response()->json(['message' => 'No active pricing is configured for this room yet.'], 422);
+        }
+
+        return response()->json([
+            'booking_date' => $slot['booking_date'],
+            'start_time' => $slot['start_time'],
+            'cutoff_date' => $slot['cutoff']->toDateString(),
+            'cutoff_time' => $slot['cutoff']->format('H:i'),
+            'start_label' => $slot['actual_start']->format('g:i A'),
+            'cutoff_label' => $slot['cutoff']->format('F j, Y g:i A'),
+            'minimum_hours' => (int) $quote['minimum_hours'],
+            'minimum_charge' => (float) $quote['total_amount'],
+            'minimum_charge_label' => 'Php '.number_format((float) $quote['total_amount'], 2),
+            'quote' => $quote,
+        ]);
+    }
+
     private function submitBooking(StoreBookingRequest $request, bool $adminMode = false): RedirectResponse
     {
         $user = $request->user();
@@ -695,11 +748,54 @@ class BookingController extends Controller
 
         $isScheduleMode = ($validated['booking_mode'] ?? 'room') === 'schedule';
         $isMonthlyMode = ($validated['booking_mode'] ?? 'room') === 'monthly';
+        $isOpenTimeMode = $adminMode && ($validated['booking_mode'] ?? 'room') === 'open_time';
         $bookingItems = [];
         $grandTotal = 0.0;
         $reservedRangesByRoom = [];
 
-        if ($isScheduleMode) {
+        if ($isOpenTimeMode) {
+            $selectedRoom = HyveRoom::query()->active()->findOrFail($validated['hyve_room_id']);
+            $slot = $this->resolveOpenTimeSlot($selectedRoom);
+
+            if (! $slot) {
+                return back()
+                    ->withInput()
+                    ->withErrors([
+                        'hyve_room_id' => 'No conflict-free Open Time window of at least 2 hours is available for this room right now.',
+                    ]);
+            }
+
+            $quote = $this->pricing->quoteForRoom(
+                $this->pricingRoomForSelection($selectedRoom),
+                $slot['booking_date'],
+                $slot['start_time'],
+                $slot['minimum_end_time'],
+            );
+
+            if (! $quote) {
+                return back()
+                    ->withInput()
+                    ->withErrors(['hyve_room_id' => 'No active pricing is configured for this room yet.']);
+            }
+
+            $bookingItems[] = [
+                'room' => $slot['room'],
+                'selected_room' => $slot['room'],
+                'booking_mode' => 'open_time',
+                'space' => $this->spaceForRoom($slot['room']),
+                'quote' => $quote,
+                'booking_date' => $slot['booking_date'],
+                'booking_end_date' => $slot['cutoff']->toDateString(),
+                'start_time' => $slot['start_time'],
+                'end_time' => $slot['cutoff']->format('H:i'),
+                'display_start_time' => $slot['actual_start']->format('H:i'),
+                'display_end_time' => null,
+                'is_monthly' => false,
+                'is_open_time' => true,
+                'actual_start_at' => $slot['actual_start'],
+            ];
+            $grandTotal = (float) $quote['total_amount'];
+        } elseif ($isScheduleMode) {
             $unavailableItems = [];
 
             foreach ((array) ($validated['selected_schedule_items'] ?? []) as $item) {
@@ -925,7 +1021,7 @@ class BookingController extends Controller
             ];
 
         try {
-            $header = $this->database->transaction(function () use ($user, $contactDetails, $validated, $bookingItems, $grandTotal, $paymentProofPath, $paymentProofName, $customerDownpayment, $remainingBalance, $paymentStatus, $adminMode, $isCashWalkIn, $submissionToken): BookingHeader {
+            $header = $this->database->transaction(function () use ($user, $contactDetails, $validated, $bookingItems, $grandTotal, $paymentProofPath, $paymentProofName, $customerDownpayment, $remainingBalance, $paymentStatus, $adminMode, $isCashWalkIn, $isOpenTimeMode, $submissionToken): BookingHeader {
                 $bookingItems = $this->lockAndResolveBookingItemsAvailable($bookingItems);
 
                 $header = null;
@@ -971,7 +1067,7 @@ class BookingController extends Controller
                         'downpayment_amount' => $customerDownpayment,
                         'balance_amount' => $remainingBalance,
                         'notes' => $validated['notes'] ?? null,
-                        'status' => BookingHeader::STATUS_PENDING,
+                        'status' => $isOpenTimeMode ? 'confirmed' : BookingHeader::STATUS_PENDING,
                         ...$contactDetails,
                     ]);
                 }
@@ -1000,7 +1096,14 @@ class BookingController extends Controller
                         'rate_name' => $quote['rate_name'],
                         'rate_amount' => $quote['succeeding_hour_rate'],
                         'subtotal' => $quote['total_amount'],
-                        'status' => BookingDetail::STATUS_PENDING,
+                        'status' => ($bookingItem['is_open_time'] ?? false)
+                            ? BookingDetail::STATUS_CONFIRMED
+                            : BookingDetail::STATUS_PENDING,
+                        'progress_status' => ($bookingItem['is_open_time'] ?? false)
+                            ? BookingDetail::PROGRESS_IN_PROGRESS
+                            : BookingDetail::PROGRESS_SCHEDULED,
+                        'is_open_time' => (bool) ($bookingItem['is_open_time'] ?? false),
+                        'actual_start_at' => $bookingItem['actual_start_at'] ?? null,
                     ]);
 
                     if (Schema::hasTable('booking_activities')) {
@@ -1008,8 +1111,8 @@ class BookingController extends Controller
                             'booking_header_id' => $header->getKey(),
                             'booking_detail_id' => $detail->getKey(),
                             'actor_user_id' => $user?->getKey(),
-                            'event_key' => 'booking_submitted',
-                            'event_label' => 'Booking submitted',
+                            'event_key' => ($bookingItem['is_open_time'] ?? false) ? 'open_time_started' : 'booking_submitted',
+                            'event_label' => ($bookingItem['is_open_time'] ?? false) ? 'Open Time started' : 'Booking submitted',
                             'reference_no' => $header->reference_no,
                             'customer_name' => $header->customer_name,
                             'room_name' => $room->room_name,
@@ -1019,9 +1122,11 @@ class BookingController extends Controller
                                 : Carbon::parse((string) $detail->start_time)->format('g:i A')
                                     .' - '
                                     .Carbon::parse((string) $detail->end_time)->format('g:i A'),
-                            'message' => ($bookingItem['is_monthly'] ?? false)
+                            'message' => ($bookingItem['is_open_time'] ?? false)
+                                ? 'Open Time walk-in started for '.$room->room_name.' until '.$bookingItem['booking_end_date'].' '.$bookingItem['end_time'].'.'
+                                : (($bookingItem['is_monthly'] ?? false)
                                 ? 'New monthly booking request submitted for '.$room->room_name.'.'
-                                : 'New booking request submitted for '.$room->room_name.'.',
+                                : 'New booking request submitted for '.$room->room_name.'.'),
                         ]);
                     }
                 }
@@ -1241,6 +1346,21 @@ class BookingController extends Controller
     {
         return $rooms
             ->reject(fn (HyveRoom $room): bool => $room->isSharedTable() && $sharedTableRepresentative && (int) $room->id !== (int) $sharedTableRepresentative->id)
+            ->sortBy(function (HyveRoom $room): int {
+                if ($room->isSharedTable()) {
+                    return 0;
+                }
+
+                if ($room->isConferenceRoom()) {
+                    return 10_000;
+                }
+
+                if (preg_match('/^Room\s+(\d+)$/', $room->room_name, $matches) === 1) {
+                    return 100 + (int) $matches[1];
+                }
+
+                return 5_000 + (int) $room->getKey();
+            })
             ->values();
     }
 
@@ -1270,6 +1390,76 @@ class BookingController extends Controller
         }
 
         return null;
+    }
+
+    /**
+     * @return array{
+     *     room: HyveRoom,
+     *     actual_start: Carbon,
+     *     cutoff: Carbon,
+     *     booking_date: string,
+     *     start_time: string,
+     *     minimum_end_time: string
+     * }|null
+     */
+    private function resolveOpenTimeSlot(HyveRoom $selectedRoom): ?array
+    {
+        $actualStart = now()->startOfMinute();
+        $intervalMinutes = max(1, (int) config('hyve.booking.slot_interval_minutes', 30));
+        $minimumMinutes = max($intervalMinutes, (int) config('hyve.booking.minimum_duration_minutes', 120));
+        $maximumHours = max(2, (int) config('hyve.booking.open_time_max_duration_hours', 12));
+        $reservationStart = $actualStart->copy();
+
+        if ($reservationStart->minute % $intervalMinutes !== 0) {
+            $reservationStart->addMinutes($intervalMinutes - ($reservationStart->minute % $intervalMinutes));
+        }
+
+        $reservationStart->second(0);
+        $minimumEnd = $reservationStart->copy()->addMinutes($minimumMinutes);
+        $maximumEnd = $reservationStart->copy()->addHours($maximumHours);
+        $candidates = $selectedRoom->isSharedTable()
+            ? HyveRoom::query()->active()->where('room_name', 'like', 'Table %')->orderBy('id')->get()
+            : collect([$selectedRoom]);
+        $best = null;
+
+        foreach ($candidates as $candidate) {
+            $currentlyBlocked = $this->blockedRangesForRoomHorizon($candidate, $actualStart->toDateString())
+                ->contains(fn (array $range): bool => $actualStart->gte($range['start']) && $actualStart->lt($range['end']));
+
+            if ($currentlyBlocked) {
+                continue;
+            }
+
+            $lastAvailableEnd = null;
+
+            for ($cursor = $minimumEnd->copy(); $cursor->lte($maximumEnd); $cursor->addMinutes($intervalMinutes)) {
+                if (! $this->isDirectRoomTimeRangeAvailable(
+                    $candidate,
+                    $reservationStart->toDateString(),
+                    $reservationStart->format('H:i'),
+                    $cursor->format('H:i'),
+                )) {
+                    break;
+                }
+
+                $lastAvailableEnd = $cursor->copy();
+            }
+
+            if (! $lastAvailableEnd || ($best && $lastAvailableEnd->lte($best['cutoff']))) {
+                continue;
+            }
+
+            $best = [
+                'room' => $candidate,
+                'actual_start' => $actualStart->copy(),
+                'cutoff' => $lastAvailableEnd,
+                'booking_date' => $reservationStart->toDateString(),
+                'start_time' => $reservationStart->format('H:i'),
+                'minimum_end_time' => $minimumEnd->format('H:i'),
+            ];
+        }
+
+        return $best;
     }
 
     private function normalizedEndDateTime(string $bookingDate, string $startTime, string $endTime): Carbon
@@ -1621,8 +1811,14 @@ class BookingController extends Controller
 
     private function scheduleOverrideForRoom(string $bookingDate, ?HyveRoom $room = null): ?HyveScheduleOverride
     {
+        $cacheKey = ($room?->getKey() ?? 'global').'|'.$bookingDate;
+
+        if (array_key_exists($cacheKey, $this->scheduleOverridesByRoomAndDate)) {
+            return $this->scheduleOverridesByRoomAndDate[$cacheKey];
+        }
+
         if ($this->unavailableDateScheduleOverrides !== null) {
-            return $this->unavailableDateScheduleOverrides
+            return $this->scheduleOverridesByRoomAndDate[$cacheKey] = $this->unavailableDateScheduleOverrides
                 ->filter(function (HyveScheduleOverride $override) use ($bookingDate, $room): bool {
                     if (optional($override->booking_date)->toDateString() !== $bookingDate) {
                         return false;
@@ -1636,7 +1832,7 @@ class BookingController extends Controller
                 ->first();
         }
 
-        return HyveScheduleOverride::query()
+        return $this->scheduleOverridesByRoomAndDate[$cacheKey] = HyveScheduleOverride::query()
             ->when($room, function ($query) use ($room) {
                 $query->where(function ($builder) use ($room) {
                     $builder->where('hyve_room_id', $room->getKey())
@@ -1755,15 +1951,17 @@ class BookingController extends Controller
 
     private function spaceForRoom(HyveRoom $room): Space
     {
-        $cachedSpace = $this->unavailableDateSpacesBySlug?->get($room->mappedSpaceSlug());
+        $slug = $room->mappedSpaceSlug();
+        $cachedSpace = $this->unavailableDateSpacesBySlug?->get($slug)
+            ?? ($this->spacesBySlug[$slug] ?? null);
 
         if ($cachedSpace instanceof Space) {
             return $cachedSpace;
         }
 
-        return Space::query()
+        return $this->spacesBySlug[$slug] = Space::query()
             ->active()
-            ->where('slug', $room->mappedSpaceSlug())
+            ->where('slug', $slug)
             ->firstOrFail();
     }
 
@@ -2109,10 +2307,16 @@ class BookingController extends Controller
      */
     private function calendarEventsForRoomOnDate(HyveRoom $room, string $bookingDate): Collection
     {
+        $cacheKey = $room->getKey().'|'.$bookingDate;
+
+        if (isset($this->calendarEventsByRoomAndDate[$cacheKey])) {
+            return $this->calendarEventsByRoomAndDate[$cacheKey];
+        }
+
         if ($this->unavailableDateCalendarEvents !== null) {
             $targetDate = Carbon::parse($bookingDate)->startOfDay();
 
-            return $this->unavailableDateCalendarEvents
+            return $this->calendarEventsByRoomAndDate[$cacheKey] = $this->unavailableDateCalendarEvents
                 ->filter(function (HyveCalendarEvent $event) use ($room, $targetDate): bool {
                     return $event->start_date?->copy()->startOfDay()->lte($targetDate)
                         && $event->end_date?->copy()->startOfDay()->gte($targetDate)
@@ -2124,7 +2328,7 @@ class BookingController extends Controller
         $targetDate = Carbon::parse($bookingDate);
         $this->calendarService->ensureSystemHolidaysForYears([$targetDate->year, $targetDate->copy()->addYear()->year]);
 
-        return HyveCalendarEvent::query()
+        return $this->calendarEventsByRoomAndDate[$cacheKey] = HyveCalendarEvent::query()
             ->with('rooms:id,room_name')
             ->active()
             ->forDate($bookingDate)

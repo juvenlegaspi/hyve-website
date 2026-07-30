@@ -38,7 +38,13 @@
             <div class="amenities-gallery__viewport">
                 @foreach ($amenityGallery as $space)
                     <article class="amenities-gallery__slide @if ($loop->first) is-active @endif" data-amenities-slide>
-                        <div class="amenities-gallery__media">
+                        <div
+                            class="amenities-gallery__media"
+                            data-amenities-swipe
+                            role="group"
+                            tabindex="0"
+                            aria-label="Swipe or use the arrow keys to browse {{ $space['title'] }} photos"
+                        >
                             <img
                                 src="{{ $space['images'][0] }}"
                                 alt="{{ $space['title'] }}"
@@ -46,6 +52,10 @@
                                 loading="lazy"
                                 decoding="async"
                             >
+                            <span class="gallery-swipe-hint" aria-hidden="true">Swipe</span>
+                            <span class="gallery-photo-counter" data-amenities-photo-counter aria-live="polite">
+                                1 / {{ count($space['images']) }}
+                            </span>
                         </div>
 
                         <div class="amenities-gallery__body">

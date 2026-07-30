@@ -731,6 +731,164 @@
             display: none;
         }
 
+        .admin-extension-modal {
+            position: fixed;
+            inset: 0;
+            z-index: 10080;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+
+        .admin-extension-modal.hidden {
+            display: none;
+        }
+
+        .admin-extension-modal__backdrop {
+            position: absolute;
+            inset: 0;
+            border: 0;
+            background: rgba(12, 25, 20, 0.58);
+            backdrop-filter: blur(12px);
+        }
+
+        .admin-extension-modal__card {
+            position: relative;
+            z-index: 1;
+            width: min(38rem, 100%);
+            max-height: calc(100vh - 2rem);
+            overflow-y: auto;
+            border: 1px solid rgba(255, 255, 255, 0.55);
+            border-radius: 1.5rem;
+            background: #fffdf9;
+            padding: 1.25rem;
+            box-shadow: 0 30px 90px rgba(13, 31, 24, 0.3);
+        }
+
+        .admin-extension-modal__summary,
+        .admin-extension-modal__financials {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.75rem;
+            margin-top: 1rem;
+        }
+
+        .admin-extension-modal__summary > div,
+        .admin-extension-modal__financials > div {
+            border: 1px solid #e4e9df;
+            border-radius: 1rem;
+            background: #f8faf5;
+            padding: 0.85rem;
+        }
+
+        .admin-extension-modal__summary span,
+        .admin-extension-modal__financials span {
+            display: block;
+            color: #989187;
+            font-size: 0.67rem;
+            font-weight: 800;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+
+        .admin-extension-modal__summary strong,
+        .admin-extension-modal__financials strong {
+            display: block;
+            margin-top: 0.3rem;
+            color: #18332b;
+            font-size: 0.88rem;
+        }
+
+        .admin-extension-modal__options {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.7rem;
+            margin-top: 1rem;
+        }
+
+        .admin-extension-modal__option {
+            display: grid;
+            gap: 0.25rem;
+            border: 1px solid #dfe6da;
+            border-radius: 1rem;
+            background: #fff;
+            padding: 0.9rem;
+            color: #29463d;
+            text-align: left;
+            cursor: pointer;
+        }
+
+        .admin-extension-modal__option strong {
+            font-size: 0.88rem;
+        }
+
+        .admin-extension-modal__option span {
+            color: #827b71;
+            font-size: 0.73rem;
+        }
+
+        .admin-extension-modal__option small {
+            color: #44793b;
+            font-size: 0.72rem;
+            font-weight: 800;
+        }
+
+        .admin-extension-modal__option.is-active {
+            border-color: #72a15e;
+            background: #f2f8e9;
+            box-shadow: 0 10px 28px rgba(54, 100, 48, 0.12);
+        }
+
+        .admin-extension-modal__note,
+        .admin-extension-modal__error,
+        .admin-extension-modal__empty {
+            margin-top: 0.85rem;
+            border-radius: 0.85rem;
+            padding: 0.75rem 0.85rem;
+            font-size: 0.75rem;
+            line-height: 1.5;
+        }
+
+        .admin-extension-modal__note,
+        .admin-extension-modal__empty {
+            background: #f4f6f1;
+            color: #747b71;
+        }
+
+        .admin-extension-modal__error {
+            background: #fff0ed;
+            color: #a44334;
+        }
+
+        .admin-extension-modal__actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.7rem;
+            margin-top: 1rem;
+        }
+
+        .admin-extension-modal__actions button {
+            border: 1px solid #dce4d7;
+            border-radius: 0.9rem;
+            background: #fff;
+            padding: 0.8rem 1rem;
+            color: #385047;
+            font-size: 0.78rem;
+            font-weight: 800;
+        }
+
+        .admin-extension-modal__actions [data-admin-extension-confirm] {
+            border-color: #44793b;
+            background: #44793b;
+            color: #fff;
+        }
+
+        .admin-extension-modal__actions button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
         @media (max-width: 980px) {
             .admin-bookings-toolbar {
                 align-items: stretch;
@@ -797,6 +955,12 @@
             .admin-bookings-modal__actions form,
             .admin-bookings-modal__actions .admin-bookings-modal__button {
                 width: 100%;
+            }
+
+            .admin-extension-modal__summary,
+            .admin-extension-modal__financials,
+            .admin-extension-modal__options {
+                grid-template-columns: minmax(0, 1fr);
             }
         }
     </style>
@@ -1136,6 +1300,79 @@
         </div>
     </div>
 
+    <div class="admin-extension-modal hidden" data-admin-extension-modal>
+        <button type="button" class="admin-extension-modal__backdrop" data-admin-extension-close aria-label="Close extension modal"></button>
+        <div class="admin-extension-modal__card" role="dialog" aria-modal="true" aria-labelledby="admin-extension-title">
+            <div class="admin-bookings-modal__top">
+                <div>
+                    <p class="admin-bookings-modal__eyebrow">Conflict-safe extension</p>
+                    <h2 id="admin-extension-title" class="admin-bookings-modal__title">Extend booking</h2>
+                    <p class="admin-bookings-modal__subtitle">Select one of the verified available choices below.</p>
+                </div>
+                <button type="button" class="admin-bookings-modal__close" data-admin-extension-close aria-label="Close extension modal">&times;</button>
+            </div>
+
+            <div class="admin-extension-modal__summary">
+                <div><span>Room</span><strong data-admin-extension-room>Loading...</strong></div>
+                <div><span>Current end</span><strong data-admin-extension-current-end>Loading...</strong></div>
+            </div>
+
+            <div class="admin-extension-modal__options" data-admin-extension-options>
+                <div class="admin-extension-modal__empty">Checking available extension times...</div>
+            </div>
+            <p class="admin-extension-modal__note" data-admin-extension-note>Availability is checked against bookings, schedules, and calendar blocks.</p>
+            <p class="admin-extension-modal__error hidden" data-admin-extension-error></p>
+
+            <div class="admin-extension-modal__financials hidden" data-admin-extension-financials>
+                <div><span>Added charge</span><strong data-admin-extension-charge>--</strong></div>
+                <div><span>New booking total</span><strong data-admin-extension-total>--</strong></div>
+                <div><span>New balance</span><strong data-admin-extension-balance>--</strong></div>
+                <div><span>New end</span><strong data-admin-extension-new-end>--</strong></div>
+            </div>
+
+            <div class="admin-extension-modal__actions">
+                <button type="button" data-admin-extension-close>Cancel</button>
+                <button type="button" data-admin-extension-confirm disabled>Confirm extension</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="admin-extension-modal hidden" data-admin-open-time-checkout>
+        <button type="button" class="admin-extension-modal__backdrop" data-admin-open-time-close aria-label="Close checkout modal"></button>
+        <div class="admin-extension-modal__card" role="dialog" aria-modal="true" aria-labelledby="admin-open-time-checkout-title">
+            <div class="admin-bookings-modal__top">
+                <div>
+                    <p class="admin-bookings-modal__eyebrow">Open Time checkout</p>
+                    <h2 id="admin-open-time-checkout-title" class="admin-bookings-modal__title">End session &amp; collect payment</h2>
+                    <p class="admin-bookings-modal__subtitle">The final charge will use the actual stay, rounded up to the next 30-minute interval with the 2-hour minimum.</p>
+                </div>
+                <button type="button" class="admin-bookings-modal__close" data-admin-open-time-close aria-label="Close checkout modal">&times;</button>
+            </div>
+
+            <div class="admin-extension-modal__summary">
+                <div><span>Room</span><strong data-admin-open-time-room>--</strong></div>
+                <div><span>Reserved cutoff</span><strong data-admin-open-time-cutoff>--</strong></div>
+            </div>
+
+            <p class="admin-extension-modal__note">Choose the method received at the front desk. Admin-recorded checkout payments are approved immediately.</p>
+            <div class="admin-extension-modal__options">
+                <button type="button" class="admin-extension-modal__option" data-admin-open-time-method="cash"><strong>Cash</strong><span>Collected at front desk</span></button>
+                <button type="button" class="admin-extension-modal__option" data-admin-open-time-method="gcash"><strong>GCash</strong><span>Verified by admin</span></button>
+                <button type="button" class="admin-extension-modal__option" data-admin-open-time-method="bank_transfer"><strong>Bank transfer</strong><span>Verified by admin</span></button>
+            </div>
+            <label class="mt-3 block text-[0.75rem] font-semibold text-[#4a544c]">
+                Notes / reference (optional)
+                <textarea rows="3" class="mt-2 w-full rounded-xl border border-[#d9dfd7] px-3 py-2 font-normal" data-admin-open-time-notes placeholder="OR number, GCash reference, or checkout note"></textarea>
+            </label>
+            <p class="admin-extension-modal__error hidden" data-admin-open-time-error></p>
+
+            <div class="admin-extension-modal__actions">
+                <button type="button" data-admin-open-time-close>Cancel</button>
+                <button type="button" data-admin-open-time-confirm disabled>End &amp; record full payment</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         (() => {
             const modal = document.querySelector('[data-admin-bookings-modal]');
@@ -1143,6 +1380,18 @@
             const filterForm = document.querySelector('[data-admin-bookings-filters]');
             const resultsChip = document.querySelector('[data-admin-bookings-results]');
             const tableBody = document.querySelector('[data-admin-bookings-table-body]');
+            const extensionModal = document.querySelector('[data-admin-extension-modal]');
+            const extensionOptions = extensionModal?.querySelector('[data-admin-extension-options]');
+            const extensionError = extensionModal?.querySelector('[data-admin-extension-error]');
+            const extensionFinancials = extensionModal?.querySelector('[data-admin-extension-financials]');
+            const extensionConfirm = extensionModal?.querySelector('[data-admin-extension-confirm]');
+            const openTimeCheckout = document.querySelector('[data-admin-open-time-checkout]');
+            const openTimeCheckoutConfirm = openTimeCheckout?.querySelector('[data-admin-open-time-confirm]');
+            const openTimeCheckoutError = openTimeCheckout?.querySelector('[data-admin-open-time-error]');
+            let extensionAction = null;
+            let selectedExtension = null;
+            let openTimeCheckoutAction = null;
+            let openTimeCheckoutMethod = '';
 
             if (!modal) {
                 return;
@@ -1759,8 +2008,8 @@
                                 ? `
                                     <div class="admin-bookings-modal__actions">
                                         ${booking.can_start ? `<button type="button" class="admin-bookings-modal__button admin-bookings-modal__button--primary" data-admin-booking-action="start" data-booking-id="${booking.id}" data-url="${booking.start_url}">Start</button>` : ''}
-                                        ${booking.can_end ? `<button type="button" class="admin-bookings-modal__button" data-admin-booking-action="end" data-booking-id="${booking.id}" data-url="${booking.end_url}">End</button>` : ''}
-                                        ${booking.can_extend ? `<button type="button" class="admin-bookings-modal__button" data-admin-booking-action="extend" data-booking-id="${booking.id}" data-url="${booking.extend_url}" data-current-end="${booking.end_time_value || ''}">Extend</button>` : ''}
+                                        ${booking.can_end ? `<button type="button" class="admin-bookings-modal__button" data-admin-booking-action="end" data-booking-id="${booking.id}" data-url="${booking.end_url}" data-open-time="${booking.is_open_time ? '1' : '0'}">${booking.is_open_time ? 'End & Checkout' : 'End'}</button>` : ''}
+                                        ${booking.can_extend ? `<button type="button" class="admin-bookings-modal__button" data-admin-booking-action="extend" data-booking-id="${booking.id}" data-url="${booking.extend_url}" data-options-url="${booking.extension_options_url || ''}">Extend</button>` : ''}
                                         ${rescheduleButton}
                                     </div>
                                 `
@@ -1836,6 +2085,161 @@
                         rebuildSummary();
                         openBookingRow(activeRow);
                     };
+
+                    const setExtensionError = (message = '') => {
+                        if (!extensionError) {
+                            return;
+                        }
+
+                        extensionError.textContent = message;
+                        extensionError.classList.toggle('hidden', message === '');
+                    };
+
+                    const closeExtensionModal = () => {
+                        if (!extensionModal) {
+                            return;
+                        }
+
+                        extensionModal.classList.add('hidden');
+                        extensionAction = null;
+                        selectedExtension = null;
+                        extensionConfirm && (extensionConfirm.disabled = true);
+                        extensionFinancials?.classList.add('hidden');
+                        setExtensionError('');
+                    };
+
+                    const selectExtensionOption = (option, button) => {
+                        if (!extensionModal || !extensionOptions || !extensionConfirm) {
+                            return;
+                        }
+
+                        selectedExtension = option;
+                        extensionOptions.querySelectorAll('[data-admin-extension-choice]').forEach((item) => {
+                            item.classList.toggle('is-active', item === button);
+                        });
+                        extensionModal.querySelector('[data-admin-extension-charge]').textContent = option.amount_label || '--';
+                        extensionModal.querySelector('[data-admin-extension-total]').textContent = option.new_total_label || '--';
+                        extensionModal.querySelector('[data-admin-extension-balance]').textContent = option.new_balance_label || '--';
+                        extensionModal.querySelector('[data-admin-extension-new-end]').textContent = option.end_label || '--';
+                        extensionFinancials?.classList.remove('hidden');
+                        extensionConfirm.disabled = false;
+                        setExtensionError('');
+                    };
+
+                    const openExtensionModal = async (button) => {
+                        if (!extensionModal || !extensionOptions || !extensionConfirm) {
+                            return;
+                        }
+
+                        extensionAction = {
+                            bookingId: Number(button.dataset.bookingId || 0),
+                            confirmUrl: button.dataset.url || '',
+                            optionsUrl: button.dataset.optionsUrl || '',
+                        };
+                        selectedExtension = null;
+                        extensionConfirm.disabled = true;
+                        extensionFinancials?.classList.add('hidden');
+                        extensionOptions.innerHTML = '<div class="admin-extension-modal__empty">Checking available extension times...</div>';
+                        extensionModal.querySelector('[data-admin-extension-room]').textContent = 'Loading...';
+                        extensionModal.querySelector('[data-admin-extension-current-end]').textContent = 'Loading...';
+                        extensionModal.querySelector('[data-admin-extension-note]').textContent = 'Availability is checked against bookings, schedules, and calendar blocks.';
+                        setExtensionError('');
+                        extensionModal.classList.remove('hidden');
+
+                        try {
+                            const response = await fetch(extensionAction.optionsUrl, {
+                                headers: {
+                                    'Accept': 'application/json',
+                                    'X-Requested-With': 'XMLHttpRequest',
+                                },
+                            });
+                            const payload = await response.json();
+
+                            if (!response.ok) {
+                                throw new Error(payload.message || 'Unable to load extension choices.');
+                            }
+
+                            extensionModal.querySelector('[data-admin-extension-room]').textContent = payload.room || '--';
+                            extensionModal.querySelector('[data-admin-extension-current-end]').textContent = payload.current_end || '--';
+                            extensionModal.querySelector('[data-admin-extension-note]').textContent = payload.availability_note || '';
+                            const options = Array.isArray(payload.options) ? payload.options : [];
+
+                            if (!options.length) {
+                                extensionOptions.innerHTML = '<div class="admin-extension-modal__empty">No conflict-free extension is available for this booking.</div>';
+                                return;
+                            }
+
+                            extensionOptions.innerHTML = options.map((option, index) => `
+                                <button type="button" class="admin-extension-modal__option" data-admin-extension-choice="${index}">
+                                    <strong>${escapeHtml(option.duration_label)}</strong>
+                                    <span>Until ${escapeHtml(option.end_label)}</span>
+                                    <small>Add ${escapeHtml(option.amount_label)}</small>
+                                </button>
+                            `).join('');
+
+                            extensionOptions.querySelectorAll('[data-admin-extension-choice]').forEach((optionButton) => {
+                                optionButton.addEventListener('click', () => {
+                                    const index = Number(optionButton.dataset.adminExtensionChoice);
+                                    selectExtensionOption(options[index], optionButton);
+                                });
+                            });
+                        } catch (error) {
+                            extensionOptions.innerHTML = '<div class="admin-extension-modal__empty">Extension choices could not be loaded.</div>';
+                            setExtensionError(error?.message || 'Unable to load extension choices.');
+                        }
+                    };
+
+                    extensionModal?.querySelectorAll('[data-admin-extension-close]').forEach((button) => {
+                        button.addEventListener('click', closeExtensionModal);
+                    });
+
+                    extensionConfirm?.addEventListener('click', async () => {
+                        if (!extensionAction?.confirmUrl || !selectedExtension?.end_at) {
+                            return;
+                        }
+
+                        extensionConfirm.disabled = true;
+                        extensionConfirm.textContent = 'Confirming...';
+                        setExtensionError('');
+
+                        try {
+                            const response = await fetch(extensionAction.confirmUrl, {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'Accept': 'application/json',
+                                    'X-CSRF-TOKEN': csrfToken,
+                                    'X-Requested-With': 'XMLHttpRequest',
+                                },
+                                body: JSON.stringify({
+                                    extension_end_at: selectedExtension.end_at,
+                                }),
+                            });
+                            const payload = await response.json();
+
+                            if (!response.ok) {
+                                throw new Error(
+                                    payload.errors?.extension_end_at?.[0]
+                                    || payload.message
+                                    || 'This extension is no longer available.',
+                                );
+                            }
+
+                            if (payload.booking && Array.isArray(payload.booking.bookings)) {
+                                closeExtensionModal();
+                                syncOpenBookingModal(payload.booking);
+                                setNotice(payload.message ?? 'Booking extended successfully.', false);
+                                return;
+                            }
+
+                            throw new Error('The booking was updated, but its refreshed details could not be loaded.');
+                        } catch (error) {
+                            setExtensionError(error?.message || 'Unable to confirm the extension.');
+                        } finally {
+                            extensionConfirm.textContent = 'Confirm extension';
+                            extensionConfirm.disabled = selectedExtension === null;
+                        }
+                    });
 
             if (notifyWrap) {
                 const notifyToggle = notifyWrap.querySelector('[data-admin-bookings-notify-toggle]');
@@ -1958,24 +2362,24 @@
                 let requestBody = {};
 
                 if (button.dataset.adminBookingAction === 'extend') {
-                    const currentEnd = button.dataset.currentEnd || '';
-                    const nextEnd = window.prompt(`Enter the new end time in 24-hour format (HH:MM).\nCurrent end time: ${currentEnd || '--'}`, currentEnd);
-
-                    if (nextEnd === null) {
+                        openExtensionModal(button);
                         return;
                     }
 
-                    const normalizedEnd = nextEnd.trim();
-
-                    if (!/^\d{2}:\d{2}$/.test(normalizedEnd)) {
-                        setNotice('Please enter the new end time in HH:MM format.', true);
+                    if (button.dataset.adminBookingAction === 'end' && button.dataset.openTime === '1') {
+                        const booking = currentBookings.find((item) => Number(item.id) === bookingId);
+                        openTimeCheckoutAction = button;
+                        openTimeCheckoutMethod = '';
+                        openTimeCheckout?.querySelectorAll('[data-admin-open-time-method]').forEach((choice) => choice.classList.remove('is-active'));
+                        openTimeCheckout.querySelector('[data-admin-open-time-room]').textContent = booking?.room || '--';
+                        openTimeCheckout.querySelector('[data-admin-open-time-cutoff]').textContent = booking?.open_time_cutoff || '--';
+                        openTimeCheckout.querySelector('[data-admin-open-time-notes]').value = '';
+                        openTimeCheckoutError?.classList.add('hidden');
+                        openTimeCheckoutConfirm.disabled = true;
+                        openTimeCheckout.classList.remove('hidden');
+                        document.body.classList.add('overflow-hidden');
                         return;
                     }
-
-                    requestBody = {
-                        end_time: normalizedEnd,
-                    };
-                }
 
                 button.disabled = true;
                 setNotice('', false);
@@ -2045,6 +2449,70 @@
                 }
             });
 
+            openTimeCheckout?.querySelectorAll('[data-admin-open-time-method]').forEach((choice) => {
+                choice.addEventListener('click', () => {
+                    openTimeCheckoutMethod = choice.dataset.adminOpenTimeMethod || '';
+                    openTimeCheckout.querySelectorAll('[data-admin-open-time-method]').forEach((item) => {
+                        item.classList.toggle('is-active', item === choice);
+                    });
+                    openTimeCheckoutConfirm.disabled = !openTimeCheckoutMethod;
+                });
+            });
+
+            const closeOpenTimeCheckout = () => {
+                openTimeCheckout?.classList.add('hidden');
+                openTimeCheckoutAction = null;
+                openTimeCheckoutMethod = '';
+                document.body.classList.remove('overflow-hidden');
+            };
+
+            openTimeCheckout?.querySelectorAll('[data-admin-open-time-close]').forEach((button) => {
+                button.addEventListener('click', closeOpenTimeCheckout);
+            });
+
+            openTimeCheckoutConfirm?.addEventListener('click', async () => {
+                if (!openTimeCheckoutAction || !openTimeCheckoutMethod) {
+                    return;
+                }
+
+                openTimeCheckoutConfirm.disabled = true;
+                openTimeCheckoutError?.classList.add('hidden');
+
+                try {
+                    const response = await fetch(openTimeCheckoutAction.dataset.url, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json',
+                            'X-CSRF-TOKEN': csrfToken,
+                            'X-Requested-With': 'XMLHttpRequest',
+                        },
+                        body: JSON.stringify({
+                            payment_method: openTimeCheckoutMethod,
+                            payment_notes: openTimeCheckout.querySelector('[data-admin-open-time-notes]').value,
+                        }),
+                    });
+                    const payload = await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(payload.message || payload.errors?.payment_method?.[0] || 'Unable to complete Open Time checkout.');
+                    }
+
+                    closeOpenTimeCheckout();
+                    if (payload.booking) {
+                        syncOpenBookingModal(payload.booking);
+                    }
+                    setNotice(payload.message || 'Open Time checkout completed.', true);
+                } catch (error) {
+                    openTimeCheckoutError.textContent = error?.message || 'Unable to complete Open Time checkout.';
+                    openTimeCheckoutError.classList.remove('hidden');
+                } finally {
+                    if (openTimeCheckoutConfirm) {
+                        openTimeCheckoutConfirm.disabled = !openTimeCheckoutMethod;
+                    }
+                }
+            });
+
             modal.querySelectorAll('[data-admin-bookings-close]').forEach((button) => {
                 button.addEventListener('click', () => {
                     activeRow = null;
@@ -2053,6 +2521,12 @@
                     document.body.classList.remove('overflow-hidden');
                     setNotice('', false);
                 });
+            });
+
+            document.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape' && extensionModal && !extensionModal.classList.contains('hidden')) {
+                    closeExtensionModal();
+                }
             });
         })();
     </script>

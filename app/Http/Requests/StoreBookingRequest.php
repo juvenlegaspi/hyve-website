@@ -61,6 +61,9 @@ class StoreBookingRequest extends FormRequest
     public function rules(): array
     {
         $adminWalkIn = $this->routeIs('admin.bookings.create', 'admin.bookings.store');
+        $bookingModes = $adminWalkIn
+            ? ['room', 'schedule', 'monthly', 'open_time']
+            : ['room', 'schedule', 'monthly'];
         $commonAreaOnly = $this->isCommonAreaOnlyBooking();
         $payLaterAllowed = $adminWalkIn || $commonAreaOnly;
         $isPayLater = $payLaterAllowed && $this->input('payment_method') === 'pay_later';
@@ -79,7 +82,7 @@ class StoreBookingRequest extends FormRequest
 
         $rules = [
             'submission_token' => ['required', 'uuid'],
-            'booking_mode' => ['nullable', Rule::in(['room', 'schedule', 'monthly'])],
+            'booking_mode' => ['nullable', Rule::in($bookingModes)],
             'hyve_room_id' => ['required_unless:booking_mode,schedule', 'integer', Rule::exists(HyveRoom::class, 'id')->where(fn ($query) => $query->where('status', 0))],
             'booking_date' => ['required_unless:booking_mode,schedule', 'date', 'after_or_equal:today'],
             'booking_end_date' => [Rule::requiredIf(fn (): bool => in_array($this->input('booking_mode', 'room'), ['room', 'monthly'], true)), 'date', 'after_or_equal:booking_date'],
@@ -196,7 +199,15 @@ class StoreBookingRequest extends FormRequest
             'selected_schedule_items.*.start_time' => ['required_if:booking_mode,schedule', 'date_format:H:i'],
             'selected_schedule_items.*.end_time' => ['required_if:booking_mode,schedule', 'date_format:H:i'],
             'guests' => ['required', 'integer', 'min:1', 'max:20'],
-            'payment_method' => ['required', Rule::in($paymentMethods)],
+            'payment_method' => [
+                'required',
+                Rule::in($paymentMethods),
+                function (string $attribute, mixed $value, Closure $fail): void {
+                    if ($this->input('booking_mode') === 'open_time' && $value !== 'pay_later') {
+                        $fail('Open Time walk-ins are settled at checkout.');
+                    }
+                },
+            ],
             'rules_agreement' => $agreementRules,
             'downpayment_amount' => [
                 Rule::requiredIf(! $isPayLater),

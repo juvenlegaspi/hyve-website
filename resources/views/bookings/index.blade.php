@@ -117,6 +117,7 @@
                 data-availability-url="{{ $bookingConfig['availability_url'] }}"
                 data-unavailable-dates-url="{{ $bookingConfig['unavailable_dates_url'] }}"
                 data-quote-url="{{ $bookingConfig['quote_url'] }}"
+                @if ($adminMode) data-open-time-quote-url="{{ $bookingConfig['open_time_quote_url'] }}" @endif
                 data-layout-url="{{ $bookingConfig['layout_url'] }}"
                 data-minimum-duration="{{ $bookingConfig['minimum_duration_minutes'] }}"
                 data-unavailable-dates-horizon="{{ $bookingConfig['unavailable_dates_horizon'] }}"
@@ -156,6 +157,9 @@
 
                         <div class="booking-calendar-tabs">
                             <button type="button" class="booking-calendar-tab booking-calendar-tab--active" data-booking-mode-trigger data-booking-mode-value="room">Book by room</button>
+                            @if ($adminMode)
+                                <button type="button" class="booking-calendar-tab" data-booking-mode-trigger data-booking-mode-value="open_time">Open Time</button>
+                            @endif
                             <button type="button" class="booking-calendar-tab" data-booking-mode-trigger data-booking-mode-value="schedule">Full schedule - all rooms</button>
                             <button type="button" class="booking-calendar-tab" data-booking-mode-trigger data-booking-mode-value="monthly">Daily / Weekly / Monthly</button>
                         </div>
@@ -163,8 +167,7 @@
 
                     <section class="booking-room-strip reveal" data-shared-room-strip>
                         <div class="booking-room-strip__viewport">
-                            <button type="button" class="booking-room-strip__nav booking-room-strip__nav--prev" data-room-scroll-prev aria-label="Scroll rooms left">&#8249;</button>
-                            <div class="booking-room-strip__rail" data-room-cards>
+                            <div class="booking-room-strip__rail" data-room-cards aria-label="Choose a room">
                                 @foreach ($displayRooms as $room)
                                     @php($displayName = $room->isSharedTable() ? 'Common Area' : $room->room_name)
                                     @php($monthlyOptions = $monthlyPlansByRoom[$room->id] ?? [])
@@ -198,7 +201,6 @@
                                     </div>
                                 @endforeach
                             </div>
-                            <button type="button" class="booking-room-strip__nav booking-room-strip__nav--next" data-room-scroll-next aria-label="Scroll rooms right">&#8250;</button>
                         </div>
                     </section>
 
@@ -296,6 +298,41 @@
                         </article>
                     </section>
                     </div>
+
+                    @if ($adminMode)
+                        <section class="booking-calendar-grid reveal hidden" data-booking-mode-panel="open_time">
+                            <div class="booking-calendar-panel">
+                                <p class="eyebrow">Walk-in only</p>
+                                <h2 class="booking-calendar-title">Start an Open Time session</h2>
+                                <p class="section-copy">
+                                    Select a room above. HYVE will reserve it until the next booking or the 12-hour safety limit, whichever comes first.
+                                    The final charge is based on actual use and is collected when the admin ends the session.
+                                </p>
+
+                                <div class="booking-inline-summary" data-open-time-summary>
+                                    <div>
+                                        <span>Start</span>
+                                        <strong data-open-time-start>Checking...</strong>
+                                    </div>
+                                    <div>
+                                        <span>Hard cutoff</span>
+                                        <strong data-open-time-cutoff>Checking availability...</strong>
+                                    </div>
+                                    <div>
+                                        <span>Minimum charge</span>
+                                        <strong data-open-time-minimum>--</strong>
+                                    </div>
+                                </div>
+
+                                <p class="booking-slot-copy" data-open-time-message>
+                                    Choose a room to check the safe Open Time window.
+                                </p>
+                                <button type="button" class="booking-slot-continue" data-open-time-continue disabled>
+                                    Continue with Open Time -&gt;
+                                </button>
+                            </div>
+                        </section>
+                    @endif
 
                     <section class="booking-schedule reveal hidden" data-booking-mode-panel="schedule">
                         <div class="booking-schedule__head">
@@ -802,7 +839,13 @@
                         {{ $initialDisplayRoom?->isSharedTable() ? 'A shared seating area. Your exact table will be assigned automatically based on availability.' : ($initialDisplayRoom?->description ?? 'See the selected room before continuing your booking.') }}
                     </p>
 
-                    <div class="booking-room-preview-modal__hero">
+                    <div
+                        class="booking-room-preview-modal__hero"
+                        data-room-preview-swipe
+                        role="group"
+                        tabindex="0"
+                        aria-label="Swipe or use the arrow keys to browse room photos"
+                    >
                         <img
                             src="{{ ($spaceGalleryMap[$initialDisplaySpace][0] ?? asset('images/optimized/office.webp')) }}"
                             alt="{{ $initialDisplayName }}"
@@ -810,6 +853,8 @@
                             loading="lazy"
                             decoding="async"
                         >
+                        <span class="gallery-swipe-hint" aria-hidden="true">Swipe</span>
+                        <span class="gallery-photo-counter" data-room-preview-counter aria-live="polite">1 / 1</span>
                     </div>
 
                     <div class="booking-room-preview-modal__thumbs" data-room-preview-thumbs></div>

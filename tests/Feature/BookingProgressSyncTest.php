@@ -102,6 +102,43 @@ class BookingProgressSyncTest extends TestCase
         }
     }
 
+    public function test_booking_auto_completion_waits_for_the_extension_grace_period(): void
+    {
+        Carbon::setTestNow('2026-07-16 12:15:00');
+
+        try {
+            $header = BookingHeader::query()->create([
+                'reference_no' => 'HYVE-PROGRESS-GRACE',
+                'customer_name' => 'Grace Period Customer',
+                'email' => 'grace@example.com',
+                'phone' => '+639171234567',
+                'booking_type' => BookingHeader::TYPE_GUEST,
+                'source' => BookingHeader::SOURCE_WEB,
+                'payment_method' => 'cash',
+                'total_amount' => 1000,
+                'status' => 'confirmed',
+            ]);
+            $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+            $space = Space::query()->where('slug', 'zeal-room-8-seats')->firstOrFail();
+            $detail = $this->createDetail($header, $space, $room, '10:00', '12:00');
+
+            $this->artisan('bookings:sync-progress')->assertSuccessful();
+
+            $detail->refresh();
+            $this->assertSame(BookingDetail::PROGRESS_IN_PROGRESS, $detail->progress_status);
+            $this->assertNull($detail->actual_end_at);
+
+            Carbon::setTestNow('2026-07-16 12:30:01');
+            $this->artisan('bookings:sync-progress')->assertSuccessful();
+
+            $detail->refresh();
+            $this->assertSame(BookingDetail::PROGRESS_COMPLETED, $detail->progress_status);
+            $this->assertNotNull($detail->actual_end_at);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
     private function createDetail(
         BookingHeader $header,
         Space $space,
