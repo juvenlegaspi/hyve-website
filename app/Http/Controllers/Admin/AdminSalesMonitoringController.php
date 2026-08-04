@@ -58,8 +58,8 @@ class AdminSalesMonitoringController extends Controller
             ->get();
         $confirmedHeaders = $headers->where('status', 'confirmed');
         $outstandingBalance = round((float) $confirmedHeaders->sum('balance_amount'), 2);
-        $discounts = round((float) $headers->sum('discount_amount'), 2);
-        $bookedValue = round((float) $headers->sum(fn (BookingHeader $header): float => $header->effectiveTotalAmount()), 2);
+        $discounts = round((float) $confirmedHeaders->sum('discount_amount'), 2);
+        $bookedValue = round((float) $confirmedHeaders->sum(fn (BookingHeader $header): float => $header->effectiveTotalAmount()), 2);
 
         $methodBreakdown = $payments
             ->groupBy('payment_method')

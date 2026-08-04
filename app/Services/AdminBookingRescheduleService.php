@@ -18,7 +18,10 @@ use Illuminate\Validation\ValidationException;
 
 class AdminBookingRescheduleService
 {
-    public function __construct(private readonly HyvePricing $pricing) {}
+    public function __construct(
+        private readonly HyvePricing $pricing,
+        private readonly HyveDiscountService $discounts,
+    ) {}
 
     public function canReschedule(BookingDetail $detail): bool
     {
@@ -208,8 +211,19 @@ class AdminBookingRescheduleService
         $header = $detail->bookingHeader;
         $oldLineTotal = round((float) ($detail->subtotal ?? 0), 2);
         $newLineTotal = round((float) ($quote['total_amount'] ?? 0), 2);
-        $newGrossTotal = round(max(0, (float) $header->total_amount - $oldLineTotal + $newLineTotal), 2);
-        $discount = $header->discountSnapshotFor($newGrossTotal);
+        $space = $this->spaceForRoom($bookableRoom);
+        $discount = $this->discounts->calculate(
+            $header,
+            (string) ($header->discount_code ?? HyveDiscountService::NONE),
+            [$detail->getKey() => [
+                'subtotal' => $newLineTotal,
+                'space_slug' => $space->slug,
+                'charge_period' => (string) $quote['charge_period'],
+                'start_time' => $startTime,
+                'billed_hours' => (float) ($quote['billed_hours'] ?? 0),
+            ]],
+        );
+        $newGrossTotal = (float) $discount['gross_total'];
         $newEffectiveTotal = round((float) $discount['discounted_total_amount'], 2);
         $approvedTotal = round((float) $header->payments->where('status', BookingPayment::STATUS_APPROVED)->sum('amount'), 2);
         $newBalance = round(max(0, $newEffectiveTotal - $approvedTotal), 2);
@@ -314,10 +328,18 @@ class AdminBookingRescheduleService
                     ? 'paid'
                     : ((float) $preview['approved_total'] > 0 ? 'partially_paid' : (string) ($header->payment_status ?: 'pending_verification')));
 
+            $header->load(['details.space']);
+            $discountSnapshot = $this->discounts->calculate(
+                $header,
+                (string) ($header->discount_code ?? HyveDiscountService::NONE),
+            );
             $header->update([
-                'total_amount' => $preview['new_gross_total'],
-                'discount_amount' => $header->discountSnapshotFor((float) $preview['new_gross_total'])['discount_amount'],
-                'discounted_total_amount' => $preview['new_effective_total'],
+                'total_amount' => $discountSnapshot['gross_total'],
+                'discount_code' => $discountSnapshot['discount_code'],
+                'discount_label' => $discountSnapshot['discount_label'],
+                'discount_rate' => $discountSnapshot['discount_rate'],
+                'discount_amount' => $discountSnapshot['discount_amount'],
+                'discounted_total_amount' => $discountSnapshot['discounted_total_amount'],
                 'downpayment_amount' => $preview['approved_total'],
                 'balance_amount' => $preview['new_balance'],
                 'payment_status' => $paymentStatus,

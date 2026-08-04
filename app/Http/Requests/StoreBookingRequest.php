@@ -83,10 +83,41 @@ class StoreBookingRequest extends FormRequest
         $rules = [
             'submission_token' => ['required', 'uuid'],
             'booking_mode' => ['nullable', Rule::in($bookingModes)],
+            'walk_in_manual_start' => [Rule::prohibitedIf(! $adminWalkIn), 'nullable', 'boolean'],
             'hyve_room_id' => ['required_unless:booking_mode,schedule', 'integer', Rule::exists(HyveRoom::class, 'id')->where(fn ($query) => $query->where('status', 0))],
             'booking_date' => ['required_unless:booking_mode,schedule', 'date', 'after_or_equal:today'],
             'booking_end_date' => [Rule::requiredIf(fn (): bool => in_array($this->input('booking_mode', 'room'), ['room', 'monthly'], true)), 'date', 'after_or_equal:booking_date'],
-            'start_time' => ['required_if:booking_mode,room', 'date_format:H:i'],
+            'start_time' => [
+                'required_if:booking_mode,room',
+                'date_format:H:i',
+                function (string $attribute, mixed $value, Closure $fail) use ($adminWalkIn): void {
+                    if (! $adminWalkIn
+                        || $this->input('booking_mode') !== 'room'
+                        || ! $this->boolean('walk_in_manual_start')
+                        || ! is_string($this->input('booking_date'))
+                        || ! is_string($value)) {
+                        return;
+                    }
+
+                    $start = Carbon::parse($this->input('booking_date').' '.$value)->startOfMinute();
+
+                    if ($start->lt(now()->startOfMinute())) {
+                        $authorizationKey = 'walk_in_manual_start_authorizations.'.sha1(implode('|', [
+                            (int) $this->input('hyve_room_id'),
+                            $this->input('booking_date'),
+                            $value,
+                        ]));
+                        $authorizedAt = $this->session()->get($authorizationKey);
+                        $authorizationMinutes = max(1, (int) config('hyve.booking.manual_start_authorization_minutes', 60));
+                        $authorizationIsFresh = is_string($authorizedAt)
+                            && Carbon::parse($authorizedAt)->gte(now()->subMinutes($authorizationMinutes));
+
+                        if (! $authorizationIsFresh) {
+                            $fail('For a walk-in booking, the manual start time must be the current time or a recently verified exact start time.');
+                        }
+                    }
+                },
+            ],
             'long_stay_use_type' => [
                 'nullable',
                 Rule::in(['day', 'night']),
@@ -150,7 +181,52 @@ class StoreBookingRequest extends FormRequest
                     }
                 },
             ],
-            'monthly_plan' => ['nullable', 'string', 'max:120'],
+            'monthly_plan' => [
+                Rule::requiredIf(fn (): bool => $this->commonAreaMonthlyPlanIsRequired()),
+                'nullable',
+                'string',
+                'max:120',
+                function (string $attribute, mixed $value, Closure $fail): void {
+                    if ($this->input('booking_mode') !== 'monthly') {
+                        return;
+                    }
+
+                    $roomId = $this->input('hyve_room_id');
+                    $startDate = $this->input('booking_date');
+                    $endDate = $this->input('booking_end_date');
+
+                    if (! is_numeric($roomId) || ! is_string($startDate) || ! is_string($endDate)) {
+                        return;
+                    }
+
+                    $room = HyveRoom::query()->active()->find((int) $roomId);
+                    if (! $room?->isSharedTable()) {
+                        return;
+                    }
+
+                    $days = Carbon::parse($startDate)->startOfDay()->diffInDays(Carbon::parse($endDate)->startOfDay()) + 1;
+                    if ($days < 29) {
+                        return;
+                    }
+
+                    if (! app(HyvePricing::class)->commonAreaMonthlyPlanForRoom($room, is_string($value) ? $value : null)) {
+                        $fail('Choose a valid Common Area monthly plan before continuing.');
+                    }
+                },
+            ],
+            'student_id_reference' => [
+                Rule::requiredIf(fn (): bool => $this->selectedCommonMonthlyPlanRequiresStudentVerification()),
+                'nullable',
+                'string',
+                'max:120',
+            ],
+            'student_id_proof' => [
+                Rule::requiredIf(fn (): bool => $this->selectedCommonMonthlyPlanRequiresStudentVerification()),
+                'nullable',
+                'file',
+                'mimetypes:image/jpeg,image/png,image/gif',
+                'max:5120',
+            ],
             'selected_schedule_items' => [
                 'nullable',
                 'array',
@@ -416,11 +492,14 @@ class StoreBookingRequest extends FormRequest
             'hyve_room_id' => 'room',
             'booking_date' => 'booking date',
             'start_time' => 'start time',
+            'walk_in_manual_start' => 'manual walk-in start time',
             'end_time' => 'end time',
             'booking_end_date' => 'end date',
             'long_stay_use_type' => 'stay use type',
             'selected_schedule_items' => 'selected schedule items',
             'monthly_plan' => 'long-stay pricing',
+            'student_id_reference' => 'student ID / school reference',
+            'student_id_proof' => 'student ID photo',
             'payment_method' => 'payment method',
             'downpayment_amount' => 'downpayment amount',
             'payment_proof' => 'payment proof',
@@ -436,5 +515,41 @@ class StoreBookingRequest extends FormRequest
         }
 
         return ((int) $hour * 60) + (int) $minute;
+    }
+
+    private function selectedCommonMonthlyPlanRequiresStudentVerification(): bool
+    {
+        if ($this->input('booking_mode') !== 'monthly' || ! is_numeric($this->input('hyve_room_id'))) {
+            return false;
+        }
+
+        $room = HyveRoom::query()->active()->find((int) $this->input('hyve_room_id'));
+        if (! $room?->isSharedTable()) {
+            return false;
+        }
+
+        $plan = app(HyvePricing::class)->commonAreaMonthlyPlanForRoom(
+            $room,
+            is_string($this->input('monthly_plan')) ? $this->input('monthly_plan') : null,
+        );
+
+        return (bool) ($plan['requires_student_verification'] ?? false);
+    }
+
+    private function commonAreaMonthlyPlanIsRequired(): bool
+    {
+        if ($this->input('booking_mode') !== 'monthly' || ! is_numeric($this->input('hyve_room_id'))) {
+            return false;
+        }
+
+        $room = HyveRoom::query()->active()->find((int) $this->input('hyve_room_id'));
+        $startDate = $this->input('booking_date');
+        $endDate = $this->input('booking_end_date');
+
+        if (! $room?->isSharedTable() || ! is_string($startDate) || ! is_string($endDate)) {
+            return false;
+        }
+
+        return Carbon::parse($startDate)->startOfDay()->diffInDays(Carbon::parse($endDate)->startOfDay()) + 1 >= 29;
     }
 }

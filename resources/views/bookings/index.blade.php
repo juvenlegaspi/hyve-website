@@ -139,6 +139,9 @@
                 <input type="hidden" name="booking_mode" value="{{ $oldBookingMode }}" data-booking-mode-input>
                 <input type="hidden" name="monthly_plan" value="{{ $oldMonthlyPlan }}" data-monthly-plan-input>
                 <input type="hidden" name="long_stay_use_type" value="{{ old('long_stay_use_type', '') }}" data-long-stay-use-type-input>
+                @if ($adminMode)
+                    <input type="hidden" name="walk_in_manual_start" value="{{ old('walk_in_manual_start', '0') }}" data-walk-in-manual-start-flag>
+                @endif
                 <input type="hidden" name="selected_schedule_items" value="{{ $oldScheduleItemsJson }}" data-schedule-items-input>
                 <select name="start_time" data-start-time-select class="hidden">
                     <option value="{{ old('start_time', $queryStartTime) }}">{{ old('start_time', $queryStartTime) }}</option>
@@ -166,6 +169,10 @@
                     </section>
 
                     <section class="booking-room-strip reveal" data-shared-room-strip>
+                        <p class="booking-room-strip__hint" role="note">
+                            <span>Scroll down to see more rooms</span>
+                            <span class="booking-room-strip__hint-arrow" aria-hidden="true">&darr;</span>
+                        </p>
                         <div class="booking-room-strip__viewport">
                             <div class="booking-room-strip__rail" data-room-cards aria-label="Choose a room">
                                 @foreach ($displayRooms as $room)
@@ -250,6 +257,21 @@
                             <div class="booking-slot-section" data-start-step>
                                 <p class="mini-title">Step 1 - Pick a start time</p>
                                 <p class="booking-slot-copy" data-availability-message-body>Select a room and date first. Available start times will appear here. Minimum booking is 2 hours.</p>
+                                @if ($adminMode)
+                                    <div class="mb-4 rounded-[1rem] border border-[#dce8d4] bg-[#f7faf2] p-4" data-walk-in-manual-start-wrap>
+                                        <strong class="block text-[0.82rem] text-[#294531]">Manual exact start time (walk-in only)</strong>
+                                        <span class="mt-1 block text-[0.72rem] text-[#758076]">Enter the customer's exact start time. For today, only the current time onward is allowed.</span>
+                                        <div class="mt-3 flex flex-wrap items-end gap-3">
+                                            <label class="min-w-[12rem] flex-1">
+                                                <span class="mb-1.5 block text-[0.72rem] font-semibold text-[#526358]">Start time</span>
+                                                <input type="time" step="60" value="{{ old('walk_in_manual_start') === '1' ? old('start_time') : '' }}" data-walk-in-manual-start-time>
+                                            </label>
+                                            <button type="button" class="button button--ghost" data-walk-in-manual-start-apply>Show available end times</button>
+                                        </div>
+                                        <small class="field-error hidden" data-walk-in-manual-start-error></small>
+                                    </div>
+                                    <p class="booking-slot-copy">Or select one of the standard start-time slots below.</p>
+                                @endif
                                 <div class="booking-slot-list" data-start-slots></div>
                             </div>
 
@@ -425,6 +447,13 @@
                                 </label>
                             </div>
 
+                            <div class="booking-slot-section hidden" data-common-monthly-plan-wrap>
+                                <p class="mini-title">Step 2 - Choose your Common Area monthly plan</p>
+                                <p class="booking-slot-copy">Select Student or Regular, then Day or Night. No plan is selected automatically.</p>
+                                <div class="booking-slot-list booking-slot-list--compact" data-common-monthly-plan-buttons></div>
+                                <p class="booking-slot-copy">Student plans require a valid student ID/reference and ID photo during checkout.</p>
+                            </div>
+
                             <div class="booking-slot-section hidden" data-long-stay-use-wrap>
                                 <p class="mini-title">Step 2 - Choose Day Use or Night Use</p>
                                 <p class="booking-slot-copy">Tell HYVE if this stay should run during the daytime or nighttime window so the correct rate can be computed.</p>
@@ -587,6 +616,22 @@
                                             </label>
                                         </div>
                                     @endif
+
+                                    <div class="booking-checkout__supporting hidden" data-student-verification-wrap>
+                                        <div class="field-grid">
+                                            <label>
+                                                <span>Student ID / school reference</span>
+                                                <input type="text" name="student_id_reference" value="{{ old('student_id_reference') }}" maxlength="120" data-student-id-reference placeholder="Student ID number or school reference">
+                                                @error('student_id_reference') <small class="field-error">{{ $message }}</small> @enderror
+                                            </label>
+                                            <label>
+                                                <span>Student ID photo</span>
+                                                <input type="file" name="student_id_proof" accept="image/jpeg,image/png,image/gif" data-student-id-proof>
+                                                @error('student_id_proof') <small class="field-error">{{ $message }}</small> @enderror
+                                            </label>
+                                        </div>
+                                        <small class="field-error" style="color:#7f857c;">Required only for Student Day Monthly and Student Night Monthly. HYVE staff can verify this before payment approval.</small>
+                                    </div>
 
                                     <div class="booking-checkout__supporting">
                                     <div class="field-grid field-grid--booking-meta">

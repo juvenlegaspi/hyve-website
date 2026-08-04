@@ -10,6 +10,14 @@ use Illuminate\Support\Carbon;
 
 class HyvePricing
 {
+    public const COMMON_STUDENT_DAY = 'common_student_day';
+
+    public const COMMON_REGULAR_DAY = 'common_regular_day';
+
+    public const COMMON_STUDENT_NIGHT = 'common_student_night';
+
+    public const COMMON_REGULAR_NIGHT = 'common_regular_night';
+
     public function activePaymentSetting(): ?PaymentSetting
     {
         return PaymentSetting::query()->active()->latest('id')->first();
@@ -327,18 +335,88 @@ class HyvePricing
                 ->all();
         });
 
-        $monthly = collect($this->monthlyOptionsForRoom($room, $rateCard))
+        $monthlySource = $room->isSharedTable()
+            ? $this->commonAreaMonthlyPlansForRoom($room, $rateCard)
+            : $this->monthlyOptionsForRoom($room, $rateCard);
+
+        $monthly = collect($monthlySource)
             ->map(fn (array $option): array => [
                 ...$option,
                 'type' => 'monthly',
-                'use_type' => null,
-                'use_type_label' => null,
+                'use_type' => $option['use_type'] ?? null,
+                'use_type_label' => $option['use_type_label'] ?? null,
             ]);
 
         return collect($dailyWeekly)
             ->concat($monthly)
             ->values()
             ->all();
+    }
+
+    /**
+     * The Common Area deliberately has four distinct monthly memberships. Their
+     * labels in the rate card are kept compatible with the existing admin data,
+     * while stable plan codes are used by the booking form and server.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function commonAreaMonthlyPlansForRoom(HyveRoom $room, ?HyveRate $rateCard = null): array
+    {
+        if (! $room->isSharedTable()) {
+            return [];
+        }
+
+        $rateCard ??= $this->rateForRoom($room);
+
+        if (! $rateCard) {
+            return [];
+        }
+
+        $memberships = collect($rateCard->memberships ?? [])
+            ->filter(fn (mixed $value, mixed $label): bool => is_string($label) && is_string($value))
+            ->mapWithKeys(fn (string $value, string $label): array => [strtolower(trim($label)) => ['label' => $label, 'value' => $value]]);
+
+        $definitions = [
+            ['code' => self::COMMON_STUDENT_DAY, 'source' => 'student monthly', 'label' => 'Student Day Monthly', 'use_type' => 'day', 'student' => true],
+            ['code' => self::COMMON_REGULAR_DAY, 'source' => 'regular monthly', 'label' => 'Regular Day Monthly', 'use_type' => 'day', 'student' => false],
+            ['code' => self::COMMON_STUDENT_NIGHT, 'source' => 'night student', 'label' => 'Student Night Monthly', 'use_type' => 'night', 'student' => true],
+            ['code' => self::COMMON_REGULAR_NIGHT, 'source' => 'night regular', 'label' => 'Regular Night Monthly', 'use_type' => 'night', 'student' => false],
+        ];
+
+        return collect($definitions)->map(function (array $definition) use ($memberships): ?array {
+            $source = $memberships->get($definition['source']);
+            $amount = is_array($source) ? $this->extractAmountFromText((string) $source['value']) : null;
+
+            if ($amount === null) {
+                return null;
+            }
+
+            $useTypeLabel = $this->longStayUseTypeLabel($definition['use_type']);
+
+            return [
+                'plan_code' => $definition['code'],
+                'label' => $definition['label'],
+                'source_label' => $source['label'],
+                'amount' => $amount,
+                'display_amount' => 'Php '.number_format($amount, 2),
+                'type' => 'monthly',
+                'use_type' => $definition['use_type'],
+                'use_type_label' => $useTypeLabel,
+                'window_label' => $definition['use_type'] === 'night' ? '8:00 PM - 8:00 AM' : '8:00 AM - 8:00 PM',
+                'requires_student_verification' => $definition['student'],
+                'is_common_area_monthly_plan' => true,
+            ];
+        })->filter()->values()->all();
+    }
+
+    public function commonAreaMonthlyPlanForRoom(HyveRoom $room, ?string $planCode): ?array
+    {
+        if (! is_string($planCode) || $planCode === '') {
+            return null;
+        }
+
+        return collect($this->commonAreaMonthlyPlansForRoom($room))
+            ->first(fn (array $option): bool => ($option['plan_code'] ?? null) === $planCode);
     }
 
     public function longStayRequiresUseType(HyveRoom $room, string $startDate, string $endDate): bool
@@ -458,9 +536,8 @@ class HyvePricing
         }
 
         $options = collect($this->longStayOptionsForRoom($room));
-        $optionsByType = $options->keyBy(fn (array $option): string => (string) $option['type']);
         $selectedPlan = $planLabel !== ''
-            ? $options->first(fn (array $option): bool => $option['label'] === $planLabel)
+            ? $options->first(fn (array $option): bool => ($option['plan_code'] ?? null) === $planLabel || $option['label'] === $planLabel)
             : null;
 
         $start = Carbon::parse($startDate)->startOfDay();
@@ -471,13 +548,17 @@ class HyvePricing
         }
 
         $dayCount = max(1, $start->diffInDays($end) + 1);
+        if ($room->isSharedTable() && $dayCount >= 29 && ! ($selectedPlan['is_common_area_monthly_plan'] ?? false)) {
+            return null;
+        }
+
         $monthlyCoverage = $this->flexibleMonthlyCoverage($dayCount);
         $requiresUseType = $this->longStayRequiresUseType($room, $startDate, $endDate);
         $resolvedUseType = $useType !== null && in_array($useType, ['day', 'night'], true)
             ? $useType
             : null;
 
-        if (! $resolvedUseType && $selectedPlan && in_array((string) ($selectedPlan['type'] ?? ''), ['daily', 'weekly'], true)) {
+        if (! $resolvedUseType && $selectedPlan) {
             $resolvedUseType = (string) ($selectedPlan['use_type'] ?? '') ?: null;
         }
 
@@ -485,7 +566,7 @@ class HyvePricing
             return null;
         }
 
-        [$windowStartTime, $windowEndTime] = $this->longStayWindowForUseType($requiresUseType ? $resolvedUseType : null);
+        [$windowStartTime, $windowEndTime] = $this->longStayWindowForUseType($resolvedUseType);
         $useTypeLabel = $resolvedUseType ? $this->longStayUseTypeLabel($resolvedUseType) : null;
 
         if ($selectedPlan && (
@@ -530,6 +611,9 @@ class HyvePricing
                 'succeeding_hour_rate' => 0.0,
                 'rate_name' => $rateCard->title.' - '.$selectedPlan['label'],
                 'monthly_plan_label' => $selectedPlan['label'],
+                'long_stay_plan_code' => $selectedPlan['plan_code'] ?? null,
+                'long_stay_plan_label' => $selectedPlan['label'],
+                'requires_student_verification' => (bool) ($selectedPlan['requires_student_verification'] ?? false),
                 'unit_type' => $unitType,
                 'unit_count' => $unitCount,
                 'unit_label' => $unitLabel,
@@ -552,7 +636,9 @@ class HyvePricing
         $breakdown = [];
         $totalAmount = 0.0;
 
-        $monthlyOption = $optionsByType->get('monthly');
+        $monthlyOption = ($selectedPlan && (string) ($selectedPlan['type'] ?? '') === 'monthly')
+            ? $selectedPlan
+            : $options->first(fn (array $option): bool => (string) ($option['type'] ?? '') === 'monthly');
         $weeklyOption = $options->first(fn (array $option): bool => (string) ($option['type'] ?? '') === 'weekly'
             && (string) ($option['use_type'] ?? '') === ($resolvedUseType ?: 'day')
         );
@@ -627,7 +713,7 @@ class HyvePricing
         $downpaymentAmount = $minimumDownpaymentAmount;
         $balanceAmount = round($totalAmount - $downpaymentAmount, 2);
         $chargePeriodLabel = 'Long Stay Booking';
-        $planSummaryLabel = collect($breakdown)
+        $coverageSummaryLabel = collect($breakdown)
             ->map(function (array $item): string {
                 return match ($item['type']) {
                     'monthly' => $item['unit_count'].' month'.($item['unit_count'] === 1 ? '' : 's'),
@@ -636,6 +722,7 @@ class HyvePricing
                 };
             })
             ->implode(' + ');
+        $planSummaryLabel = (string) ($selectedPlan['label'] ?? $coverageSummaryLabel);
 
         return [
             'rate_card' => $rateCard,
@@ -653,6 +740,9 @@ class HyvePricing
             'succeeding_hour_rate' => 0.0,
             'rate_name' => $rateCard->title.' - '.$planSummaryLabel,
             'monthly_plan_label' => $planSummaryLabel,
+            'long_stay_plan_code' => $selectedPlan['plan_code'] ?? null,
+            'long_stay_plan_label' => $planSummaryLabel,
+            'requires_student_verification' => (bool) ($selectedPlan['requires_student_verification'] ?? false),
             'unit_type' => $unitType,
             'unit_count' => $unitCount,
             'unit_label' => $unitLabel,

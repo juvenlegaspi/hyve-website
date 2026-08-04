@@ -4,9 +4,11 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Mail\BookingPaymentReceiptMail;
+use App\Models\BookingActivity;
 use App\Models\BookingDetail;
 use App\Models\BookingHeader;
 use App\Models\BookingPayment;
+use App\Services\HyveDiscountService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -21,13 +23,7 @@ use Illuminate\View\View;
 
 class AdminPaymentController extends Controller
 {
-    private const DISCOUNT_PRESETS = [
-        'none' => ['label' => 'No discount', 'rate' => 0],
-        'senior' => ['label' => 'Senior Citizen (20%)', 'rate' => 20],
-        'pwd' => ['label' => 'PWD (20%)', 'rate' => 20],
-        'promo_10' => ['label' => 'Promo (10%)', 'rate' => 10],
-        'courtesy_15' => ['label' => 'Courtesy (15%)', 'rate' => 15],
-    ];
+    public function __construct(private readonly HyveDiscountService $discounts) {}
 
     public function index(Request $request): View
     {
@@ -190,12 +186,20 @@ class AdminPaymentController extends Controller
             $header = BookingHeader::query()->lockForUpdate()->findOrFail($payment->booking_header_id);
             $wasFullyPaid = (string) ($header->payment_status ?? '') === 'paid';
 
+            if ((string) $payment->status !== BookingPayment::STATUS_PENDING) {
+                throw ValidationException::withMessages([
+                    'payment' => 'This payment has already been reviewed.',
+                ]);
+            }
+
             $payment->update([
                 'status' => BookingPayment::STATUS_APPROVED,
                 'review_notes' => trim((string) $request->input('review_notes', '')) ?: $payment->review_notes,
                 'verified_at' => now(),
                 'verified_by' => $request->user()?->id,
             ]);
+
+            $this->recordPaymentActivity($header, $payment, $request->user()?->id, 'payment_approved', 'Payment approved');
 
             $this->syncHeaderPaymentSnapshot($header->fresh('payments'));
 
@@ -226,12 +230,20 @@ class AdminPaymentController extends Controller
             $payment = BookingPayment::query()->lockForUpdate()->findOrFail($bookingPayment->getKey());
             $header = BookingHeader::query()->lockForUpdate()->findOrFail($payment->booking_header_id);
 
+            if ((string) $payment->status !== BookingPayment::STATUS_PENDING) {
+                throw ValidationException::withMessages([
+                    'payment' => 'This payment has already been reviewed.',
+                ]);
+            }
+
             $payment->update([
                 'status' => BookingPayment::STATUS_REJECTED,
                 'review_notes' => trim((string) $request->input('review_notes', '')) ?: $payment->review_notes,
                 'verified_at' => now(),
                 'verified_by' => $request->user()?->id,
             ]);
+
+            $this->recordPaymentActivity($header, $payment, $request->user()?->id, 'payment_rejected', 'Payment rejected');
 
             $this->syncHeaderPaymentSnapshot($header->fresh('payments'));
         });
@@ -245,7 +257,13 @@ class AdminPaymentController extends Controller
     public function applyDiscount(Request $request, BookingHeader $bookingHeader): RedirectResponse
     {
         $validated = $request->validate([
-            'discount_code' => ['required', Rule::in(array_keys(self::DISCOUNT_PRESETS))],
+            'discount_code' => ['required', Rule::in(array_keys($this->discounts->definitions()))],
+            'discount_reference' => [
+                Rule::requiredIf(fn (): bool => $this->discounts->requiresReference((string) $request->input('discount_code'))),
+                'nullable',
+                'string',
+                'max:255',
+            ],
         ]);
 
         if ((string) $bookingHeader->status !== 'confirmed') {
@@ -254,8 +272,16 @@ class AdminPaymentController extends Controller
                 ->with('admin_open_payment_modal', $bookingHeader->getKey());
         }
 
-        DB::transaction(function () use ($bookingHeader, $validated): void {
+        DB::transaction(function () use ($request, $bookingHeader, $validated): void {
             $header = BookingHeader::query()->lockForUpdate()->findOrFail($bookingHeader->getKey());
+            $header->loadMissing(['details.space', 'payments']);
+
+            if ((string) ($header->payment_status ?? '') === 'paid') {
+                throw ValidationException::withMessages([
+                    'discount_code' => 'A discount cannot be changed after the booking is fully paid.',
+                ]);
+            }
+
             $approvedTotal = round(
                 (float) BookingPayment::query()
                     ->where('booking_header_id', $header->getKey())
@@ -264,20 +290,38 @@ class AdminPaymentController extends Controller
                 2
             );
 
-            $discountMeta = $this->discountMeta((string) $validated['discount_code']);
-            $header->update($this->discountColumnPayload($header, $discountMeta['code']));
+            $discountSnapshot = $this->discounts->calculate($header, (string) $validated['discount_code']);
+
+            if (! $discountSnapshot['eligible']) {
+                throw ValidationException::withMessages([
+                    'discount_code' => $discountSnapshot['eligibility_note'],
+                ]);
+            }
+
+            if ($approvedTotal > (float) $discountSnapshot['discounted_total_amount']) {
+                throw ValidationException::withMessages([
+                    'discount_code' => 'This discount would make the approved payments greater than the payable total. Resolve the excess payment first.',
+                ]);
+            }
+
+            $previousLabel = (string) ($header->discount_label ?? 'No discount');
+            $header->update($this->discountColumnPayload($discountSnapshot));
 
             $this->syncHeaderPaymentSnapshot($header->fresh('payments'));
 
-            if ($approvedTotal > 0) {
-                $freshHeader = $header->fresh();
-
-                if ($freshHeader && (float) ($freshHeader->balance_amount ?? 0) <= 0) {
-                    $freshHeader->update([
-                        'payment_status' => 'paid',
-                    ]);
-                }
-            }
+            BookingActivity::query()->create([
+                'booking_header_id' => $header->getKey(),
+                'actor_user_id' => $request->user()?->getKey(),
+                'event_key' => 'booking_discount_updated',
+                'event_label' => 'Discount updated',
+                'reference_no' => $header->reference_no,
+                'customer_name' => $header->customer_name,
+                'message' => $previousLabel.' changed to '.($discountSnapshot['discount_label'] ?? 'No discount')
+                    .'; discount amount Php '.number_format((float) $discountSnapshot['discount_amount'], 2)
+                    .(trim((string) ($validated['discount_reference'] ?? '')) !== ''
+                        ? '; reference: '.trim((string) $validated['discount_reference'])
+                        : '').'.',
+            ]);
         });
 
         $discountMeta = $this->discountMeta((string) $validated['discount_code']);
@@ -291,10 +335,21 @@ class AdminPaymentController extends Controller
     {
         $validated = $request->validate([
             'payment_submission_token' => ['required', 'uuid'],
-            'amount' => ['required', 'numeric', 'gt:0'],
+            'amount' => ['required', 'numeric', 'gte:0'],
             'payment_method' => ['required', Rule::in(['gcash', 'bank_transfer', 'cash'])],
-            'discount_code' => ['nullable', Rule::in(array_keys(self::DISCOUNT_PRESETS))],
-            'notes' => ['nullable', 'string', 'max:1000'],
+            'discount_code' => ['nullable', Rule::in(array_keys($this->discounts->definitions()))],
+            'discount_reference' => [
+                Rule::requiredIf(fn (): bool => $this->discounts->requiresReference((string) $request->input('discount_code'))),
+                'nullable',
+                'string',
+                'max:255',
+            ],
+            'notes' => [
+                Rule::requiredIf(fn (): bool => in_array((string) $request->input('payment_method'), ['gcash', 'bank_transfer'], true)),
+                'nullable',
+                'string',
+                'max:1000',
+            ],
         ]);
 
         if ((string) $bookingHeader->status !== 'confirmed') {
@@ -345,11 +400,47 @@ class AdminPaymentController extends Controller
             }
 
             $discountCode = (string) ($validated['discount_code'] ?? $header->discount_code ?? 'none');
+            $previousDiscountCode = (string) ($header->discount_code ?? HyveDiscountService::NONE);
+            $previousDiscountLabel = (string) ($header->discount_label ?? 'No discount');
 
-            $header->update($this->discountColumnPayload($header, $discountCode));
+            $discountSnapshot = $this->discounts->calculate($header, $discountCode);
+
+            if (! $discountSnapshot['eligible']) {
+                throw ValidationException::withMessages([
+                    'discount_code' => $discountSnapshot['eligibility_note'],
+                ]);
+            }
+
+            $header->update($this->discountColumnPayload($discountSnapshot));
             $header->refresh();
 
-            $freshBalance = round((float) ($header->balance_amount ?? 0), 2);
+            if ($previousDiscountCode !== $discountCode) {
+                BookingActivity::query()->create([
+                    'booking_header_id' => $header->getKey(),
+                    'actor_user_id' => $request->user()?->getKey(),
+                    'event_key' => 'booking_discount_updated',
+                    'event_label' => 'Discount updated',
+                    'reference_no' => $header->reference_no,
+                    'customer_name' => $header->customer_name,
+                    'message' => $previousDiscountLabel.' changed to '.($discountSnapshot['discount_label'] ?? 'No discount')
+                        .'; discount amount Php '.number_format((float) $discountSnapshot['discount_amount'], 2)
+                        .(trim((string) ($validated['discount_reference'] ?? '')) !== ''
+                            ? '; reference: '.trim((string) $validated['discount_reference'])
+                            : '').'.',
+                ]);
+            }
+
+            $approvedBefore = round((float) BookingPayment::query()
+                ->where('booking_header_id', $header->getKey())
+                ->where('status', BookingPayment::STATUS_APPROVED)
+                ->sum('amount'), 2);
+            $freshBalance = round(max(0, (float) $discountSnapshot['discounted_total_amount'] - $approvedBefore), 2);
+
+            if ($amount <= 0 && $freshBalance > 0) {
+                throw ValidationException::withMessages([
+                    'amount' => 'A zero payment is allowed only when the selected discount fully covers the remaining balance.',
+                ]);
+            }
 
             if ($amount > $freshBalance) {
                 throw ValidationException::withMessages([
@@ -357,7 +448,7 @@ class AdminPaymentController extends Controller
                 ]);
             }
 
-            BookingPayment::query()->create([
+            $payment = BookingPayment::query()->create([
                 'booking_header_id' => $header->getKey(),
                 'submission_token' => $validated['payment_submission_token'],
                 'user_id' => $header->user_id,
@@ -365,11 +456,15 @@ class AdminPaymentController extends Controller
                 'amount' => $amount,
                 'payment_method' => $validated['payment_method'],
                 'status' => BookingPayment::STATUS_APPROVED,
-                'notes' => trim((string) ($validated['notes'] ?? '')) ?: 'Payment recorded manually by admin.',
+                'notes' => trim((string) ($validated['notes'] ?? '')) ?: ($amount <= 0
+                    ? 'Fully covered by voucher or discount; no payment collected.'
+                    : 'Payment recorded manually by admin.'),
                 'paid_at' => now(),
                 'verified_at' => now(),
                 'verified_by' => $request->user()?->id,
             ]);
+
+            $this->recordPaymentActivity($header, $payment, $request->user()?->id, 'payment_recorded_by_admin', 'Payment recorded by admin');
 
             $this->syncHeaderPaymentSnapshot($header->fresh('payments'));
 
@@ -387,6 +482,26 @@ class AdminPaymentController extends Controller
             ->with('admin_success', $duplicateSubmission ? 'This payment was already recorded.' : 'Payment recorded successfully.')
             ->with('admin_trigger_bookings_refresh', $bookingHeader->getKey())
             ->with('admin_open_payment_modal', $bookingHeader->getKey());
+    }
+
+    private function recordPaymentActivity(
+        BookingHeader $header,
+        BookingPayment $payment,
+        ?int $actorUserId,
+        string $eventKey,
+        string $eventLabel,
+    ): void {
+        BookingActivity::query()->create([
+            'booking_header_id' => $header->getKey(),
+            'booking_detail_id' => $payment->booking_detail_id,
+            'actor_user_id' => $actorUserId,
+            'event_key' => $eventKey,
+            'event_label' => $eventLabel,
+            'reference_no' => $header->reference_no,
+            'customer_name' => $header->customer_name,
+            'message' => $eventLabel.' - Php '.number_format((float) $payment->amount, 2)
+                .' via '.ucfirst(str_replace('_', ' ', (string) $payment->payment_method)).'.',
+        ]);
     }
 
     private function resolveHeaderPaymentStatus(BookingHeader $header, float $approvedTotal, ?float $nextBalance = null): string
@@ -417,11 +532,11 @@ class AdminPaymentController extends Controller
      */
     private function discountOptions(): array
     {
-        return collect(self::DISCOUNT_PRESETS)
+        return collect($this->discounts->definitions())
             ->map(fn (array $meta, string $code): array => [
                 'value' => $code,
                 'label' => (string) $meta['label'],
-                'rate' => (float) $meta['rate'],
+                'rate' => 0.0,
             ])
             ->values()
             ->all();
@@ -432,35 +547,31 @@ class AdminPaymentController extends Controller
      */
     private function discountMeta(?string $code): array
     {
-        $normalizedCode = array_key_exists((string) $code, self::DISCOUNT_PRESETS)
+        $definitions = $this->discounts->definitions();
+        $normalizedCode = array_key_exists((string) $code, $definitions)
             ? (string) $code
-            : 'none';
-        $meta = self::DISCOUNT_PRESETS[$normalizedCode];
+            : HyveDiscountService::NONE;
+        $meta = $definitions[$normalizedCode];
 
         return [
             'code' => $normalizedCode,
             'label' => (string) $meta['label'],
-            'rate' => (float) $meta['rate'],
+            'rate' => $normalizedCode === HyveDiscountService::NONE ? 0.0 : 1.0,
         ];
     }
 
     /**
+     * @param array<string, mixed> $snapshot
      * @return array{discount_code: ?string, discount_label: ?string, discount_rate: ?float, discount_amount: float, discounted_total_amount: float}
      */
-    private function discountColumnPayload(BookingHeader $header, ?string $code): array
+    private function discountColumnPayload(array $snapshot): array
     {
-        $discountMeta = $this->discountMeta($code);
-        $grossTotal = round((float) ($header->total_amount ?? 0), 2);
-        $rate = $discountMeta['rate'];
-        $discountAmount = $rate > 0 ? round($grossTotal * ($rate / 100), 2) : 0.0;
-        $discountedTotal = round(max(0, $grossTotal - $discountAmount), 2);
-
         return [
-            'discount_code' => $rate > 0 ? $discountMeta['code'] : null,
-            'discount_label' => $rate > 0 ? $discountMeta['label'] : null,
-            'discount_rate' => $rate > 0 ? $rate : null,
-            'discount_amount' => $discountAmount,
-            'discounted_total_amount' => $discountedTotal,
+            'discount_code' => $snapshot['discount_code'],
+            'discount_label' => $snapshot['discount_label'],
+            'discount_rate' => $snapshot['discount_rate'],
+            'discount_amount' => (float) $snapshot['discount_amount'],
+            'discounted_total_amount' => (float) $snapshot['discounted_total_amount'],
         ];
     }
 
@@ -477,7 +588,9 @@ class AdminPaymentController extends Controller
     {
         $header->loadMissing('payments');
 
-        $discountColumns = $this->discountColumnPayload($header, (string) ($header->discount_code ?? 'none'));
+        $discountColumns = $this->discountColumnPayload(
+            $this->discounts->calculate($header, (string) ($header->discount_code ?? HyveDiscountService::NONE))
+        );
         if (
             (float) ($header->discount_amount ?? 0) !== (float) $discountColumns['discount_amount']
             || (float) ($header->discounted_total_amount ?? 0) !== (float) $discountColumns['discounted_total_amount']
@@ -537,6 +650,21 @@ class AdminPaymentController extends Controller
             ->where('status', BookingPayment::STATUS_APPROVED)
             ->sortByDesc(fn (BookingPayment $payment) => optional($payment->verified_at)->timestamp ?? optional($payment->paid_at)->timestamp ?? 0)
             ->first();
+        $discountPreviews = collect($this->discounts->definitions())
+            ->mapWithKeys(function (array $definition, string $code) use ($header, $approvedTotal): array {
+                $snapshot = $this->discounts->calculate($header, $code);
+
+                return [$code => [
+                    'label' => $definition['label'],
+                    'discount_amount' => round((float) $snapshot['discount_amount'], 2),
+                    'payable_total' => round((float) $snapshot['discounted_total_amount'], 2),
+                    'remaining_balance' => round(max(0, (float) $snapshot['discounted_total_amount'] - $approvedTotal), 2),
+                    'effective_rate' => round((float) ($snapshot['discount_rate'] ?? 0), 4),
+                    'eligible' => (bool) $snapshot['eligible'],
+                    'eligibility_note' => (string) $snapshot['eligibility_note'],
+                ]];
+            })
+            ->all();
         $previewRooms = $details
             ->map(fn ($detail) => $detail->hyveRoom?->room_name ?? $detail->space?->name ?? 'Room')
             ->filter()
@@ -564,6 +692,7 @@ class AdminPaymentController extends Controller
             'discount_amount' => 'Php '.number_format((float) ($header->discount_amount ?? 0), 2),
             'payable_total_amount' => 'Php '.number_format((float) ($header->discounted_total_amount ?? $header->total_amount ?? 0), 2),
             'discount_code' => (string) ($header->discount_code ?? 'none'),
+            'discount_previews' => $discountPreviews,
             'downpayment_amount' => 'Php '.number_format((float) ($header->downpayment_amount ?? 0), 2),
             'balance_amount' => 'Php '.number_format((float) ($header->balance_amount ?? 0), 2),
             'booking_count' => $details->count(),

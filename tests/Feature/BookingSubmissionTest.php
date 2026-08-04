@@ -7,6 +7,7 @@ use App\Models\BookingHeader;
 use App\Models\HyveRoom;
 use App\Models\Space;
 use App\Models\User;
+use App\Support\HyvePricing;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
@@ -17,6 +18,71 @@ use Tests\TestCase;
 class BookingSubmissionTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_common_area_monthly_quotes_use_the_selected_day_night_and_student_rates(): void
+    {
+        $room = HyveRoom::query()->where('room_name', 'Table 1-A')->firstOrFail();
+        $start = now()->addMonth()->startOfMonth();
+        $end = $start->copy()->addDays(29);
+        $plans = [
+            HyvePricing::COMMON_STUDENT_DAY => [3749, 'day', 'Student Day Monthly'],
+            HyvePricing::COMMON_REGULAR_DAY => [5749, 'day', 'Regular Day Monthly'],
+            HyvePricing::COMMON_STUDENT_NIGHT => [5249, 'night', 'Student Night Monthly'],
+            HyvePricing::COMMON_REGULAR_NIGHT => [6749, 'night', 'Regular Night Monthly'],
+        ];
+
+        foreach ($plans as $code => [$amount, $useType, $label]) {
+            $this->getJson(route('bookings.quote', [
+                'booking_mode' => 'monthly',
+                'hyve_room_id' => $room->id,
+                'booking_date' => $start->toDateString(),
+                'booking_end_date' => $end->toDateString(),
+                'monthly_plan' => $code,
+            ]))
+                ->assertOk()
+                ->assertJsonPath('total_amount', $amount)
+                ->assertJsonPath('long_stay_plan_code', $code)
+                ->assertJsonPath('long_stay_plan_label', $label)
+                ->assertJsonPath('long_stay_use_type', $useType);
+        }
+    }
+
+    public function test_common_area_student_monthly_plan_requires_and_saves_student_verification(): void
+    {
+        Storage::fake('public');
+        $room = HyveRoom::query()->where('room_name', 'Table 1-A')->firstOrFail();
+        $start = now()->addMonth()->startOfMonth();
+        $payload = [
+            'booking_mode' => 'monthly',
+            'full_name' => 'Common Area Student',
+            'email' => 'student-monthly@example.com',
+            'phone' => '+639171234567',
+            'hyve_room_id' => $room->id,
+            'booking_date' => $start->toDateString(),
+            'booking_end_date' => $start->copy()->addDays(29)->toDateString(),
+            'monthly_plan' => HyvePricing::COMMON_STUDENT_DAY,
+            'guests' => 1,
+            'downpayment_amount' => 0,
+            'payment_method' => 'pay_later',
+            'rules_agreement' => '1',
+        ];
+
+        $this->post(route('bookings.store'), $payload)
+            ->assertSessionHasErrors(['student_id_reference', 'student_id_proof']);
+
+        $this->post(route('bookings.store'), [
+            ...$payload,
+            'submission_token' => (string) \Illuminate\Support\Str::uuid(),
+            'student_id_reference' => 'HYVE-STUDENT-2026',
+            'student_id_proof' => UploadedFile::fake()->image('student-id.png'),
+        ])->assertRedirect(route('bookings.index'));
+
+        $detail = BookingDetail::query()->where('long_stay_plan_code', HyvePricing::COMMON_STUDENT_DAY)->firstOrFail();
+        $this->assertSame('Student Day Monthly', $detail->long_stay_plan_label);
+        $this->assertSame('HYVE-STUDENT-2026', $detail->student_id_reference);
+        $this->assertNotNull($detail->student_id_proof_path);
+        Storage::disk('public')->assertExists($detail->student_id_proof_path);
+    }
 
     public function test_guest_users_can_submit_a_booking_request_without_an_account(): void
     {
@@ -539,14 +605,14 @@ class BookingSubmissionTest extends TestCase
     public function test_quote_endpoint_returns_monthly_plan_amounts(): void
     {
         $room = HyveRoom::query()->where('room_name', 'Room 7')->firstOrFail();
-        $startDate = '2026-08-01';
-        $endDate = '2026-08-31';
+        $startDate = now()->addMonth()->startOfMonth();
+        $endDate = $startDate->copy()->addMonthNoOverflow()->subDay();
 
         $response = $this->getJson(route('bookings.quote', [
             'booking_mode' => 'monthly',
             'hyve_room_id' => $room->id,
-            'booking_date' => $startDate,
-            'booking_end_date' => $endDate,
+            'booking_date' => $startDate->toDateString(),
+            'booking_end_date' => $endDate->toDateString(),
             'monthly_plan' => 'Monthly Rental',
         ]));
 
@@ -564,13 +630,14 @@ class BookingSubmissionTest extends TestCase
     public function test_29_30_and_31_day_ranges_automatically_use_one_month_without_day_or_night(): void
     {
         $room = HyveRoom::query()->where('room_name', 'Room 7')->firstOrFail();
+        $startDate = now()->addMonth()->startOfMonth();
 
-        foreach (['2026-08-29', '2026-08-30', '2026-08-31'] as $endDate) {
+        foreach ([28, 29, 30] as $endOffset) {
             $response = $this->getJson(route('bookings.quote', [
                 'booking_mode' => 'monthly',
                 'hyve_room_id' => $room->id,
-                'booking_date' => '2026-08-01',
-                'booking_end_date' => $endDate,
+                'booking_date' => $startDate->toDateString(),
+                'booking_end_date' => $startDate->copy()->addDays($endOffset)->toDateString(),
             ]));
 
             $response->assertOk()
@@ -586,12 +653,13 @@ class BookingSubmissionTest extends TestCase
     public function test_an_arbitrary_29_day_range_uses_one_month_without_calendar_month_boundaries(): void
     {
         $room = HyveRoom::query()->where('room_name', 'Room 7')->firstOrFail();
+        $startDate = now()->addMonth()->startOfMonth()->addDays(9);
 
         $this->getJson(route('bookings.quote', [
             'booking_mode' => 'monthly',
             'hyve_room_id' => $room->id,
-            'booking_date' => '2026-08-10',
-            'booking_end_date' => '2026-09-07',
+            'booking_date' => $startDate->toDateString(),
+            'booking_end_date' => $startDate->copy()->addDays(28)->toDateString(),
         ]))
             ->assertOk()
             ->assertJsonPath('unit_label', '1 month')
@@ -602,12 +670,13 @@ class BookingSubmissionTest extends TestCase
     public function test_days_beyond_the_monthly_band_are_billed_as_daily_excess(): void
     {
         $room = HyveRoom::query()->where('room_name', 'Room 7')->firstOrFail();
+        $startDate = now()->addMonth()->startOfMonth();
 
         $this->getJson(route('bookings.quote', [
             'booking_mode' => 'monthly',
             'hyve_room_id' => $room->id,
-            'booking_date' => '2026-08-01',
-            'booking_end_date' => '2026-09-01',
+            'booking_date' => $startDate->toDateString(),
+            'booking_end_date' => $startDate->copy()->addDays(31)->toDateString(),
         ]))
             ->assertOk()
             ->assertJsonPath('unit_label', '1 month + 1 day')
@@ -622,12 +691,13 @@ class BookingSubmissionTest extends TestCase
     public function test_quote_endpoint_uses_calendar_month_breakdown_for_long_stay_ranges(): void
     {
         $room = HyveRoom::query()->where('room_name', 'Room 7')->firstOrFail();
+        $startDate = now()->addMonth()->startOfMonth();
 
         $response = $this->getJson(route('bookings.quote', [
             'booking_mode' => 'monthly',
             'hyve_room_id' => $room->id,
-            'booking_date' => '2026-08-01',
-            'booking_end_date' => '2026-09-03',
+            'booking_date' => $startDate->toDateString(),
+            'booking_end_date' => $startDate->copy()->addDays(33)->toDateString(),
         ]));
 
         $response->assertOk();
@@ -692,6 +762,7 @@ class BookingSubmissionTest extends TestCase
 
         $space = Space::query()->where('name', 'Tenacity Office (4 Seats)')->firstOrFail();
         $room = HyveRoom::query()->where('room_name', 'Room 7')->firstOrFail();
+        $startDate = now()->addMonth()->startOfMonth();
 
         $response = $this->post(route('bookings.store'), [
             'booking_mode' => 'monthly',
@@ -699,8 +770,8 @@ class BookingSubmissionTest extends TestCase
             'email' => 'monthly@example.com',
             'phone' => '+639171110000',
             'hyve_room_id' => $room->id,
-            'booking_date' => '2026-08-01',
-            'booking_end_date' => '2026-08-31',
+            'booking_date' => $startDate->toDateString(),
+            'booking_end_date' => $startDate->copy()->addMonthNoOverflow()->subDay()->toDateString(),
             'monthly_plan' => 'Monthly Rental',
             'guests' => 4,
             'downpayment_amount' => 500,
@@ -735,7 +806,7 @@ class BookingSubmissionTest extends TestCase
         ]);
 
         $detail = BookingDetail::query()->where('hyve_room_id', $room->id)->latest('id')->firstOrFail();
-        $this->assertSame('2026-08-31', optional($detail->booking_end_date)->toDateString());
+        $this->assertSame($startDate->copy()->addMonthNoOverflow()->subDay()->toDateString(), optional($detail->booking_end_date)->toDateString());
     }
 
     public function test_guest_users_can_submit_a_full_schedule_booking_with_multiple_room_slots(): void

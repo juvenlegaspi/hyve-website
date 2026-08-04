@@ -2215,6 +2215,33 @@
         overscroll-behavior: contain;
     }
 
+    .booking-room-strip {
+        position: relative;
+    }
+
+    .booking-room-strip__hint {
+        position: absolute;
+        top: 0.42rem;
+        right: 2rem;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.38rem;
+        margin: 0;
+        color: #6f8068;
+        font-size: 0.68rem;
+        font-weight: 800;
+        letter-spacing: 0.05em;
+        line-height: 1;
+        text-transform: uppercase;
+        pointer-events: none;
+    }
+
+    .booking-room-strip__hint-arrow {
+        color: #46743d;
+        font-size: 0.92rem;
+        line-height: 1;
+    }
+
     .booking-room-strip__viewport {
         display: block;
         min-width: 0;
@@ -4337,6 +4364,11 @@
         .booking-room-strip__rail {
             height: 5.35rem;
             max-height: 5.35rem;
+        }
+
+        .booking-room-strip__hint {
+            right: 1.35rem;
+            font-size: 0.62rem;
         }
 
         .member-portal__stats,

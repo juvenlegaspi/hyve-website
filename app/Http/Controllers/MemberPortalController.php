@@ -12,6 +12,7 @@ use App\Models\PaymentSetting;
 use App\Models\Space;
 use App\Models\HyveScheduleOverride;
 use App\Services\BookingWifiVoucherService;
+use App\Services\HyveDiscountService;
 use App\Support\HyvePricing;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -27,6 +28,7 @@ class MemberPortalController extends Controller
     public function __construct(
         private readonly BookingWifiVoucherService $wifiVoucherService,
         private readonly HyvePricing $pricing,
+        private readonly HyveDiscountService $discounts,
     ) {
     }
 
@@ -308,10 +310,13 @@ class MemberPortalController extends Controller
             ]);
 
             $bookingHeader->refresh();
-            $bookingHeader->load('details');
+            $bookingHeader->load('details.space');
 
-            $newTotal = round((float) $bookingHeader->details->sum(fn (BookingDetail $detail): float => (float) ($detail->subtotal ?? 0)), 2);
-            $discountSnapshot = $bookingHeader->discountSnapshotFor($newTotal);
+            $discountSnapshot = $this->discounts->calculate(
+                $bookingHeader,
+                (string) ($bookingHeader->discount_code ?? HyveDiscountService::NONE),
+            );
+            $newTotal = (float) $discountSnapshot['gross_total'];
             $paidSoFar = round((float) ($bookingHeader->downpayment_amount ?? 0), 2);
             $newBalance = round(max(0, (float) $discountSnapshot['discounted_total_amount'] - $paidSoFar), 2);
             $currentPaymentStatus = strtolower((string) ($bookingHeader->payment_status ?? ''));
@@ -327,6 +332,9 @@ class MemberPortalController extends Controller
 
             $bookingHeader->update([
                 'total_amount' => $newTotal,
+                'discount_code' => $discountSnapshot['discount_code'],
+                'discount_label' => $discountSnapshot['discount_label'],
+                'discount_rate' => $discountSnapshot['discount_rate'],
                 'discount_amount' => $discountSnapshot['discount_amount'],
                 'discounted_total_amount' => $discountSnapshot['discounted_total_amount'],
                 'balance_amount' => $newBalance,

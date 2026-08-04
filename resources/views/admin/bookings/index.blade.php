@@ -311,9 +311,12 @@
         }
 
         .admin-bookings-table__date {
-            display: grid;
-            gap: 0.08rem;
             white-space: nowrap;
+        }
+
+        .admin-bookings-table__date strong,
+        .admin-bookings-table__date span {
+            display: block;
         }
 
         .admin-bookings-table__date strong {
@@ -1352,6 +1355,19 @@
             <div class="admin-extension-modal__summary">
                 <div><span>Room</span><strong data-admin-open-time-room>--</strong></div>
                 <div><span>Reserved cutoff</span><strong data-admin-open-time-cutoff>--</strong></div>
+                <div><span>Actual start</span><strong data-admin-open-time-start>--</strong></div>
+                <div><span>Checkout time</span><strong data-admin-open-time-end>--</strong></div>
+            </div>
+
+            <p class="admin-extension-modal__note" data-admin-open-time-loading>Computing the live checkout bill...</p>
+            <div class="admin-extension-modal__financials hidden" data-admin-open-time-financials>
+                <div><span>Actual stay</span><strong data-admin-open-time-actual-duration>--</strong></div>
+                <div><span>Billed duration</span><strong data-admin-open-time-billed-duration>--</strong></div>
+                <div><span>Gross bill</span><strong data-admin-open-time-gross>--</strong></div>
+                <div><span>Discount</span><strong data-admin-open-time-discount>--</strong></div>
+                <div><span>Final bill</span><strong data-admin-open-time-final>--</strong></div>
+                <div><span>Previously paid</span><strong data-admin-open-time-paid>--</strong></div>
+                <div><span>Collect now</span><strong data-admin-open-time-due>--</strong></div>
             </div>
 
             <p class="admin-extension-modal__note">Choose the method received at the front desk. Admin-recorded checkout payments are approved immediately.</p>
@@ -1361,8 +1377,8 @@
                 <button type="button" class="admin-extension-modal__option" data-admin-open-time-method="bank_transfer"><strong>Bank transfer</strong><span>Verified by admin</span></button>
             </div>
             <label class="mt-3 block text-[0.75rem] font-semibold text-[#4a544c]">
-                Notes / reference (optional)
-                <textarea rows="3" class="mt-2 w-full rounded-xl border border-[#d9dfd7] px-3 py-2 font-normal" data-admin-open-time-notes placeholder="OR number, GCash reference, or checkout note"></textarea>
+                Notes / reference <span data-admin-open-time-reference-hint>(optional for cash)</span>
+                <textarea rows="3" class="mt-2 w-full rounded-xl border border-[#d9dfd7] px-3 py-2 font-normal" data-admin-open-time-notes placeholder="OR number, GCash reference, or bank reference"></textarea>
             </label>
             <p class="admin-extension-modal__error hidden" data-admin-open-time-error></p>
 
@@ -1392,6 +1408,8 @@
             let selectedExtension = null;
             let openTimeCheckoutAction = null;
             let openTimeCheckoutMethod = '';
+            let openTimeCheckoutPreviewLoaded = false;
+            let openTimeCheckoutAmountDue = null;
 
             if (!modal) {
                 return;
@@ -1990,6 +2008,12 @@
                             const proofButton = booking.proof_visible && booking.proof
                                 ? `<a href="${booking.proof}" target="_blank" class="admin-bookings-modal__proof">View proof</a>`
                                 : '<span class="admin-bookings-modal__booking-proof-text">No proof</span>';
+                            const studentProofButton = booking.student_id_proof
+                                ? `<a href="${escapeHtml(booking.student_id_proof)}" target="_blank" class="admin-bookings-modal__proof">View student ID</a>`
+                                : '';
+                            const monthlyPlanDetails = booking.long_stay_plan
+                                ? `<br><span>Plan: ${escapeHtml(booking.long_stay_plan)}${booking.student_id_reference ? ` · Student ID: ${escapeHtml(booking.student_id_reference)}` : ''}</span>`
+                                : '';
                             const rescheduleButton = booking.can_reschedule && booking.reschedule_url
                                 ? `<a href="${booking.reschedule_url}" class="admin-bookings-modal__button admin-bookings-modal__button--reschedule">Reschedule</a>`
                                 : '';
@@ -2008,7 +2032,7 @@
                                 ? `
                                     <div class="admin-bookings-modal__actions">
                                         ${booking.can_start ? `<button type="button" class="admin-bookings-modal__button admin-bookings-modal__button--primary" data-admin-booking-action="start" data-booking-id="${booking.id}" data-url="${booking.start_url}">Start</button>` : ''}
-                                        ${booking.can_end ? `<button type="button" class="admin-bookings-modal__button" data-admin-booking-action="end" data-booking-id="${booking.id}" data-url="${booking.end_url}" data-open-time="${booking.is_open_time ? '1' : '0'}">${booking.is_open_time ? 'End & Checkout' : 'End'}</button>` : ''}
+                                        ${booking.can_end ? `<button type="button" class="admin-bookings-modal__button" data-admin-booking-action="end" data-booking-id="${booking.id}" data-url="${booking.end_url}" data-preview-url="${booking.open_time_checkout_preview_url || ''}" data-open-time="${booking.is_open_time ? '1' : '0'}">${booking.is_open_time ? 'End & Checkout' : 'End'}</button>` : ''}
                                         ${booking.can_extend ? `<button type="button" class="admin-bookings-modal__button" data-admin-booking-action="extend" data-booking-id="${booking.id}" data-url="${booking.extend_url}" data-options-url="${booking.extension_options_url || ''}">Extend</button>` : ''}
                                         ${rescheduleButton}
                                     </div>
@@ -2025,6 +2049,7 @@
                                     </td>
                                     <td class="admin-bookings-modal__booking-room-list">
                                         ${booking.room ?? 'Room'} - ${booking.date ?? '--'} - ${booking.time ?? '--'}
+                                        ${monthlyPlanDetails}
                                         <br><span>Scheduled start: ${booking.scheduled_start ?? '--'}</span>
                                         <br><span>Scheduled end: ${booking.scheduled_end ?? '--'}</span>
                                         <br><span>Actual start: ${booking.actual_start ?? '--'}</span>
@@ -2051,6 +2076,7 @@
                                     </td>
                                     <td>
                                         ${proofButton}
+                                        ${studentProofButton}
                                         ${actionButtons}
                                         ${progressButtons}
                                     </td>
@@ -2370,14 +2396,56 @@
                         const booking = currentBookings.find((item) => Number(item.id) === bookingId);
                         openTimeCheckoutAction = button;
                         openTimeCheckoutMethod = '';
+                        openTimeCheckoutPreviewLoaded = false;
+                        openTimeCheckoutAmountDue = null;
                         openTimeCheckout?.querySelectorAll('[data-admin-open-time-method]').forEach((choice) => choice.classList.remove('is-active'));
                         openTimeCheckout.querySelector('[data-admin-open-time-room]').textContent = booking?.room || '--';
                         openTimeCheckout.querySelector('[data-admin-open-time-cutoff]').textContent = booking?.open_time_cutoff || '--';
+                        openTimeCheckout.querySelector('[data-admin-open-time-start]').textContent = '--';
+                        openTimeCheckout.querySelector('[data-admin-open-time-end]').textContent = '--';
                         openTimeCheckout.querySelector('[data-admin-open-time-notes]').value = '';
+                        openTimeCheckout.querySelector('[data-admin-open-time-loading]').textContent = 'Computing the live checkout bill...';
+                        openTimeCheckout.querySelector('[data-admin-open-time-loading]').classList.remove('hidden');
+                        openTimeCheckout.querySelector('[data-admin-open-time-financials]').classList.add('hidden');
                         openTimeCheckoutError?.classList.add('hidden');
                         openTimeCheckoutConfirm.disabled = true;
                         openTimeCheckout.classList.remove('hidden');
                         document.body.classList.add('overflow-hidden');
+
+                        try {
+                            const previewResponse = await fetch(button.dataset.previewUrl, {
+                                headers: {
+                                    'Accept': 'application/json',
+                                    'X-Requested-With': 'XMLHttpRequest',
+                                },
+                            });
+                            const preview = await previewResponse.json();
+
+                            if (!previewResponse.ok) {
+                                throw new Error(preview.message || 'Unable to compute the checkout bill.');
+                            }
+
+                            openTimeCheckout.querySelector('[data-admin-open-time-room]').textContent = preview.room || booking?.room || '--';
+                            openTimeCheckout.querySelector('[data-admin-open-time-start]').textContent = preview.actual_start || '--';
+                            openTimeCheckout.querySelector('[data-admin-open-time-end]').textContent = preview.checkout_time || '--';
+                            openTimeCheckout.querySelector('[data-admin-open-time-actual-duration]').textContent = preview.actual_duration || '--';
+                            openTimeCheckout.querySelector('[data-admin-open-time-billed-duration]').textContent = preview.billed_duration || '--';
+                            openTimeCheckout.querySelector('[data-admin-open-time-gross]').textContent = preview.gross_total_label || '--';
+                            openTimeCheckout.querySelector('[data-admin-open-time-discount]').textContent = `${preview.discount_label || 'No discount'} · ${preview.discount_amount_label || 'Php 0.00'}`;
+                            openTimeCheckout.querySelector('[data-admin-open-time-final]').textContent = preview.final_total_label || '--';
+                            openTimeCheckout.querySelector('[data-admin-open-time-paid]').textContent = preview.approved_before_label || '--';
+                            openTimeCheckout.querySelector('[data-admin-open-time-due]').textContent = preview.amount_due_label || '--';
+                            openTimeCheckout.querySelector('[data-admin-open-time-loading]').classList.add('hidden');
+                            openTimeCheckout.querySelector('[data-admin-open-time-financials]').classList.remove('hidden');
+                            openTimeCheckoutConfirm.textContent = `End & collect ${preview.amount_due_label || 'payment'}`;
+                            openTimeCheckoutAmountDue = Number(preview.amount_due || 0);
+                            openTimeCheckoutPreviewLoaded = true;
+                            openTimeCheckoutConfirm.disabled = !openTimeCheckoutMethod;
+                        } catch (error) {
+                            openTimeCheckout.querySelector('[data-admin-open-time-loading]').classList.add('hidden');
+                            openTimeCheckoutError.textContent = error?.message || 'Unable to compute the checkout bill.';
+                            openTimeCheckoutError.classList.remove('hidden');
+                        }
                         return;
                     }
 
@@ -2455,7 +2523,10 @@
                     openTimeCheckout.querySelectorAll('[data-admin-open-time-method]').forEach((item) => {
                         item.classList.toggle('is-active', item === choice);
                     });
-                    openTimeCheckoutConfirm.disabled = !openTimeCheckoutMethod;
+                    openTimeCheckout.querySelector('[data-admin-open-time-reference-hint]').textContent = openTimeCheckoutMethod === 'cash'
+                        ? '(optional for cash)'
+                        : '(required for GCash or bank transfer)';
+                    openTimeCheckoutConfirm.disabled = !openTimeCheckoutMethod || !openTimeCheckoutPreviewLoaded;
                 });
             });
 
@@ -2463,6 +2534,11 @@
                 openTimeCheckout?.classList.add('hidden');
                 openTimeCheckoutAction = null;
                 openTimeCheckoutMethod = '';
+                openTimeCheckoutPreviewLoaded = false;
+                openTimeCheckoutAmountDue = null;
+                if (openTimeCheckoutConfirm) {
+                    openTimeCheckoutConfirm.textContent = 'End & record full payment';
+                }
                 document.body.classList.remove('overflow-hidden');
             };
 
@@ -2471,7 +2547,14 @@
             });
 
             openTimeCheckoutConfirm?.addEventListener('click', async () => {
-                if (!openTimeCheckoutAction || !openTimeCheckoutMethod) {
+                if (!openTimeCheckoutAction || !openTimeCheckoutMethod || !openTimeCheckoutPreviewLoaded) {
+                    return;
+                }
+
+                const paymentNotes = openTimeCheckout.querySelector('[data-admin-open-time-notes]').value.trim();
+                if (openTimeCheckoutMethod !== 'cash' && !paymentNotes) {
+                    openTimeCheckoutError.textContent = 'Enter the GCash or bank transaction reference before checkout.';
+                    openTimeCheckoutError.classList.remove('hidden');
                     return;
                 }
 
@@ -2489,13 +2572,14 @@
                         },
                         body: JSON.stringify({
                             payment_method: openTimeCheckoutMethod,
-                            payment_notes: openTimeCheckout.querySelector('[data-admin-open-time-notes]').value,
+                            payment_notes: paymentNotes,
+                            previewed_amount_due: openTimeCheckoutAmountDue,
                         }),
                     });
                     const payload = await response.json();
 
                     if (!response.ok) {
-                        throw new Error(payload.message || payload.errors?.payment_method?.[0] || 'Unable to complete Open Time checkout.');
+                        throw new Error(payload.errors?.previewed_amount_due?.[0] || payload.errors?.payment_notes?.[0] || payload.errors?.payment_method?.[0] || payload.message || 'Unable to complete Open Time checkout.');
                     }
 
                     closeOpenTimeCheckout();
@@ -2508,7 +2592,7 @@
                     openTimeCheckoutError.classList.remove('hidden');
                 } finally {
                     if (openTimeCheckoutConfirm) {
-                        openTimeCheckoutConfirm.disabled = !openTimeCheckoutMethod;
+                        openTimeCheckoutConfirm.disabled = !openTimeCheckoutMethod || !openTimeCheckoutPreviewLoaded;
                     }
                 }
             });

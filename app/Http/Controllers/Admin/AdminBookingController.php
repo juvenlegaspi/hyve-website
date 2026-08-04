@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Mail\BookingApprovedMail;
+use App\Mail\BookingPaymentReceiptMail;
 use App\Mail\BookingRejectedMail;
 use App\Mail\BookingRescheduledMail;
 use App\Models\BookingActivity;
@@ -18,6 +19,7 @@ use App\Services\BookingApprovalTextService;
 use App\Services\BookingProgressSyncService;
 use App\Services\BookingRescheduledTextService;
 use App\Services\BookingWifiVoucherService;
+use App\Services\HyveDiscountService;
 use App\Support\HyvePricing;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -42,6 +44,7 @@ class AdminBookingController extends Controller
         private readonly HyvePricing $pricing,
         private readonly BookingProgressSyncService $progressSync,
         private readonly AdminBookingRescheduleService $rescheduleService,
+        private readonly HyveDiscountService $discounts,
     ) {}
 
     public function index(Request $request): View
@@ -67,6 +70,11 @@ class AdminBookingController extends Controller
 
     public function bookingsFeed(Request $request): JsonResponse
     {
+        // Keep booking progress current during the browser's live polling too.
+        // This lets local development auto-start/end bookings without requiring
+        // a manual page refresh while the Admin Bookings page is open.
+        $this->syncDueBookingsProgress();
+
         $filters = $this->bookingFilters($request);
         $bookings = $this->bookingListingPaginator($request, $filters);
 
@@ -99,6 +107,19 @@ class AdminBookingController extends Controller
 
         return response()->file($filePath, [
             'Content-Type' => $mimeType,
+            'Content-Disposition' => 'inline; filename="'.basename($path).'"',
+        ]);
+    }
+
+    public function studentIdProof(BookingDetail $bookingDetail)
+    {
+        $path = (string) ($bookingDetail->student_id_proof_path ?? '');
+
+        abort_if($path === '', 404);
+        abort_unless(Storage::disk('public')->exists($path), 404);
+
+        return response()->file(Storage::disk('public')->path($path), [
+            'Content-Type' => Storage::disk('public')->mimeType($path) ?: 'application/octet-stream',
             'Content-Disposition' => 'inline; filename="'.basename($path).'"',
         ]);
     }
@@ -382,12 +403,16 @@ class AdminBookingController extends Controller
 
     public function endDetail(Request $request, BookingDetail $bookingDetail): JsonResponse|RedirectResponse
     {
-        if (! $this->canEndDetail($bookingDetail)) {
-            return $this->detailActionErrorResponse($request, 'This booked line cannot be ended yet.');
+        if ($bookingDetail->is_open_time) {
+            if (! $this->canCheckoutOpenTimeDetail($bookingDetail)) {
+                return $this->detailActionErrorResponse($request, 'This Open Time session has already been checked out.');
+            }
+
+            return $this->endOpenTimeDetail($request, $bookingDetail);
         }
 
-        if ($bookingDetail->is_open_time) {
-            return $this->endOpenTimeDetail($request, $bookingDetail);
+        if (! $this->canEndDetail($bookingDetail)) {
+            return $this->detailActionErrorResponse($request, 'This booked line cannot be ended yet.');
         }
 
         $endedAt = now();
@@ -436,58 +461,74 @@ class AdminBookingController extends Controller
         return back()->with('admin_success', 'Booked line ended successfully.');
     }
 
+    public function openTimeCheckoutPreview(BookingDetail $bookingDetail): JsonResponse
+    {
+        $bookingDetail->loadMissing(['bookingHeader.payments', 'hyveRoom', 'space']);
+
+        if (! $this->canCheckoutOpenTimeDetail($bookingDetail)) {
+            return response()->json([
+                'message' => 'This Open Time session cannot be checked out right now.',
+            ], 422);
+        }
+
+        $endedAt = $bookingDetail->actual_end_at ?: now();
+        $calculation = $this->openTimeCheckoutCalculation($bookingDetail, $bookingDetail->bookingHeader, $endedAt);
+
+        return response()->json($this->openTimeCheckoutPayload($bookingDetail, $calculation));
+    }
+
     private function endOpenTimeDetail(Request $request, BookingDetail $bookingDetail): JsonResponse|RedirectResponse
     {
         $validated = $request->validate([
             'payment_method' => ['required', Rule::in(['cash', 'gcash', 'bank_transfer'])],
-            'payment_notes' => ['nullable', 'string', 'max:1000'],
+            'previewed_amount_due' => ['required', 'numeric', 'min:0'],
+            'payment_notes' => [
+                Rule::requiredIf(fn (): bool => in_array((string) $request->input('payment_method'), ['gcash', 'bank_transfer'], true)),
+                'nullable',
+                'string',
+                'max:1000',
+            ],
         ]);
-        $endedAt = now();
+        $receiptHeader = null;
 
-        DB::transaction(function () use ($request, $bookingDetail, $validated, $endedAt): void {
+        DB::transaction(function () use ($request, $bookingDetail, $validated, &$receiptHeader): void {
             $detail = BookingDetail::query()->lockForUpdate()->findOrFail($bookingDetail->getKey());
             $header = BookingHeader::query()->lockForUpdate()->findOrFail($detail->booking_header_id);
-            $startedAt = $detail->actual_start_at ?: $endedAt;
-            $intervalMinutes = max(1, (int) config('hyve.booking.slot_interval_minutes', 30));
-            $minimumMinutes = max($intervalMinutes, (int) config('hyve.booking.minimum_duration_minutes', 120));
-            $elapsedMinutes = max(1, $startedAt->diffInMinutes($endedAt));
-            $billedMinutes = max($minimumMinutes, (int) ceil($elapsedMinutes / $intervalMinutes) * $intervalMinutes);
-            $billingEnd = $startedAt->copy()->addMinutes($billedMinutes);
-            $room = $detail->hyveRoom()->firstOrFail();
-            $quote = $this->pricing->quoteForRoom(
-                $room,
-                $startedAt->toDateString(),
-                $startedAt->format('H:i'),
-                $billingEnd->format('H:i'),
-            );
+            $detail->loadMissing(['hyveRoom', 'space']);
 
-            if (! $quote) {
+            if (! $this->canCheckoutOpenTimeDetail($detail)) {
                 throw ValidationException::withMessages([
-                    'payment_method' => 'The final Open Time charge could not be computed. Check the active room pricing first.',
+                    'payment_method' => 'This Open Time session has already been checked out.',
                 ]);
             }
 
+            $endedAt = $detail->actual_end_at ?: now();
+            $calculation = $this->openTimeCheckoutCalculation($detail, $header, $endedAt);
+            $quote = $calculation['quote'];
+
             $detail->update([
                 'charge_period' => $quote['charge_period'],
-                'duration_hours' => round($elapsedMinutes / 60, 2),
-                'billed_hours' => round($billedMinutes / 60, 2),
+                'duration_hours' => round($calculation['elapsed_minutes'] / 60, 2),
+                'billed_hours' => round($calculation['billed_minutes'] / 60, 2),
                 'rate_name' => $quote['rate_name'].' - Open Time',
                 'rate_amount' => $quote['succeeding_hour_rate'],
                 'subtotal' => round((float) $quote['total_amount'], 2),
                 'progress_status' => BookingDetail::PROGRESS_COMPLETED,
-                'actual_start_at' => $startedAt,
+                'actual_start_at' => $calculation['started_at'],
                 'actual_end_at' => $endedAt,
             ]);
 
-            $grossTotal = round((float) $header->details()
-                ->where('status', '!=', BookingDetail::STATUS_CANCELLED)
-                ->sum('subtotal'), 2);
-            $discount = $header->discountSnapshotFor($grossTotal);
-            $finalTotal = $discount['discounted_total_amount'];
-            $approvedBefore = round((float) $header->payments()
-                ->where('status', BookingPayment::STATUS_APPROVED)
-                ->sum('amount'), 2);
-            $amountDue = round(max(0, $finalTotal - $approvedBefore), 2);
+            $grossTotal = $calculation['gross_total'];
+            $discount = $calculation['discount'];
+            $finalTotal = $calculation['final_total'];
+            $approvedBefore = $calculation['approved_before'];
+            $amountDue = $calculation['amount_due'];
+
+            if (abs($amountDue - (float) $validated['previewed_amount_due']) > 0.009) {
+                throw ValidationException::withMessages([
+                    'previewed_amount_due' => 'The live bill changed while this checkout was open. Close and reopen End & Checkout to review the updated amount.',
+                ]);
+            }
 
             if ($amountDue > 0) {
                 BookingPayment::query()->create([
@@ -524,7 +565,12 @@ class AdminBookingController extends Controller
                 'Ended '.$this->activityRoomName($detail).' and collected Php '.number_format($amountDue, 2)
                     .' via '.ucfirst(str_replace('_', ' ', (string) $validated['payment_method'])).'.'
             );
+
+            $this->syncWifiVoucher($header->fresh(['details', 'wifiVoucher']));
+            $receiptHeader = $header->fresh(['details.hyveRoom', 'details.space', 'payments']);
         });
+
+        $this->sendPaymentReceiptEmail($receiptHeader);
 
         $bookingDetail = $bookingDetail->fresh(['hyveRoom', 'space']);
         $header = $bookingDetail->bookingHeader;
@@ -581,7 +627,7 @@ class AdminBookingController extends Controller
             }
 
             $amount = round((float) ($quote['total_amount'] ?? 0), 2);
-            $financials = $this->extensionFinancialPreview($header, $amount);
+            $financials = $this->extensionFinancialPreview($header, $bookingDetail, $quote, $currentEnd, $amount);
             $options[] = [
                 'duration_minutes' => $minutes,
                 'duration_label' => $this->extensionDurationLabel($minutes),
@@ -660,6 +706,7 @@ class AdminBookingController extends Controller
             }
 
             $header = $lockedDetail->bookingHeader;
+            $isRetrospectiveExtension = $lockedDetail->actual_end_at !== null;
             $extendedDetail = $header->details()->create([
                 'space_id' => $lockedDetail->space_id,
                 'hyve_room_id' => $lockedDetail->hyve_room_id,
@@ -675,9 +722,11 @@ class AdminBookingController extends Controller
                 'rate_amount' => (float) ($quote['succeeding_hour_rate'] ?? $quote['total_amount'] ?? 0),
                 'subtotal' => (float) ($quote['total_amount'] ?? 0),
                 'status' => BookingDetail::STATUS_CONFIRMED,
-                'progress_status' => BookingDetail::PROGRESS_SCHEDULED,
-                'actual_start_at' => null,
-                'actual_end_at' => null,
+                'progress_status' => $isRetrospectiveExtension
+                    ? BookingDetail::PROGRESS_COMPLETED
+                    : BookingDetail::PROGRESS_SCHEDULED,
+                'actual_start_at' => $isRetrospectiveExtension ? $extensionStart : null,
+                'actual_end_at' => $isRetrospectiveExtension ? $extensionEnd : null,
             ]);
 
             $freshHeader = $header->fresh(['details.hyveRoom', 'details.space', 'payments', 'user', 'wifiVoucher']);
@@ -879,16 +928,36 @@ class AdminBookingController extends Controller
         }
 
         $scheduledEnd = $this->scheduledDateTime($detail, (string) $detail->end_time, true);
-        $extensionDeadline = $scheduledEnd->copy()->addMinutes(
-            max(0, (int) config('hyve.booking.extension_grace_minutes', 30))
-        );
+        $extensionDeadline = $detail->actual_end_at
+            ? $detail->actual_end_at->copy()->addHours(
+                max(0, (int) config('hyve.booking.ended_extension_window_hours', 24))
+            )
+            : $scheduledEnd->copy()->addMinutes(
+                max(0, (int) config('hyve.booking.extension_grace_minutes', 30))
+            );
 
         return (string) $detail->status === BookingDetail::STATUS_CONFIRMED
             && ! $this->isLongStayDetail($detail)
-            && ! $detail->actual_end_at
+            && ! $detail->is_open_time
             && $detail->hyve_room_id !== null
             && $detail->bookingHeader !== null
             && now()->lte($extensionDeadline);
+    }
+
+    private function canCheckoutOpenTimeDetail(BookingDetail $detail): bool
+    {
+        if (! $detail->is_open_time
+            || (string) $detail->status !== BookingDetail::STATUS_CONFIRMED
+            || ! $detail->actual_start_at
+            || ! $detail->hyve_room_id
+            || ! $detail->booking_header_id) {
+            return false;
+        }
+
+        return ! BookingActivity::query()
+            ->where('booking_detail_id', $detail->getKey())
+            ->where('event_key', 'open_time_checked_out')
+            ->exists();
     }
 
     private function canStartDetail(BookingDetail $detail): bool
@@ -1170,12 +1239,28 @@ class AdminBookingController extends Controller
     }
 
     /** @return array{new_total: float, new_balance: float} */
-    private function extensionFinancialPreview(BookingHeader $header, float $extensionAmount): array
+    private function extensionFinancialPreview(
+        BookingHeader $header,
+        BookingDetail $detail,
+        array $quote,
+        Carbon $extensionStart,
+        float $extensionAmount,
+    ): array
     {
         $header->loadMissing('payments');
-        $newGrossTotal = round((float) ($header->total_amount ?? 0) + $extensionAmount, 2);
-        $discount = $header->discountSnapshotFor($newGrossTotal);
-        $newTotal = round((float) ($discount['discounted_total_amount'] ?? $newGrossTotal), 2);
+        $discount = $this->discounts->calculate(
+            $header,
+            (string) ($header->discount_code ?? HyveDiscountService::NONE),
+            [],
+            [[
+                'subtotal' => $extensionAmount,
+                'space_slug' => (string) ($detail->space?->slug ?? ''),
+                'charge_period' => (string) ($quote['charge_period'] ?? 'day'),
+                'start_time' => $extensionStart->format('H:i'),
+                'billed_hours' => (float) ($quote['billed_hours'] ?? 0),
+            ]],
+        );
+        $newTotal = round((float) $discount['discounted_total_amount'], 2);
         $approvedTotal = round(
             (float) $header->payments
                 ->where('status', BookingPayment::STATUS_APPROVED)
@@ -1206,18 +1291,104 @@ class AdminBookingController extends Controller
         return '+'.implode(' ', $parts);
     }
 
-    private function syncHeaderFinancialSnapshot(BookingHeader $header): void
+    /** @return array<string, mixed> */
+    private function openTimeCheckoutCalculation(BookingDetail $detail, BookingHeader $header, Carbon $endedAt): array
     {
-        $header->loadMissing(['details', 'payments']);
-
-        $grossTotal = round(
-            (float) $header->details
-                ->where('status', '!=', BookingDetail::STATUS_CANCELLED)
-                ->sum(fn (BookingDetail $detail): float => (float) ($detail->subtotal ?? 0)),
-            2
+        $startedAt = $detail->actual_start_at ?: $endedAt;
+        $intervalMinutes = max(1, (int) config('hyve.booking.slot_interval_minutes', 30));
+        $minimumMinutes = max($intervalMinutes, (int) config('hyve.booking.minimum_duration_minutes', 120));
+        $elapsedMinutes = max(1, $startedAt->diffInMinutes($endedAt));
+        $billedMinutes = max($minimumMinutes, (int) ceil($elapsedMinutes / $intervalMinutes) * $intervalMinutes);
+        $billingEnd = $startedAt->copy()->addMinutes($billedMinutes);
+        $room = $detail->hyveRoom ?: $detail->hyveRoom()->firstOrFail();
+        $quote = $this->pricing->quoteForRoom(
+            $room,
+            $startedAt->toDateString(),
+            $startedAt->format('H:i'),
+            $billingEnd->format('H:i'),
         );
 
-        $discountSnapshot = $header->discountSnapshotFor($grossTotal);
+        if (! $quote) {
+            throw ValidationException::withMessages([
+                'payment_method' => 'The final Open Time charge could not be computed. Check the active room pricing first.',
+            ]);
+        }
+
+        $discount = $this->discounts->calculate(
+            $header,
+            (string) ($header->discount_code ?? HyveDiscountService::NONE),
+            [$detail->getKey() => [
+                'subtotal' => (float) $quote['total_amount'],
+                'charge_period' => (string) $quote['charge_period'],
+                'start_time' => $startedAt->format('H:i'),
+                'billed_hours' => $billedMinutes / 60,
+            ]],
+        );
+        $grossTotal = (float) $discount['gross_total'];
+        $finalTotal = round((float) $discount['discounted_total_amount'], 2);
+        $approvedBefore = round((float) $header->payments()
+            ->where('status', BookingPayment::STATUS_APPROVED)
+            ->sum('amount'), 2);
+
+        return [
+            'started_at' => $startedAt,
+            'ended_at' => $endedAt,
+            'billing_end' => $billingEnd,
+            'elapsed_minutes' => $elapsedMinutes,
+            'billed_minutes' => $billedMinutes,
+            'quote' => $quote,
+            'gross_total' => $grossTotal,
+            'discount' => $discount,
+            'final_total' => $finalTotal,
+            'approved_before' => $approvedBefore,
+            'amount_due' => round(max(0, $finalTotal - $approvedBefore), 2),
+        ];
+    }
+
+    /** @param array<string, mixed> $calculation */
+    private function openTimeCheckoutPayload(BookingDetail $detail, array $calculation): array
+    {
+        return [
+            'room' => $this->activityRoomName($detail),
+            'actual_start' => $calculation['started_at']->format('M j, Y g:i A'),
+            'checkout_time' => $calculation['ended_at']->format('M j, Y g:i A'),
+            'actual_duration' => $this->plainDurationLabel((int) $calculation['elapsed_minutes']),
+            'billed_duration' => $this->plainDurationLabel((int) $calculation['billed_minutes']),
+            'gross_total_label' => 'Php '.number_format($calculation['gross_total'], 2),
+            'discount_label' => (string) ($detail->bookingHeader?->discount_label ?? 'No discount'),
+            'discount_amount_label' => 'Php '.number_format((float) ($calculation['discount']['discount_amount'] ?? 0), 2),
+            'final_total_label' => 'Php '.number_format($calculation['final_total'], 2),
+            'approved_before_label' => 'Php '.number_format($calculation['approved_before'], 2),
+            'amount_due' => $calculation['amount_due'],
+            'amount_due_label' => 'Php '.number_format($calculation['amount_due'], 2),
+        ];
+    }
+
+    private function plainDurationLabel(int $minutes): string
+    {
+        $hours = intdiv($minutes, 60);
+        $remainingMinutes = $minutes % 60;
+        $parts = [];
+
+        if ($hours > 0) {
+            $parts[] = $hours.' hr'.($hours === 1 ? '' : 's');
+        }
+
+        if ($remainingMinutes > 0 || $parts === []) {
+            $parts[] = $remainingMinutes.' min';
+        }
+
+        return implode(' ', $parts);
+    }
+
+    private function syncHeaderFinancialSnapshot(BookingHeader $header): void
+    {
+        $header->loadMissing(['details.space', 'payments']);
+        $discountSnapshot = $this->discounts->calculate(
+            $header,
+            (string) ($header->discount_code ?? HyveDiscountService::NONE),
+        );
+        $grossTotal = (float) $discountSnapshot['gross_total'];
 
         $approvedTotal = round(
             (float) $header->payments
@@ -1236,6 +1407,9 @@ class AdminBookingController extends Controller
 
         $header->update([
             'total_amount' => $grossTotal,
+            'discount_code' => $discountSnapshot['discount_code'],
+            'discount_label' => $discountSnapshot['discount_label'],
+            'discount_rate' => $discountSnapshot['discount_rate'],
             'discount_amount' => (float) ($discountSnapshot['discount_amount'] ?? 0),
             'discounted_total_amount' => (float) ($discountSnapshot['discounted_total_amount'] ?? $grossTotal),
             'payment_method' => $latestApprovedProof?->payment_method ?? $header->payment_method,
@@ -1734,17 +1908,27 @@ class AdminBookingController extends Controller
                     'balance' => 'Php '.number_format((float) ($header->balance_amount ?? 0), 2),
                     'proof' => $header->payment_proof_path ? route('admin.bookings.proof', ['bookingHeader' => $header->getKey()]) : null,
                     'proof_visible' => (bool) $header->payment_proof_path,
+                    'long_stay_plan' => $detail->long_stay_plan_label,
+                    'student_id_reference' => $detail->student_id_reference,
+                    'student_id_proof' => $detail->student_id_proof_path
+                        ? route('admin.booking-details.student-id-proof', ['bookingDetail' => $detail->getKey()])
+                        : null,
                     'approve_url' => $canManageBookings ? route('admin.booking-details.approve', ['bookingDetail' => $detail->getKey()]) : null,
                     'reject_url' => $canManageBookings ? route('admin.booking-details.reject', ['bookingDetail' => $detail->getKey()]) : null,
                     'start_url' => $canStartSession
                         ? route('admin.booking-details.start', ['bookingDetail' => $sessionStartDetail->getKey()])
                         : null,
                     'end_url' => $canManageBookings ? route('admin.booking-details.end', ['bookingDetail' => $detail->getKey()]) : null,
+                    'open_time_checkout_preview_url' => $canManageBookings && $detail->is_open_time
+                        ? route('admin.booking-details.open-time-checkout-preview', ['bookingDetail' => $detail->getKey()])
+                        : null,
                     'extend_url' => $canManageBookings ? route('admin.booking-details.extend', ['bookingDetail' => $detail->getKey()]) : null,
                     'extension_options_url' => $canManageBookings ? route('admin.booking-details.extension-options', ['bookingDetail' => $detail->getKey()]) : null,
                     'can_review' => $canManageBookings && ! in_array($detailStatus, ['confirmed', 'cancelled'], true),
                     'can_start' => $canStartSession,
-                    'can_end' => $canManageBookings && $isLatestSessionDetail && $this->canEndDetail($detail),
+                    'can_end' => $canManageBookings
+                        && $isLatestSessionDetail
+                        && ($detail->is_open_time ? $this->canCheckoutOpenTimeDetail($detail) : $this->canEndDetail($detail)),
                     'can_extend' => $canManageBookings && $isLatestSessionDetail && $this->canExtendDetail($detail),
                     'can_reschedule' => $canReschedule,
                     'reschedule_url' => $canReschedule
@@ -2050,6 +2234,63 @@ class AdminBookingController extends Controller
                 'reference_no' => $bookingHeader->reference_no,
                 'email' => $email,
                 'detail_id' => $bookingDetail?->getKey(),
+                'error' => $exception->getMessage(),
+            ]);
+        }
+    }
+
+    private function sendPaymentReceiptEmail(?BookingHeader $header): void
+    {
+        if (! $header || trim((string) $header->email) === '') {
+            return;
+        }
+
+        $header->loadMissing(['details.hyveRoom', 'details.space', 'payments']);
+        $approvedPayments = $header->payments
+            ->where('status', BookingPayment::STATUS_APPROVED)
+            ->sortBy(fn (BookingPayment $payment) => optional($payment->verified_at ?? $payment->paid_at ?? $payment->created_at)->timestamp ?? 0)
+            ->values();
+        $latestPayment = $approvedPayments->last();
+        $details = $header->details
+            ->where('status', '!=', BookingDetail::STATUS_CANCELLED)
+            ->sortBy([['booking_date', 'asc'], ['start_time', 'asc']])
+            ->values();
+
+        $context = [
+            'customer_name' => (string) $header->customer_name,
+            'reference_no' => (string) $header->reference_no,
+            'payment_method' => ucfirst(str_replace('_', ' ', (string) ($latestPayment?->payment_method ?? $header->payment_method ?? 'cash'))),
+            'paid_at' => optional($latestPayment?->verified_at ?? $latestPayment?->paid_at ?? now())->format('F j, Y g:i A'),
+            'payment_amount' => round((float) ($latestPayment?->amount ?? 0), 2),
+            'gross_total_amount' => round((float) ($header->total_amount ?? 0), 2),
+            'discount_label' => (string) ($header->discount_label ?? 'No discount'),
+            'discount_amount' => round((float) ($header->discount_amount ?? 0), 2),
+            'payable_total_amount' => round((float) ($header->discounted_total_amount ?? $header->total_amount ?? 0), 2),
+            'downpayment_amount' => round((float) ($header->downpayment_amount ?? 0), 2),
+            'total_paid_amount' => round((float) $approvedPayments->sum('amount'), 2),
+            'balance_amount' => round((float) ($header->balance_amount ?? 0), 2),
+            'payment_lines' => $approvedPayments->map(function (BookingPayment $payment) use ($latestPayment): array {
+                return [
+                    'label' => $latestPayment?->is($payment) ? 'Final payment' : 'Downpayment',
+                    'method' => ucfirst(str_replace('_', ' ', (string) ($payment->payment_method ?? 'cash'))),
+                    'paid_at' => optional($payment->verified_at ?? $payment->paid_at ?? $payment->created_at)->format('F j, Y g:i A') ?? '--',
+                    'amount' => round((float) ($payment->amount ?? 0), 2),
+                ];
+            })->all(),
+            'lines' => $details->map(fn (BookingDetail $detail): array => [
+                'room_name' => $this->activityRoomName($detail),
+                'date' => optional($detail->booking_date)->format('F j, Y') ?? '--',
+                'time' => optional($detail->actual_start_at)->format('g:i A')
+                    .' - '.optional($detail->actual_end_at)->format('g:i A'),
+            ])->all(),
+        ];
+
+        try {
+            Mail::to((string) $header->email)->send(new BookingPaymentReceiptMail($context));
+        } catch (\Throwable $exception) {
+            Log::warning('Failed to send Open Time payment receipt email.', [
+                'reference_no' => $header->reference_no,
+                'email' => $header->email,
                 'error' => $exception->getMessage(),
             ]);
         }

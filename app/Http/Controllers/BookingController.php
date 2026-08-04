@@ -284,18 +284,23 @@ class BookingController extends Controller
 
         $room = HyveRoom::query()->active()->findOrFail($validated['hyve_room_id']);
         $isMonthlyMode = ($validated['booking_mode'] ?? 'room') === 'monthly';
+        $pricingRoom = $this->pricingRoomForSelection($room);
+        $commonMonthlyPlan = $isMonthlyMode
+            ? $this->pricing->commonAreaMonthlyPlanForRoom($pricingRoom, $validated['monthly_plan'] ?? null)
+            : null;
+        $effectiveUseType = $commonMonthlyPlan['use_type'] ?? ($validated['long_stay_use_type'] ?? null);
 
         if (
             $isMonthlyMode
-            && $this->pricing->longStayRequiresUseType($this->pricingRoomForSelection($room), $validated['booking_date'], $validated['booking_end_date'])
-            && blank($validated['long_stay_use_type'] ?? null)
+            && $this->pricing->longStayRequiresUseType($pricingRoom, $validated['booking_date'], $validated['booking_end_date'])
+            && blank($effectiveUseType)
         ) {
             return response()->json([
                 'message' => 'Choose Day Use or Night Use first so HYVE can compute the correct long-stay rate.',
             ], 422);
         }
 
-        if ($isMonthlyMode && ! $this->isLongStayDateRangeAvailable($room, $validated['booking_date'], $validated['booking_end_date'], $validated['long_stay_use_type'] ?? null)) {
+        if ($isMonthlyMode && ! $this->isLongStayDateRangeAvailable($room, $validated['booking_date'], $validated['booking_end_date'], $effectiveUseType)) {
             return response()->json([
                 'message' => 'The selected stay dates are no longer available for this room. Please choose another date range.',
             ], 422);
@@ -303,11 +308,11 @@ class BookingController extends Controller
 
         $quote = $isMonthlyMode
             ? $this->pricing->quoteForLongStayRoom(
-                $this->pricingRoomForSelection($room),
+                $pricingRoom,
                 (string) ($validated['monthly_plan'] ?? ''),
                 $validated['booking_date'],
                 $validated['booking_end_date'],
-                $validated['long_stay_use_type'] ?? null,
+                $effectiveUseType,
             )
             : $this->pricing->quoteForRoom($this->pricingRoomForSelection($room), $validated['booking_date'], $validated['start_time'], $validated['end_time']);
 
@@ -325,7 +330,7 @@ class BookingController extends Controller
                     $room,
                     $validated['booking_date'],
                     $validated['booking_end_date'],
-                    $validated['long_stay_use_type'] ?? null,
+                    $effectiveUseType,
                 )->count(),
                 'total_tables' => HyveRoom::query()->active()->where('room_name', 'like', 'Table %')->count(),
             ]
@@ -343,6 +348,9 @@ class BookingController extends Controller
             'total_amount' => $quote['total_amount'],
             'minimum_downpayment_amount' => $quote['minimum_downpayment_amount'],
             'monthly_plan_label' => $quote['monthly_plan_label'] ?? null,
+            'long_stay_plan_code' => $quote['long_stay_plan_code'] ?? null,
+            'long_stay_plan_label' => $quote['long_stay_plan_label'] ?? null,
+            'requires_student_verification' => (bool) ($quote['requires_student_verification'] ?? false),
             'unit_type' => $quote['unit_type'] ?? null,
             'unit_count' => $quote['unit_count'] ?? null,
             'unit_label' => $quote['unit_label'] ?? null,
@@ -390,10 +398,31 @@ class BookingController extends Controller
             'hyve_room_id' => ['required', 'integer', Rule::exists(HyveRoom::class, 'id')->where(fn ($query) => $query->where('status', 0))],
             'booking_date' => ['required', 'date', 'after_or_equal:today'],
             'start_time' => ['nullable', 'date_format:H:i'],
+            'walk_in_manual_start' => ['nullable', 'boolean'],
         ]);
 
         $room = HyveRoom::query()->active()->findOrFail($validated['hyve_room_id']);
         $snapshot = $this->bookingSnapshotForRoom($room, $validated['booking_date'], $validated['start_time'] ?? null);
+        $manualWalkIn = $request->boolean('walk_in_manual_start') && ($request->user()?->isAdmin() ?? false);
+
+        if ($manualWalkIn && isset($validated['start_time'])) {
+            $snapshot['end_times'] = $this->availableManualWalkInEndTimes(
+                $room,
+                $validated['booking_date'],
+                $validated['start_time'],
+            );
+
+            if ($snapshot['end_times']->isNotEmpty()) {
+                $request->session()->put(
+                    'walk_in_manual_start_authorizations.'.sha1(implode('|', [
+                        $room->getKey(),
+                        $validated['booking_date'],
+                        $validated['start_time'],
+                    ])),
+                    now()->toIso8601String(),
+                );
+            }
+        }
 
         return response()->json([
             'start_times' => $snapshot['start_times']->values()->all(),
@@ -871,11 +900,13 @@ class BookingController extends Controller
         } elseif ($isMonthlyMode) {
             $selectedRoom = HyveRoom::query()->active()->findOrFail($validated['hyve_room_id']);
             $pricingRoom = $this->pricingRoomForSelection($selectedRoom);
+            $commonMonthlyPlan = $this->pricing->commonAreaMonthlyPlanForRoom($pricingRoom, $validated['monthly_plan'] ?? null);
+            $effectiveUseType = $commonMonthlyPlan['use_type'] ?? ($validated['long_stay_use_type'] ?? null);
             $room = $this->resolveLongStayBookableRoom(
                 $selectedRoom,
                 $validated['booking_date'],
                 $validated['booking_end_date'],
-                $validated['long_stay_use_type'] ?? null,
+                $effectiveUseType,
             );
 
             if (! $room) {
@@ -890,7 +921,7 @@ class BookingController extends Controller
 
             if (
                 $this->pricing->longStayRequiresUseType($pricingRoom, $validated['booking_date'], $validated['booking_end_date'])
-                && blank($validated['long_stay_use_type'] ?? null)
+                && blank($effectiveUseType)
             ) {
                 return back()
                     ->withInput()
@@ -899,7 +930,7 @@ class BookingController extends Controller
                     ]);
             }
 
-            if (! $this->isLongStayDateRangeAvailable($selectedRoom, $validated['booking_date'], $validated['booking_end_date'], $validated['long_stay_use_type'] ?? null)) {
+            if (! $this->isLongStayDateRangeAvailable($selectedRoom, $validated['booking_date'], $validated['booking_end_date'], $effectiveUseType)) {
                 return back()
                     ->withInput()
                     ->withErrors([
@@ -912,7 +943,7 @@ class BookingController extends Controller
                 (string) ($validated['monthly_plan'] ?? ''),
                 $validated['booking_date'],
                 $validated['booking_end_date'],
-                $validated['long_stay_use_type'] ?? null,
+                $effectiveUseType,
             );
 
             if (! $quote) {
@@ -940,18 +971,21 @@ class BookingController extends Controller
             $grandTotal = (float) $quote['total_amount'];
         } else {
             $selectedRoom = HyveRoom::query()->active()->findOrFail($validated['hyve_room_id']);
+            $allowExactMinutes = $adminMode && $request->boolean('walk_in_manual_start');
             $room = $this->resolveBookableRoomForSelection(
                 $selectedRoom,
                 $validated['booking_date'],
                 $validated['start_time'],
                 $validated['end_time'],
                 $reservedRangesByRoom,
+                true,
+                ! $allowExactMinutes,
             );
             $room ??= $selectedRoom;
             $space = $this->spaceForRoom($room);
             $quote = $this->pricing->quoteForRoom($this->pricingRoomForSelection($selectedRoom), $validated['booking_date'], $validated['start_time'], $validated['end_time']);
 
-            if (! $this->isTimeRangeAvailable($selectedRoom, $validated['booking_date'], $validated['start_time'], $validated['end_time'])) {
+            if (! $this->isTimeRangeAvailable($selectedRoom, $validated['booking_date'], $validated['start_time'], $validated['end_time'], true, ! $allowExactMinutes)) {
                 return back()
                     ->withInput()
                     ->withErrors([
@@ -984,6 +1018,7 @@ class BookingController extends Controller
                 'display_start_time' => $validated['start_time'],
                 'display_end_time' => $validated['end_time'],
                 'is_monthly' => false,
+                'allow_exact_minutes' => $allowExactMinutes,
             ];
             $grandTotal = (float) $quote['total_amount'];
         }
@@ -1004,6 +1039,14 @@ class BookingController extends Controller
         $paymentProofName = ($isCashWalkIn || $isPayLater)
             ? null
             : $request->file('payment_proof')?->getClientOriginalName();
+        $requiresStudentVerification = $isMonthlyMode
+            && collect($bookingItems)->contains(fn (array $item): bool => (bool) ($item['quote']['requires_student_verification'] ?? false));
+        $studentIdProofPath = $requiresStudentVerification
+            ? $request->file('student_id_proof')?->store('student-id-proofs', 'public')
+            : null;
+        $studentIdProofName = $requiresStudentVerification
+            ? $request->file('student_id_proof')?->getClientOriginalName()
+            : null;
 
         $contactDetails = ($user && ! $adminMode)
             ? [
@@ -1021,7 +1064,7 @@ class BookingController extends Controller
             ];
 
         try {
-            $header = $this->database->transaction(function () use ($user, $contactDetails, $validated, $bookingItems, $grandTotal, $paymentProofPath, $paymentProofName, $customerDownpayment, $remainingBalance, $paymentStatus, $adminMode, $isCashWalkIn, $isOpenTimeMode, $submissionToken): BookingHeader {
+            $header = $this->database->transaction(function () use ($user, $contactDetails, $validated, $bookingItems, $grandTotal, $paymentProofPath, $paymentProofName, $studentIdProofPath, $studentIdProofName, $customerDownpayment, $remainingBalance, $paymentStatus, $adminMode, $isCashWalkIn, $isOpenTimeMode, $submissionToken): BookingHeader {
                 $bookingItems = $this->lockAndResolveBookingItemsAvailable($bookingItems);
 
                 $header = null;
@@ -1090,6 +1133,13 @@ class BookingController extends Controller
                         'start_time' => $bookingItem['start_time'],
                         'end_time' => $bookingItem['end_time'],
                         'charge_period' => $quote['charge_period'],
+                        'long_stay_plan_code' => $quote['long_stay_plan_code'] ?? null,
+                        'long_stay_plan_label' => $quote['long_stay_plan_label'] ?? null,
+                        'student_id_reference' => ($quote['requires_student_verification'] ?? false)
+                            ? ($validated['student_id_reference'] ?? null)
+                            : null,
+                        'student_id_proof_path' => ($quote['requires_student_verification'] ?? false) ? $studentIdProofPath : null,
+                        'student_id_proof_name' => ($quote['requires_student_verification'] ?? false) ? $studentIdProofName : null,
                         'duration_hours' => $quote['duration_hours'],
                         'billed_hours' => $quote['billed_hours'],
                         'guests' => $validated['guests'],
@@ -1156,6 +1206,9 @@ class BookingController extends Controller
             if ($paymentProofPath) {
                 Storage::disk('public')->delete($paymentProofPath);
             }
+            if ($studentIdProofPath) {
+                Storage::disk('public')->delete($studentIdProofPath);
+            }
 
             throw $exception;
         } catch (QueryException $exception) {
@@ -1168,9 +1221,19 @@ class BookingController extends Controller
             if ($paymentProofPath) {
                 Storage::disk('public')->delete($paymentProofPath);
             }
+            if ($studentIdProofPath) {
+                Storage::disk('public')->delete($studentIdProofPath);
+            }
 
             $header = $existingHeader;
         } catch (\Throwable $exception) {
+            if ($paymentProofPath) {
+                Storage::disk('public')->delete($paymentProofPath);
+            }
+            if ($studentIdProofPath) {
+                Storage::disk('public')->delete($studentIdProofPath);
+            }
+
             Log::error('Booking submission failed.', [
                 'booking_mode' => $validated['booking_mode'] ?? 'room',
                 'error' => $exception->getMessage(),
@@ -1273,6 +1336,7 @@ class BookingController extends Controller
                     (string) $item['start_time'],
                     (string) $item['end_time'],
                     $mode !== 'schedule',
+                    ! (bool) ($item['allow_exact_minutes'] ?? false),
                 );
             }
 
@@ -1364,7 +1428,7 @@ class BookingController extends Controller
             ->values();
     }
 
-    private function resolveBookableRoomForSelection(HyveRoom $selectedRoom, string $bookingDate, string $startTime, string $endTime, array $reservedRangesByRoom = [], bool $enforceMinimumDuration = true): ?HyveRoom
+    private function resolveBookableRoomForSelection(HyveRoom $selectedRoom, string $bookingDate, string $startTime, string $endTime, array $reservedRangesByRoom = [], bool $enforceMinimumDuration = true, bool $enforceSlotAlignment = true): ?HyveRoom
     {
         if (! $selectedRoom->isSharedTable()) {
             return $selectedRoom;
@@ -1374,7 +1438,7 @@ class BookingController extends Controller
         [$rangeStart, $rangeEnd] = $this->dateRange($bookingDate, $startTime, $endTime);
 
         foreach ($tableRooms as $tableRoom) {
-            if (! $this->isDirectRoomTimeRangeAvailable($tableRoom, $bookingDate, $startTime, $endTime, $enforceMinimumDuration)) {
+            if (! $this->isDirectRoomTimeRangeAvailable($tableRoom, $bookingDate, $startTime, $endTime, $enforceMinimumDuration, $enforceSlotAlignment)) {
                 continue;
             }
 
@@ -1607,7 +1671,7 @@ class BookingController extends Controller
         ];
     }
 
-    private function isCommonAreaTimeRangeAvailable(string $bookingDate, string $startTime, string $endTime, bool $enforceMinimumDuration = true): bool
+    private function isCommonAreaTimeRangeAvailable(string $bookingDate, string $startTime, string $endTime, bool $enforceMinimumDuration = true, bool $enforceSlotAlignment = true): bool
     {
         $tableRooms = HyveRoom::query()->active()->where('room_name', 'like', 'Table %')->orderBy('id')->get();
         $representative = $this->sharedTableRepresentative($tableRooms);
@@ -1627,7 +1691,7 @@ class BookingController extends Controller
         }
 
         [$rangeStart, $rangeEnd] = $this->dateRange($bookingDate, $startTime, $endTime);
-        $effectiveStart = $this->effectiveDayStart($bookingDate, $schedule['start']);
+        $effectiveStart = $this->effectiveDayStart($bookingDate, $schedule['start'], $enforceSlotAlignment);
         $minimumDuration = (int) config('hyve.booking.minimum_duration_minutes', 120);
         $intervalMinutes = (int) config('hyve.booking.slot_interval_minutes', 30);
 
@@ -1639,8 +1703,19 @@ class BookingController extends Controller
             return false;
         }
 
-        if ($rangeStart->minute % $intervalMinutes !== 0 || $rangeEnd->minute % $intervalMinutes !== 0) {
+        if ($enforceSlotAlignment && ($rangeStart->minute % $intervalMinutes !== 0 || $rangeEnd->minute % $intervalMinutes !== 0)) {
             return false;
+        }
+
+        if (! $enforceSlotAlignment) {
+            return $tableRooms->contains(fn (HyveRoom $table): bool => $this->isDirectRoomTimeRangeAvailable(
+                $table,
+                $bookingDate,
+                $startTime,
+                $endTime,
+                $enforceMinimumDuration,
+                false,
+            ));
         }
 
         return $this->commonAreaWindowAvailable(
@@ -1720,16 +1795,16 @@ class BookingController extends Controller
         return true;
     }
 
-    private function isTimeRangeAvailable(HyveRoom $room, string $bookingDate, string $startTime, string $endTime, bool $enforceMinimumDuration = true): bool
+    private function isTimeRangeAvailable(HyveRoom $room, string $bookingDate, string $startTime, string $endTime, bool $enforceMinimumDuration = true, bool $enforceSlotAlignment = true): bool
     {
         if ($room->isSharedTable()) {
-            return $this->isCommonAreaTimeRangeAvailable($bookingDate, $startTime, $endTime, $enforceMinimumDuration);
+            return $this->isCommonAreaTimeRangeAvailable($bookingDate, $startTime, $endTime, $enforceMinimumDuration, $enforceSlotAlignment);
         }
 
-        return $this->isDirectRoomTimeRangeAvailable($room, $bookingDate, $startTime, $endTime, $enforceMinimumDuration);
+        return $this->isDirectRoomTimeRangeAvailable($room, $bookingDate, $startTime, $endTime, $enforceMinimumDuration, $enforceSlotAlignment);
     }
 
-    private function isDirectRoomTimeRangeAvailable(HyveRoom $room, string $bookingDate, string $startTime, string $endTime, bool $enforceMinimumDuration = true): bool
+    private function isDirectRoomTimeRangeAvailable(HyveRoom $room, string $bookingDate, string $startTime, string $endTime, bool $enforceMinimumDuration = true, bool $enforceSlotAlignment = true): bool
     {
         [$rangeStart, $rangeEnd] = $this->dateRange($bookingDate, $startTime, $endTime);
 
@@ -1745,7 +1820,7 @@ class BookingController extends Controller
 
         $dayStart = $schedule['start'];
         $dayEnd = $schedule['end'];
-        $effectiveStart = $this->effectiveDayStart($bookingDate, $dayStart);
+        $effectiveStart = $this->effectiveDayStart($bookingDate, $dayStart, $enforceSlotAlignment);
         $minimumDuration = (int) config('hyve.booking.minimum_duration_minutes', 120);
         $intervalMinutes = (int) config('hyve.booking.slot_interval_minutes', 30);
 
@@ -1761,7 +1836,7 @@ class BookingController extends Controller
             return false;
         }
 
-        if ($rangeStart->minute % $intervalMinutes !== 0 || $rangeEnd->minute % $intervalMinutes !== 0) {
+        if ($enforceSlotAlignment && ($rangeStart->minute % $intervalMinutes !== 0 || $rangeEnd->minute % $intervalMinutes !== 0)) {
             return false;
         }
 
@@ -2111,9 +2186,13 @@ class BookingController extends Controller
         return $ranges;
     }
 
-    private function effectiveDayStart(string $bookingDate, Carbon $dayStart): Carbon
+    private function effectiveDayStart(string $bookingDate, Carbon $dayStart, bool $roundToSlot = true): Carbon
     {
         if ($bookingDate !== Carbon::today()->toDateString()) {
+            return $dayStart->copy();
+        }
+
+        if (! $roundToSlot) {
             return $dayStart->copy();
         }
 
@@ -2521,6 +2600,49 @@ class BookingController extends Controller
             ]);
 
             $cursor->addMinutes($slotIntervalMinutes);
+        }
+
+        return $endTimes;
+    }
+
+    /**
+     * Admin walk-ins may begin on an exact minute instead of the public
+     * 30-minute grid. End choices retain the configured interval while keeping
+     * the same minute offset (for example 9:14, 11:14, 11:44, 12:14).
+     *
+     * @return Collection<int, array{value: string, label: string, range_label: string, duration_label: string}>
+     */
+    private function availableManualWalkInEndTimes(HyveRoom $room, string $bookingDate, string $selectedStartTime): Collection
+    {
+        $start = Carbon::createFromFormat('Y-m-d H:i', $bookingDate.' '.$selectedStartTime)->seconds(0);
+        $schedule = $this->scheduleWindowForDate($bookingDate, $room);
+
+        if ($schedule['closed']
+            || $start->lt($schedule['start'])
+            || ($bookingDate === Carbon::today()->toDateString() && $start->lt(now()->startOfMinute()))
+            || $start->gte($schedule['end'])) {
+            return collect();
+        }
+
+        $minimumDuration = (int) config('hyve.booking.minimum_duration_minutes', 120);
+        $intervalMinutes = (int) config('hyve.booking.slot_interval_minutes', 30);
+        $cursor = $start->copy()->addMinutes($minimumDuration);
+        $endBoundary = $start->copy()->addDay();
+        $endTimes = collect();
+
+        while ($cursor->lte($endBoundary)) {
+            if (! $this->isTimeRangeAvailable($room, $bookingDate, $selectedStartTime, $cursor->format('H:i'), true, false)) {
+                break;
+            }
+
+            $endTimes->push([
+                'value' => $cursor->format('H:i'),
+                'label' => $this->displayTimeLabel($cursor, $start),
+                'range_label' => $start->format('g:i A').' - '.$this->displayTimeLabel($cursor, $start),
+                'duration_label' => $this->durationLabel($start, $cursor),
+            ]);
+
+            $cursor->addMinutes($intervalMinutes);
         }
 
         return $endTimes;

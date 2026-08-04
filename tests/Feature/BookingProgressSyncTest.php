@@ -6,6 +6,7 @@ use App\Models\BookingDetail;
 use App\Models\BookingHeader;
 use App\Models\HyveRoom;
 use App\Models\Space;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Tests\TestCase;
@@ -13,6 +14,40 @@ use Tests\TestCase;
 class BookingProgressSyncTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_admin_bookings_live_feed_syncs_due_booking_progress_without_a_page_refresh(): void
+    {
+        Carbon::setTestNow('2026-07-16 10:30:00');
+
+        try {
+            $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+            $header = BookingHeader::query()->create([
+                'reference_no' => 'HYVE-PROGRESS-FEED',
+                'customer_name' => 'Live Feed Customer',
+                'email' => 'live-feed@example.com',
+                'phone' => '+639171234567',
+                'booking_type' => BookingHeader::TYPE_GUEST,
+                'source' => BookingHeader::SOURCE_ADMIN,
+                'payment_method' => 'cash',
+                'total_amount' => 1000,
+                'status' => 'confirmed',
+            ]);
+            $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+            $space = Space::query()->where('slug', 'zeal-room-8-seats')->firstOrFail();
+            $detail = $this->createDetail($header, $space, $room, '10:00', '11:00');
+
+            $this->actingAs($admin)
+                ->getJson(route('admin.bookings.feed'))
+                ->assertOk();
+
+            $detail->refresh();
+            $this->assertSame(BookingDetail::PROGRESS_IN_PROGRESS, $detail->progress_status);
+            $this->assertNotNull($detail->actual_start_at);
+            $this->assertNull($detail->actual_end_at);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
 
     public function test_scheduled_command_starts_and_completes_due_confirmed_bookings(): void
     {

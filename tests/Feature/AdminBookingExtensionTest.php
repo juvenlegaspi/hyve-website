@@ -155,6 +155,78 @@ class AdminBookingExtensionTest extends TestCase
             ->assertJsonPath('message', 'This booked line cannot be extended right now.');
     }
 
+    public function test_open_time_booking_cannot_be_extended(): void
+    {
+        Carbon::setTestNow('2026-08-12 11:00:00');
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        [, $detail] = $this->createConfirmedBooking('2026-08-12', '10:00', '22:00');
+        $detail->update(['is_open_time' => true]);
+
+        $this->actingAs($admin)
+            ->getJson(route('admin.booking-details.extension-options', $detail))
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'This booked line cannot be extended right now.');
+
+        $this->actingAs($admin)
+            ->getJson(route('admin.bookings.summary', $detail->booking_header_id))
+            ->assertOk()
+            ->assertJsonPath('booking.bookings.0.can_extend', false);
+    }
+
+    public function test_ended_booking_can_still_be_extended_within_twenty_four_hours(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        [$header, $detail] = $this->createConfirmedBooking('2026-08-12', '10:00', '12:00');
+        $detail->update([
+            'progress_status' => BookingDetail::PROGRESS_COMPLETED,
+            'actual_start_at' => '2026-08-12 10:00:00',
+            'actual_end_at' => '2026-08-12 12:05:00',
+        ]);
+        Carbon::setTestNow('2026-08-13 12:04:00');
+
+        $options = $this->actingAs($admin)
+            ->getJson(route('admin.booking-details.extension-options', $detail))
+            ->assertOk()
+            ->assertJsonPath('options.0.end_at', '2026-08-12 12:30');
+
+        $this->actingAs($admin)
+            ->postJson(route('admin.booking-details.extend', $detail), [
+                'extension_end_at' => $options->json('options.0.end_at'),
+            ])
+            ->assertOk()
+            ->assertJsonPath('booking.bookings.1.progress_key', BookingDetail::PROGRESS_COMPLETED)
+            ->assertJsonPath('booking.bookings.1.can_extend', true);
+
+        $extension = BookingDetail::query()
+            ->where('booking_header_id', $header->id)
+            ->whereKeyNot($detail->id)
+            ->firstOrFail();
+        $this->assertSame('2026-08-12 12:00:00', $extension->actual_start_at?->format('Y-m-d H:i:s'));
+        $this->assertSame('2026-08-12 12:30:00', $extension->actual_end_at?->format('Y-m-d H:i:s'));
+    }
+
+    public function test_ended_booking_extension_expires_after_twenty_four_hours(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        [, $detail] = $this->createConfirmedBooking('2026-08-12', '10:00', '12:00');
+        $detail->update([
+            'progress_status' => BookingDetail::PROGRESS_COMPLETED,
+            'actual_start_at' => '2026-08-12 10:00:00',
+            'actual_end_at' => '2026-08-12 12:00:00',
+        ]);
+
+        Carbon::setTestNow('2026-08-13 12:00:00');
+        $this->actingAs($admin)
+            ->getJson(route('admin.booking-details.extension-options', $detail))
+            ->assertOk();
+
+        Carbon::setTestNow('2026-08-13 12:00:01');
+        $this->actingAs($admin)
+            ->getJson(route('admin.booking-details.extension-options', $detail))
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'This booked line cannot be extended right now.');
+    }
+
     /** @return array{0: BookingHeader, 1: BookingDetail} */
     private function createConfirmedBooking(
         string $bookingDate,

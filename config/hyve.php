@@ -28,8 +28,10 @@ return [
         'closing_time' => '24:00',
         'slot_interval_minutes' => 30,
         'minimum_duration_minutes' => 120,
+        'manual_start_authorization_minutes' => 60,
         'open_time_max_duration_hours' => 12,
         'extension_grace_minutes' => 30,
+        'ended_extension_window_hours' => 24,
         'blocked_statuses' => ['pending', 'confirmed'],
     ],
     'spaces' => [

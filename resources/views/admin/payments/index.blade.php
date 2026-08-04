@@ -207,7 +207,8 @@
             text-transform: uppercase;
         }
 
-        .admin-payments-modal__discount-form select {
+        .admin-payments-modal__discount-form select,
+        .admin-payments-modal__discount-form input {
             border: 1px solid #dfe7d8;
             border-radius: 0.82rem;
             padding: 0.75rem 0.85rem;
@@ -690,6 +691,7 @@
                                 data-discount-amount="{{ $row['discount_amount'] }}"
                                 data-payable-total="{{ $row['payable_total_amount'] }}"
                                 data-discount-code="{{ $row['discount_code'] }}"
+                                data-discount-previews='@json($row['discount_previews'])'
                                 data-downpayment="{{ $row['downpayment_amount'] }}"
                                 data-balance="{{ $row['balance_amount'] }}"
                                 data-booking-count="{{ $row['booking_count'] }}"
@@ -893,6 +895,10 @@
                                 @endforeach
                             </select>
                         </label>
+                        <label>
+                            <span>Discount reference / ID</span>
+                            <input type="text" name="discount_reference" maxlength="255" placeholder="ID, voucher, or engagement reference">
+                        </label>
                         <button type="submit" class="admin-payments-modal__button">Apply Discount</button>
                     </form>
 
@@ -907,7 +913,7 @@
                         <input type="hidden" name="payment_submission_token" value="{{ old('payment_submission_token', (string) \Illuminate\Support\Str::uuid()) }}">
                         <label>
                             <span>Amount</span>
-                            <input type="number" name="amount" min="0.01" step="0.01" required>
+                            <input type="number" name="amount" min="0" step="0.01" required>
                         </label>
                         <label>
                             <span>Method</span>
@@ -924,6 +930,14 @@
                                     <option value="{{ $option['value'] }}">{{ $option['label'] }}</option>
                                 @endforeach
                             </select>
+                        </label>
+                        <label>
+                            <span>Payment reference / notes</span>
+                            <input type="text" name="notes" maxlength="1000" placeholder="Required for GCash or bank transfer">
+                        </label>
+                        <label>
+                            <span>Discount reference / ID</span>
+                            <input type="text" name="discount_reference" maxlength="255" placeholder="Required for controlled discounts">
                         </label>
                         <button type="submit" class="admin-payments-modal__button admin-payments-modal__button--primary" data-payment-record-submit>
                             <span data-payment-record-submit-label>Record Payment</span>
@@ -996,6 +1010,7 @@
             const csrfToken = @json(csrf_token());
             const discountOptions = @json($discountOptions);
             const amountInput = recordForm?.querySelector('input[name="amount"]');
+            const paymentNotesInput = recordForm?.querySelector('input[name="notes"]');
             const bookingIdInput = recordForm?.querySelector('input[name="payment_booking_id"]');
             const recordSubmitButton = recordForm?.querySelector('[data-payment-record-submit]');
             const recordSubmitLabel = recordForm?.querySelector('[data-payment-record-submit-label]');
@@ -1003,6 +1018,8 @@
             const oldAmount = @json(old('amount'));
             const oldMethod = @json(old('payment_method'));
             const oldDiscountCode = @json(old('discount_code'));
+            const oldNotes = @json(old('notes'));
+            const oldDiscountReference = @json(old('discount_reference'));
             const discountRateMap = Object.fromEntries(discountOptions.map((option) => [String(option.value), Number(option.rate || 0)]));
             const discountLabelMap = Object.fromEntries(discountOptions.map((option) => [String(option.value), String(option.label || option.value)]));
             let activeReceiptUrl = '';
@@ -1069,28 +1086,52 @@
             };
 
             const formatPeso = (value) => `Php ${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+            const syncPaymentReferenceRequirement = () => {
+                const methodValue = recordForm?.querySelector('select[name="payment_method"]')?.value || 'cash';
+                if (paymentNotesInput) {
+                    paymentNotesInput.required = methodValue === 'gcash' || methodValue === 'bank_transfer';
+                    paymentNotesInput.placeholder = paymentNotesInput.required
+                        ? 'Transaction reference required'
+                        : 'OR number or optional payment note';
+                }
+            };
+            const syncDiscountReferenceRequirement = () => {
+                const controlledCodes = ['senior', 'pwd', 'voucher_common_2h', 'engagement', 'board_reviewee'];
+                [discountForm, recordForm].forEach((form) => {
+                    const code = form?.querySelector('select[name="discount_code"]')?.value || 'none';
+                    const referenceInput = form?.querySelector('input[name="discount_reference"]');
+                    if (referenceInput) {
+                        referenceInput.required = controlledCodes.includes(code);
+                        referenceInput.placeholder = referenceInput.required
+                            ? 'Required ID, voucher, or engagement reference'
+                            : 'Optional promo reference';
+                    }
+                });
+            };
 
             const updateDiscountPreview = (selectedCode) => {
                 if (!activeFinancials) {
                     return;
                 }
 
-                const rate = Number(discountRateMap[String(selectedCode)] || 0);
-                const label = String(discountLabelMap[String(selectedCode)] || 'No discount');
-                const discountAmountValue = rate > 0
-                    ? Number((activeFinancials.grossTotal * (rate / 100)).toFixed(2))
-                    : 0;
-                const payableValue = Number(Math.max(0, activeFinancials.grossTotal - discountAmountValue).toFixed(2));
-                const remainingValue = Number(Math.max(0, payableValue - activeFinancials.approvedTotal).toFixed(2));
+                const preview = activeFinancials.discountPreviews?.[String(selectedCode)] || null;
+                const label = String(preview?.label || discountLabelMap[String(selectedCode)] || 'No discount');
+                const discountAmountValue = Number(preview?.discount_amount || 0);
+                const payableValue = Number(preview?.payable_total ?? activeFinancials.grossTotal);
+                const remainingValue = Number(preview?.remaining_balance ?? Math.max(0, payableValue - activeFinancials.approvedTotal));
+                const eligible = preview?.eligible !== false;
 
-                discount.textContent = rate > 0
+                discount.textContent = discountAmountValue > 0
                     ? `${label} - ${formatPeso(discountAmountValue)}`
                     : 'No discount';
                 payableTotal.textContent = formatPeso(payableValue);
                 balance.textContent = formatPeso(remainingValue);
 
                 if (discountTitle && discountCopy) {
-                    if (rate > 0) {
+                    if (!eligible) {
+                        discountTitle.textContent = `${label} unavailable`;
+                        discountCopy.textContent = preview?.eligibility_note || 'This booking is not eligible for the selected discount.';
+                    } else if (discountAmountValue > 0) {
                         discountTitle.textContent = `${label} active`;
                         discountCopy.textContent = `${formatPeso(discountAmountValue)} discount applied. Payable total is now ${formatPeso(payableValue)}.`;
                     } else {
@@ -1099,13 +1140,18 @@
                     }
                 }
 
+                const discountSubmit = discountForm?.querySelector('button[type="submit"]');
+                const recordSubmit = recordForm?.querySelector('[data-payment-record-submit]');
+                if (discountSubmit) {
+                    discountSubmit.disabled = !eligible;
+                }
+                if (recordSubmit) {
+                    recordSubmit.disabled = !eligible;
+                }
+
                 if (amountInput && !amountInput.disabled) {
                     amountInput.max = remainingValue > 0 ? remainingValue.toFixed(2) : '0';
-
-                    const currentValue = Number.parseFloat(amountInput.value || '0');
-                    if (!Number.isFinite(currentValue) || currentValue <= 0 || currentValue > remainingValue) {
-                        amountInput.value = remainingValue > 0 ? remainingValue.toFixed(2) : '';
-                    }
+                    amountInput.value = remainingValue > 0 ? remainingValue.toFixed(2) : '0.00';
                 }
             };
 
@@ -1167,6 +1213,7 @@
                 activeFinancials = {
                     grossTotal: parseMoneyValue(row.dataset.grossTotal || '0'),
                     approvedTotal: parseMoneyValue(row.dataset.approvedTotal || '0'),
+                    discountPreviews: JSON.parse(row.dataset.discountPreviews || '{}'),
                 };
 
                 if (receiptButton) {
@@ -1225,6 +1272,10 @@
                             methodInput.value = String(oldMethod);
                         }
 
+                        if (paymentNotesInput && oldNotes !== null) {
+                            paymentNotesInput.value = String(oldNotes);
+                        }
+
                         if (recordDiscountInput && oldDiscountCode !== null && String(oldDiscountCode).trim() !== '') {
                             recordDiscountInput.value = String(oldDiscountCode);
                         }
@@ -1234,7 +1285,25 @@
                             : row.dataset.paymentMethod?.toLowerCase() === 'bank transfer'
                                 ? 'bank_transfer'
                                 : 'cash';
+                        if (paymentNotesInput) {
+                            paymentNotesInput.value = '';
+                        }
                     }
+
+                    syncPaymentReferenceRequirement();
+                    const recordDiscountReference = recordForm.querySelector('input[name="discount_reference"]');
+                    const applyDiscountReference = discountForm?.querySelector('input[name="discount_reference"]');
+                    if (recordDiscountReference) {
+                        recordDiscountReference.value = String(reopenBookingId || '') === String(row.dataset.id || '')
+                            ? String(oldDiscountReference || '')
+                            : '';
+                    }
+                    if (applyDiscountReference) {
+                        applyDiscountReference.value = String(reopenBookingId || '') === String(row.dataset.id || '')
+                            ? String(oldDiscountReference || '')
+                            : '';
+                    }
+                    syncDiscountReferenceRequirement();
 
                     if (recordDiscountInput && !(String(reopenBookingId || '') === String(row.dataset.id || '') && oldDiscountCode)) {
                         recordDiscountInput.value = selectedDiscountCode;
@@ -1347,6 +1416,7 @@
                 if (recordDiscountInput) {
                     recordDiscountInput.value = event.target.value;
                 }
+                syncDiscountReferenceRequirement();
             });
 
             recordForm?.querySelector('select[name="discount_code"]')?.addEventListener('change', (event) => {
@@ -1356,7 +1426,10 @@
                 if (discountInput) {
                     discountInput.value = event.target.value;
                 }
+                syncDiscountReferenceRequirement();
             });
+
+            recordForm?.querySelector('select[name="payment_method"]')?.addEventListener('change', syncPaymentReferenceRequirement);
 
             receiptModal.querySelector('[data-payment-receipt-print]')?.addEventListener('click', () => {
                 receiptFrame?.contentWindow?.print();
@@ -1394,8 +1467,8 @@
                     const max = Number.parseFloat(amountInput?.max || '0');
                     const value = Number.parseFloat(amountInput?.value || '0');
 
-                    if (amountInput && (!Number.isFinite(value) || value <= 0)) {
-                        amountInput.setCustomValidity('Enter a valid payment amount.');
+                    if (amountInput && (!Number.isFinite(value) || value < 0 || (value <= 0 && max > 0.009))) {
+                        amountInput.setCustomValidity('Enter a valid payment amount. Zero is allowed only when the discount fully covers the balance.');
                         amountInput.reportValidity();
                         event.preventDefault();
 

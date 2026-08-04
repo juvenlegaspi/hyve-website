@@ -97,6 +97,7 @@ Route::middleware('auth')->prefix('admin')->name('admin.')->group(function () {
         Route::get('/bookings', [AdminBookingController::class, 'index'])->name('bookings.index');
         Route::get('/bookings/{bookingHeader}/summary', [AdminBookingController::class, 'summary'])->name('bookings.summary');
         Route::get('/bookings/{bookingHeader}/proof', [AdminBookingController::class, 'proof'])->name('bookings.proof');
+        Route::get('/booking-details/{bookingDetail}/student-id-proof', [AdminBookingController::class, 'studentIdProof'])->name('booking-details.student-id-proof');
         Route::get('/bookings/feed', [AdminBookingController::class, 'bookingsFeed'])->name('bookings.feed');
         Route::get('/bookings/notifications/feed', [AdminBookingController::class, 'notificationsFeed'])->name('bookings.notifications.feed');
         Route::post('/bookings/notifications/read', [AdminBookingController::class, 'markNotificationsRead'])->name('bookings.notifications.read');
@@ -111,6 +112,7 @@ Route::middleware('auth')->prefix('admin')->name('admin.')->group(function () {
         Route::post('/booking-details/{bookingDetail}/approve', [AdminBookingController::class, 'approveDetail'])->name('booking-details.approve');
         Route::post('/booking-details/{bookingDetail}/reject', [AdminBookingController::class, 'rejectDetail'])->name('booking-details.reject');
         Route::post('/booking-details/{bookingDetail}/start', [AdminBookingController::class, 'startDetail'])->name('booking-details.start');
+        Route::get('/booking-details/{bookingDetail}/open-time-checkout-preview', [AdminBookingController::class, 'openTimeCheckoutPreview'])->name('booking-details.open-time-checkout-preview');
         Route::post('/booking-details/{bookingDetail}/end', [AdminBookingController::class, 'endDetail'])->name('booking-details.end');
         Route::get('/booking-details/{bookingDetail}/extension-options', [AdminBookingController::class, 'extensionOptions'])->name('booking-details.extension-options');
         Route::post('/booking-details/{bookingDetail}/extend', [AdminBookingController::class, 'extendDetail'])->name('booking-details.extend');
