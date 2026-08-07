@@ -20,5 +20,8 @@
 </head>
 <body class="hyve-body">
     @yield('content')
+    @unless (request()->routeIs('admin.*') || ($adminMode ?? false))
+        @include('partials.hyve-faq-chat')
+    @endunless
 </body>
 </html>

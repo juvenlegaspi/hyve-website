@@ -12,6 +12,7 @@ use App\Http\Controllers\Admin\AdminRoomScheduleController;
 use App\Http\Controllers\Admin\AdminSectionController;
 use App\Http\Controllers\Admin\AdminSettingController;
 use App\Http\Controllers\Admin\AdminSalesMonitoringController;
+use App\Http\Controllers\Admin\AdminSupportMessageController;
 use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\NewPasswordController;
@@ -21,6 +22,7 @@ use App\Http\Controllers\BookingController;
 use App\Http\Controllers\HomeController;
 use App\Http\Controllers\MemberPortalController;
 use App\Http\Controllers\OwnerAuthController;
+use App\Http\Controllers\SupportChatController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', HomeController::class)->name('home');
@@ -75,6 +77,12 @@ Route::get('/payment-qr/{type}', [BookingController::class, 'paymentQr'])
     ->name('payment-qr.show');
 Route::post('/bookings', [BookingController::class, 'store'])->name('bookings.store');
 
+Route::middleware('throttle:30,1')->prefix('support')->name('support.')->group(function () {
+    Route::post('/conversations', [SupportChatController::class, 'store'])->name('conversations.store');
+    Route::get('/conversations/{publicToken}', [SupportChatController::class, 'show'])->name('conversations.show');
+    Route::post('/conversations/{publicToken}/messages', [SupportChatController::class, 'message'])->name('conversations.message');
+});
+
 Route::middleware('auth')->group(function () {
     Route::get('/my-bookings', [MemberPortalController::class, 'bookings'])->name('member.index');
     Route::get('/my-account', [MemberPortalController::class, 'account'])->name('member.account');
@@ -93,8 +101,21 @@ Route::middleware('auth')->group(function () {
 Route::middleware('auth')->prefix('admin')->name('admin.')->group(function () {
     Route::get('/', AdminDashboardController::class)->middleware('permission:dashboard.view')->name('dashboard');
 
+    Route::middleware('permission:messages.view')->group(function () {
+        Route::get('/messages', [AdminSupportMessageController::class, 'index'])->name('messages.index');
+        Route::get('/messages/feed', [AdminSupportMessageController::class, 'feed'])->name('messages.feed');
+        Route::get('/messages/unread', [AdminSupportMessageController::class, 'unread'])->name('messages.unread');
+    });
+
+    Route::middleware('permission:messages.manage')->group(function () {
+        Route::post('/messages/{conversation}/reply', [AdminSupportMessageController::class, 'reply'])->name('messages.reply');
+        Route::patch('/messages/{conversation}/status', [AdminSupportMessageController::class, 'status'])->name('messages.status');
+        Route::delete('/messages/{conversation}', [AdminSupportMessageController::class, 'destroy'])->name('messages.destroy');
+    });
+
     Route::middleware('permission:bookings.view')->group(function () {
         Route::get('/bookings', [AdminBookingController::class, 'index'])->name('bookings.index');
+        Route::get('/bookings/online-unread', [AdminBookingController::class, 'onlineBookingUnread'])->name('bookings.online-unread');
         Route::get('/bookings/{bookingHeader}/summary', [AdminBookingController::class, 'summary'])->name('bookings.summary');
         Route::get('/bookings/{bookingHeader}/proof', [AdminBookingController::class, 'proof'])->name('bookings.proof');
         Route::get('/booking-details/{bookingDetail}/student-id-proof', [AdminBookingController::class, 'studentIdProof'])->name('booking-details.student-id-proof');

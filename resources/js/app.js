@@ -5382,6 +5382,690 @@ const setupBookingSubmissionGuards = () => {
     });
 };
 
+const setupHyveFaqChat = () => {
+    const chat = document.querySelector('[data-hyve-faq-chat]');
+
+    if (!chat) {
+        return;
+    }
+
+    const panel = chat.querySelector('[data-hyve-faq-panel]');
+    const toggle = chat.querySelector('[data-hyve-faq-toggle]');
+    const close = chat.querySelector('[data-hyve-faq-close]');
+    const answer = chat.querySelector('[data-hyve-faq-answer]');
+    const topics = [...chat.querySelectorAll('[data-hyve-faq-topic]')];
+    const faqView = chat.querySelector('[data-hyve-faq-view]');
+    const supportView = chat.querySelector('[data-hyve-support-view]');
+    const supportOpen = chat.querySelector('[data-hyve-support-open]');
+    const supportBack = chat.querySelector('[data-hyve-support-back]');
+    const startForm = chat.querySelector('[data-hyve-support-start-form]');
+    const startFeedback = chat.querySelector('[data-hyve-support-start-feedback]');
+    const conversationWrap = chat.querySelector('[data-hyve-support-conversation]');
+    const messagesWrap = chat.querySelector('[data-hyve-support-messages]');
+    const statusLabel = chat.querySelector('[data-hyve-support-status]');
+    const replyForm = chat.querySelector('[data-hyve-support-reply-form]');
+    const replyFeedback = chat.querySelector('[data-hyve-support-reply-feedback]');
+    const newConversationButton = chat.querySelector('[data-hyve-support-new]');
+    const forgetConversationButton = chat.querySelector('[data-hyve-support-forget]');
+    const createUrl = chat.dataset.supportCreateUrl || '';
+    const csrfToken = chat.dataset.csrfToken || '';
+    const storageKey = 'hyve-support-conversation-token';
+    let conversationToken = '';
+    let pollUrl = '';
+    let messageUrl = '';
+    let lastMessageSignature = '';
+
+    if (!panel || !toggle || !answer) {
+        return;
+    }
+
+    const setOpen = (open) => {
+        panel.hidden = !open;
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+
+        if (open) {
+            close?.focus();
+        } else {
+            toggle.focus();
+        }
+    };
+
+    const requestJson = async (url, options = {}) => {
+        const response = await fetch(url, {
+            ...options,
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': csrfToken,
+                ...(options.headers || {}),
+            },
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+            const validationMessage = Object.values(data.errors || {}).flat()[0];
+            throw new Error(validationMessage || data.message || 'Unable to send your message right now.');
+        }
+
+        return data;
+    };
+
+    const renderConversation = (data) => {
+        conversationToken = String(data.token || conversationToken);
+        pollUrl = String(data.poll_url || pollUrl);
+        messageUrl = String(data.message_url || messageUrl);
+        const messages = Array.isArray(data.messages) ? data.messages : [];
+        const signature = messages.map((message) => message.id).join(',');
+
+        if (conversationToken) {
+            try {
+                window.localStorage.setItem(storageKey, conversationToken);
+            } catch (error) {
+                // The active page can still keep the private conversation token in memory.
+            }
+        }
+
+        startForm?.setAttribute('hidden', 'hidden');
+        if (conversationWrap) conversationWrap.hidden = false;
+        if (statusLabel) statusLabel.textContent = data.status || 'open';
+
+        if (messagesWrap && signature !== lastMessageSignature) {
+            lastMessageSignature = signature;
+            messagesWrap.replaceChildren();
+            messages.forEach((message) => {
+                const bubble = document.createElement('article');
+                const sender = String(message.sender || 'customer');
+                const senderName = document.createElement('strong');
+                const body = document.createElement('div');
+                const time = document.createElement('time');
+                bubble.className = `hyve-support-chat__bubble${sender === 'customer' ? ' is-customer' : ''}`;
+                senderName.textContent = message.sender_name || (sender === 'admin' ? 'HYVE Front Desk' : 'You');
+                body.textContent = message.body || '';
+                time.textContent = message.created_at || '';
+                bubble.append(senderName, body);
+                if (message.action?.url) {
+                    const action = document.createElement('a');
+                    action.className = 'hyve-support-chat__action';
+                    action.href = message.action.url;
+                    action.textContent = message.action.label || 'Open';
+                    bubble.append(action);
+                }
+                bubble.append(time);
+                messagesWrap.append(bubble);
+            });
+            messagesWrap.scrollTop = messagesWrap.scrollHeight;
+        }
+    };
+
+    const loadConversation = async ({ clearInvalid = false } = {}) => {
+        if (!conversationToken) return;
+
+        try {
+            const url = pollUrl || `/support/conversations/${encodeURIComponent(conversationToken)}`;
+            renderConversation(await requestJson(url, { method: 'GET' }));
+        } catch (error) {
+            if (clearInvalid) {
+                conversationToken = '';
+                window.localStorage.removeItem(storageKey);
+                startForm?.removeAttribute('hidden');
+                if (conversationWrap) conversationWrap.hidden = true;
+            }
+        }
+    };
+
+    const showSupport = () => {
+        if (faqView) faqView.hidden = true;
+        if (supportView) supportView.hidden = false;
+        if (conversationToken) loadConversation();
+    };
+
+    const showFaq = () => {
+        if (supportView) supportView.hidden = true;
+        if (faqView) faqView.hidden = false;
+    };
+
+    const resetLocalConversation = ({ returnToFaq = false } = {}) => {
+        conversationToken = '';
+        pollUrl = '';
+        messageUrl = '';
+        lastMessageSignature = '';
+        try {
+            window.localStorage.removeItem(storageKey);
+        } catch (error) {
+            // Continue resetting the visible chat when browser storage is unavailable.
+        }
+        startForm?.removeAttribute('hidden');
+        startForm?.reset();
+        if (conversationWrap) conversationWrap.hidden = true;
+        messagesWrap?.replaceChildren();
+        if (startFeedback) startFeedback.textContent = '';
+        if (replyFeedback) replyFeedback.textContent = '';
+        if (returnToFaq) showFaq();
+    };
+
+    toggle.addEventListener('click', () => {
+        setOpen(panel.hidden);
+    });
+
+    close?.addEventListener('click', () => setOpen(false));
+    supportOpen?.addEventListener('click', showSupport);
+    supportBack?.addEventListener('click', showFaq);
+    newConversationButton?.addEventListener('click', () => {
+        if (window.confirm('Start a new conversation? Your previous conversation will remain in the HYVE Front Desk inbox, but it will no longer be shown in this browser.')) {
+            resetLocalConversation();
+        }
+    });
+    forgetConversationButton?.addEventListener('click', () => {
+        if (window.confirm('Forget this conversation on this device? The Front Desk record will remain until an admin deletes it.')) {
+            resetLocalConversation({ returnToFaq: true });
+        }
+    });
+
+    topics.forEach((topic) => {
+        topic.addEventListener('click', () => {
+            const key = topic.dataset.hyveFaqTopic || '';
+            const template = chat.querySelector(`[data-hyve-faq-template="${key}"]`);
+
+            if (!(template instanceof HTMLTemplateElement)) {
+                return;
+            }
+
+            topics.forEach((item) => item.classList.toggle('is-active', item === topic));
+            answer.replaceChildren(template.content.cloneNode(true));
+            answer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        });
+    });
+
+    startForm?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const submit = startForm.querySelector('button[type="submit"]');
+        const formData = new FormData(startForm);
+        const payload = Object.fromEntries(formData.entries());
+
+        if (!String(payload.email || '').trim() && !String(payload.phone || '').trim()) {
+            if (startFeedback) startFeedback.textContent = 'Enter either your email address or phone number.';
+            return;
+        }
+
+        if (startFeedback) startFeedback.textContent = '';
+        if (submit) submit.disabled = true;
+
+        try {
+            renderConversation(await requestJson(createUrl, {
+                method: 'POST',
+                body: JSON.stringify(payload),
+            }));
+            startForm.reset();
+        } catch (error) {
+            if (startFeedback) startFeedback.textContent = error.message;
+        } finally {
+            if (submit) submit.disabled = false;
+        }
+    });
+
+    replyForm?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const input = replyForm.querySelector('textarea[name="message"]');
+        const submit = replyForm.querySelector('button[type="submit"]');
+        const message = String(input?.value || '').trim();
+
+        if (!message || !messageUrl) return;
+        if (replyFeedback) replyFeedback.textContent = '';
+        if (submit) submit.disabled = true;
+
+        try {
+            renderConversation(await requestJson(messageUrl, {
+                method: 'POST',
+                body: JSON.stringify({ message }),
+            }));
+            if (input) input.value = '';
+        } catch (error) {
+            if (replyFeedback) replyFeedback.textContent = error.message;
+        } finally {
+            if (submit) submit.disabled = false;
+        }
+    });
+
+    try {
+        conversationToken = window.localStorage.getItem(storageKey) || '';
+    } catch (error) {
+        conversationToken = '';
+    }
+
+    if (conversationToken) {
+        loadConversation({ clearInvalid: true });
+    }
+    window.setInterval(() => loadConversation(), 5000);
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && !panel.hidden) {
+            setOpen(false);
+        }
+    });
+};
+
+const setupAdminSupportMessages = () => {
+    const root = document.querySelector('[data-admin-support-messages]');
+
+    if (!root) return;
+
+    const list = root.querySelector('[data-admin-support-list]');
+    const empty = root.querySelector('[data-admin-support-empty]');
+    const active = root.querySelector('[data-admin-support-active]');
+    const name = root.querySelector('[data-admin-support-name]');
+    const contact = root.querySelector('[data-admin-support-contact]');
+    const messagesWrap = root.querySelector('[data-admin-support-messages]');
+    const replyForm = root.querySelector('[data-admin-support-reply-form]');
+    const feedback = root.querySelector('[data-admin-support-feedback]');
+    const statusButton = root.querySelector('[data-admin-support-status]');
+    const deleteButton = root.querySelector('[data-admin-support-delete]');
+    const bookingMatch = root.querySelector('[data-admin-support-booking-match]');
+    const filters = root.querySelector('[data-admin-support-filters]');
+    const searchInput = filters?.querySelector('input[name="search"]');
+    const statusFilter = filters?.querySelector('select[name="status"]');
+    const unreadFilter = filters?.querySelector('input[name="unread"]');
+    const quickReplies = [...root.querySelectorAll('[data-quick-reply]')];
+    const sendBookingButton = root.querySelector('[data-admin-support-send-booking]');
+    const notificationButton = root.querySelector('[data-admin-support-enable-notifications]');
+    const unread = root.querySelector('[data-admin-support-unread]');
+    const feedUrl = root.dataset.feedUrl || '';
+    const csrfToken = root.dataset.csrfToken || '';
+    let selectedId = null;
+    let selectedConversation = null;
+    let lastThreadSignature = '';
+    let loading = false;
+    let searchTimer = null;
+
+    const requestJson = async (url, options = {}) => {
+        const response = await fetch(url, {
+            ...options,
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': csrfToken,
+                ...(options.headers || {}),
+            },
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            const validationMessage = Object.values(data.errors || {}).flat()[0];
+            throw new Error(validationMessage || data.message || 'Unable to update the conversation.');
+        }
+        return data;
+    };
+
+    const renderList = (conversations) => {
+        if (!list) return;
+        list.replaceChildren();
+
+        if (!conversations.length) {
+            const message = document.createElement('div');
+            message.className = 'p-5 text-center text-[0.76rem] text-[#8a9187]';
+            message.textContent = 'No customer conversations yet.';
+            list.append(message);
+            return;
+        }
+
+        conversations.forEach((conversation) => {
+            const button = document.createElement('button');
+            const top = document.createElement('div');
+            const customerName = document.createElement('strong');
+            const time = document.createElement('time');
+            const preview = document.createElement('p');
+            const meta = document.createElement('div');
+            const status = document.createElement('span');
+            const contactText = document.createElement('span');
+            button.type = 'button';
+            button.className = `block w-full border-b border-[#edf1e9] px-4 py-3 text-left transition hover:bg-[#f8faf5]${Number(conversation.id) === Number(selectedId) ? ' bg-[#f1f7e9]' : ''}`;
+            top.className = 'flex items-center justify-between gap-2';
+            customerName.className = 'truncate text-[0.78rem] text-[#19372e]';
+            customerName.textContent = conversation.customer_name || 'Website visitor';
+            time.className = 'shrink-0 text-[0.6rem] text-[#9aa096]';
+            time.textContent = conversation.last_message_at || '--';
+            preview.className = 'mt-1 truncate text-[0.67rem] text-[#747e75]';
+            preview.textContent = conversation.preview || '';
+            meta.className = 'mt-1.5 flex items-center gap-2 text-[0.59rem]';
+            status.className = `rounded-full px-2 py-0.5 font-bold ${conversation.status === 'closed' ? 'bg-[#eee] text-[#777]' : 'bg-[#e8f4dd] text-[#3c713c]'}`;
+            status.textContent = conversation.status || 'open';
+            contactText.className = 'min-w-0 flex-1 truncate text-[#9a9f97]';
+            contactText.textContent = conversation.contact || '';
+            top.append(customerName, time);
+            meta.append(status, contactText);
+            if (Number(conversation.unread_count || 0) > 0) {
+                const badge = document.createElement('span');
+                badge.className = 'rounded-full bg-[#dc3f36] px-1.5 py-0.5 font-bold text-white';
+                badge.textContent = String(conversation.unread_count);
+                meta.append(badge);
+            }
+            button.append(top, preview, meta);
+            button.addEventListener('click', () => {
+                selectedId = Number(conversation.id);
+                loadFeed();
+            });
+            list.append(button);
+        });
+    };
+
+    const renderThread = (conversation) => {
+        selectedConversation = conversation;
+        if (!conversation) {
+            empty?.classList.remove('hidden');
+            active?.classList.add('hidden');
+            active?.classList.remove('flex');
+            return;
+        }
+
+        selectedId = Number(conversation.id);
+        empty?.classList.add('hidden');
+        active?.classList.remove('hidden');
+        active?.classList.add('flex');
+        if (name) name.textContent = conversation.customer_name || 'Website visitor';
+        if (contact) contact.textContent = [conversation.email, conversation.phone].filter(Boolean).join(' · ') || 'No contact provided';
+        if (statusButton) statusButton.textContent = conversation.status === 'closed' ? 'Reopen conversation' : 'Close conversation';
+        if (bookingMatch) {
+            if (conversation.booking_match?.count > 0) {
+                bookingMatch.href = conversation.booking_match.url;
+                bookingMatch.textContent = `${conversation.booking_match.count} existing booking${conversation.booking_match.count === 1 ? '' : 's'}${conversation.booking_match.latest_reference ? ` · Latest: ${conversation.booking_match.latest_reference}` : ''}`;
+                bookingMatch.classList.remove('hidden');
+            } else {
+                bookingMatch.classList.add('hidden');
+                bookingMatch.removeAttribute('href');
+            }
+        }
+
+        const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
+        const signature = messages.map((message) => message.id).join(',');
+        if (!messagesWrap || signature === lastThreadSignature) return;
+        lastThreadSignature = signature;
+        messagesWrap.replaceChildren();
+        messages.forEach((message) => {
+            const article = document.createElement('article');
+            const sender = document.createElement('strong');
+            const body = document.createElement('div');
+            const time = document.createElement('time');
+            const isAdmin = message.sender === 'admin';
+            article.className = `max-w-[82%] rounded-[1rem] px-3.5 py-2.5 text-[0.75rem] leading-relaxed shadow-sm ${isAdmin ? 'ml-auto rounded-br-[0.25rem] bg-[#34753d] text-white' : 'mr-auto rounded-bl-[0.25rem] border border-[#e0e7dc] bg-white text-[#284138]'}`;
+            sender.className = 'mb-0.5 block text-[0.62rem] font-bold opacity-75';
+            sender.textContent = message.sender_name || (isAdmin ? 'HYVE Front Desk' : conversation.customer_name);
+            body.textContent = message.body || '';
+            time.className = 'mt-1 block text-[0.56rem] opacity-60';
+            time.textContent = `${message.created_at || ''}${isAdmin ? ` · ${message.is_read ? 'Read' : 'Sent'}` : ''}`;
+            article.append(sender, body);
+            if (message.action?.url) {
+                const action = document.createElement('a');
+                action.href = message.action.url;
+                action.target = '_blank';
+                action.rel = 'noopener noreferrer';
+                action.className = `mt-2 inline-grid min-h-8 place-items-center rounded-full px-3 text-[0.62rem] font-bold ${isAdmin ? 'bg-white text-[#34753d]' : 'bg-[#34753d] text-white'}`;
+                action.textContent = message.action.label || 'Open';
+                article.append(action);
+            }
+            article.append(time);
+            messagesWrap.append(article);
+        });
+        messagesWrap.scrollTop = messagesWrap.scrollHeight;
+    };
+
+    const loadFeed = async () => {
+        if (loading || !feedUrl) return;
+        loading = true;
+        try {
+            const params = new URLSearchParams();
+            if (selectedId) params.set('conversation_id', String(selectedId));
+            if (String(searchInput?.value || '').trim()) params.set('search', String(searchInput.value).trim());
+            if (statusFilter?.value && statusFilter.value !== 'all') params.set('status', statusFilter.value);
+            if (unreadFilter?.checked) params.set('unread', '1');
+            const data = await requestJson(`${feedUrl}${params.size ? `?${params.toString()}` : ''}`, { method: 'GET' });
+            const conversations = Array.isArray(data.conversations) ? data.conversations : [];
+            if (!selectedId && data.selected) selectedId = Number(data.selected.id);
+            if (unread) unread.textContent = String(data.unread_total || 0);
+            renderList(conversations);
+            renderThread(data.selected || null);
+        } catch (error) {
+            if (feedback) feedback.textContent = error.message;
+        } finally {
+            loading = false;
+        }
+    };
+
+    const sendAdminReply = async (message, action = null) => {
+        const input = replyForm.querySelector('textarea[name="message"]');
+        const submit = replyForm.querySelector('button[type="submit"]');
+        if (!message || !selectedConversation?.reply_url) return;
+        if (submit) submit.disabled = true;
+        if (feedback) feedback.textContent = 'Sending reply...';
+        try {
+            renderThread(await requestJson(selectedConversation.reply_url, {
+                method: 'POST',
+                body: JSON.stringify({ message, action }),
+            }));
+            if (input) input.value = '';
+            if (feedback) feedback.textContent = 'Reply sent. The customer will receive it in the chat widget.';
+            await loadFeed();
+        } catch (error) {
+            if (feedback) feedback.textContent = error.message;
+        } finally {
+            if (submit) submit.disabled = false;
+        }
+    };
+
+    replyForm?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const input = replyForm.querySelector('textarea[name="message"]');
+        await sendAdminReply(String(input?.value || '').trim());
+    });
+
+    quickReplies.forEach((button) => {
+        button.addEventListener('click', () => {
+            const input = replyForm?.querySelector('textarea[name="message"]');
+            if (!input) return;
+            input.value = button.dataset.quickReply || '';
+            input.focus();
+        });
+    });
+
+    sendBookingButton?.addEventListener('click', async () => {
+        await sendAdminReply('You can check live room availability and continue your reservation using the Book Now button below.', 'booking');
+    });
+
+    const reloadFromFilters = () => {
+        selectedId = null;
+        lastThreadSignature = '';
+        loadFeed();
+    };
+    searchInput?.addEventListener('input', () => {
+        window.clearTimeout(searchTimer);
+        searchTimer = window.setTimeout(reloadFromFilters, 300);
+    });
+    statusFilter?.addEventListener('change', reloadFromFilters);
+    unreadFilter?.addEventListener('change', reloadFromFilters);
+
+    const syncNotificationButton = () => {
+        if (!notificationButton) return;
+        const enabled = window.localStorage.getItem('hyve-admin-chat-alerts') === '1' && window.Notification?.permission === 'granted';
+        notificationButton.textContent = enabled ? 'Alerts enabled' : 'Enable alerts';
+        notificationButton.classList.toggle('bg-[#edf6e5]', enabled);
+    };
+    notificationButton?.addEventListener('click', async () => {
+        if (!('Notification' in window)) {
+            notificationButton.textContent = 'Browser alerts unavailable';
+            return;
+        }
+        const permission = await window.Notification.requestPermission();
+        window.localStorage.setItem('hyve-admin-chat-alerts', permission === 'granted' ? '1' : '0');
+        syncNotificationButton();
+    });
+    syncNotificationButton();
+
+    statusButton?.addEventListener('click', async () => {
+        if (!selectedConversation?.status_url) return;
+        statusButton.disabled = true;
+        const nextStatus = selectedConversation.status === 'closed' ? 'open' : 'closed';
+        try {
+            renderThread(await requestJson(selectedConversation.status_url, {
+                method: 'PATCH',
+                body: JSON.stringify({ status: nextStatus }),
+            }));
+            await loadFeed();
+        } catch (error) {
+            if (feedback) feedback.textContent = error.message;
+        } finally {
+            statusButton.disabled = false;
+        }
+    });
+
+    deleteButton?.addEventListener('click', async () => {
+        if (!selectedConversation?.delete_url) return;
+
+        const customerName = selectedConversation.customer_name || 'this customer';
+        const confirmed = window.confirm(`Permanently delete the conversation with ${customerName}? All messages in this conversation will also be deleted and cannot be recovered.`);
+        if (!confirmed) return;
+
+        deleteButton.disabled = true;
+        if (feedback) feedback.textContent = 'Deleting conversation...';
+
+        try {
+            await requestJson(selectedConversation.delete_url, { method: 'DELETE' });
+            selectedId = null;
+            selectedConversation = null;
+            lastThreadSignature = '';
+            renderThread(null);
+            if (feedback) feedback.textContent = '';
+            await loadFeed();
+        } catch (error) {
+            if (feedback) feedback.textContent = error.message;
+        } finally {
+            deleteButton.disabled = false;
+        }
+    });
+
+    loadFeed();
+    window.setInterval(loadFeed, 5000);
+};
+
+const setupAdminMessageBadge = () => {
+    const root = document.querySelector('[data-admin-message-badge-root]');
+    const badge = root?.querySelector('[data-admin-message-badge]');
+    const unreadUrl = root?.dataset.unreadUrl || '';
+    const messagesUrl = root?.dataset.messagesUrl || '';
+    if (!root || !badge || !unreadUrl) return;
+    const lastAlertKey = 'hyve-admin-last-alert-message-id';
+    let audioContext = null;
+
+    const ensureAudio = () => {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) return null;
+        audioContext ??= new AudioContextClass();
+        if (audioContext.state === 'suspended') audioContext.resume().catch(() => {});
+        return audioContext;
+    };
+
+    const playAlertSound = () => {
+        const context = ensureAudio();
+        if (!context) return;
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(720, context.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(920, context.currentTime + 0.12);
+        gain.gain.setValueAtTime(0.0001, context.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.16, context.currentTime + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.22);
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        oscillator.start();
+        oscillator.stop(context.currentTime + 0.23);
+    };
+
+    document.addEventListener('pointerdown', ensureAudio, { once: true });
+
+    const refresh = async () => {
+        try {
+            const response = await fetch(unreadUrl, { headers: { Accept: 'application/json' } });
+            if (!response.ok) return;
+            const data = await response.json();
+            const count = Number(data.unread_total || 0);
+            const latestMessageId = Number(data.latest_message?.id || 0);
+            const previousMessageId = Number(window.localStorage.getItem(lastAlertKey) || 0);
+            badge.textContent = String(count);
+            badge.setAttribute('aria-label', `${count} unread customer ${count === 1 ? 'conversation' : 'conversations'}`);
+            badge.classList.toggle('hidden', count < 1);
+            if (latestMessageId > 0 && previousMessageId > 0 && latestMessageId > previousMessageId && window.localStorage.getItem('hyve-admin-chat-alerts') === '1') {
+                playAlertSound();
+                if ('Notification' in window && window.Notification.permission === 'granted') {
+                    const notification = new window.Notification(`New HYVE message from ${data.latest_message.customer_name || 'a customer'}`, {
+                        body: data.latest_message.preview || 'Open Messages to reply.',
+                        icon: '/images/logohyve.jpg',
+                        tag: `hyve-support-${latestMessageId}`,
+                    });
+                    notification.onclick = () => {
+                        window.focus();
+                        if (messagesUrl) window.location.href = messagesUrl;
+                        notification.close();
+                    };
+                }
+            }
+            if (latestMessageId > 0) window.localStorage.setItem(lastAlertKey, String(latestMessageId));
+        } catch (error) {
+            // Keep the last visible count when the network is temporarily unavailable.
+        }
+    };
+
+    refresh();
+    window.setInterval(refresh, 10000);
+};
+
+const setupAdminOnlineBookingBadge = () => {
+    const root = document.querySelector('[data-admin-booking-badge-root]');
+    const badge = root?.querySelector('[data-admin-booking-badge]');
+    const unreadUrl = root?.dataset.bookingUnreadUrl || '';
+    const bookingsUrl = root?.dataset.bookingsUrl || '';
+    if (!root || !badge || !unreadUrl) return;
+
+    const lastAlertKey = 'hyve-admin-last-online-booking-activity-id';
+    let initialized = false;
+
+    const refresh = async () => {
+        try {
+            const response = await fetch(unreadUrl, { headers: { Accept: 'application/json' } });
+            if (!response.ok) return;
+
+            const data = await response.json();
+            const count = Number(data.unread_total || 0);
+            const latestId = Number(data.latest_booking?.id || 0);
+            const previousId = Number(window.localStorage.getItem(lastAlertKey) || 0);
+
+            badge.textContent = String(count);
+            badge.setAttribute('aria-label', `${count} new online ${count === 1 ? 'booking' : 'bookings'}`);
+            badge.classList.toggle('hidden', count < 1);
+
+            if (initialized && latestId > previousId && window.localStorage.getItem('hyve-admin-chat-alerts') === '1') {
+                if ('Notification' in window && window.Notification.permission === 'granted') {
+                    const reference = data.latest_booking?.reference_no || 'New booking';
+                    const notification = new window.Notification('New HYVE online booking', {
+                        body: `${data.latest_booking?.customer_name || 'A customer'} submitted ${reference}.`,
+                        icon: '/images/logohyve.jpg',
+                        tag: `hyve-online-booking-${latestId}`,
+                    });
+                    notification.onclick = () => {
+                        window.focus();
+                        if (bookingsUrl) window.location.href = bookingsUrl;
+                        notification.close();
+                    };
+                }
+            }
+
+            if (latestId > 0) window.localStorage.setItem(lastAlertKey, String(latestId));
+            initialized = true;
+        } catch (error) {
+            // Keep the last visible count when the network is temporarily unavailable.
+        }
+    };
+
+    refresh();
+    window.setInterval(refresh, 10000);
+};
+
 document.addEventListener('DOMContentLoaded', () => {
     setupNav();
     setupAmenitiesGallery();
@@ -5395,4 +6079,8 @@ document.addEventListener('DOMContentLoaded', () => {
     setupHomepageMotion();
     setupBookingPageV2();
     setupBookingSubmissionGuards();
+    setupHyveFaqChat();
+    setupAdminSupportMessages();
+    setupAdminMessageBadge();
+    setupAdminOnlineBookingBadge();
 });

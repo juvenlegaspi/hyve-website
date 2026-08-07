@@ -35,6 +35,7 @@
             'Pricing Rules' => 'tag',
             'Bookings' => 'calendar-check',
             'Payments' => 'card',
+            'Messages' => 'chat',
             'Sales Monitoring' => 'chart',
             'Users' => 'users',
             'Reports' => 'chart',
@@ -43,6 +44,17 @@
         ];
         $isOwnerPortal = $adminUser->isOwner();
         $panelLabel = $isOwnerPortal ? 'Owner Portal' : 'Admin';
+        $adminMessageUnreadCount = $adminUser->hasPermission('messages.view')
+            ? \App\Models\SupportConversation::query()->withUnreadForAdmin()->count()
+            : 0;
+        $adminOnlineBookingUnreadCount = $adminUser->hasPermission('bookings.view') && \Illuminate\Support\Facades\Schema::hasTable('booking_activities')
+            ? \App\Models\BookingActivity::query()
+                ->where('event_key', 'booking_submitted')
+                ->whereNull('read_at')
+                ->whereHas('bookingHeader', fn ($query) => $query->where('source', \App\Models\BookingHeader::SOURCE_WEB))
+                ->distinct()
+                ->count('booking_header_id')
+            : 0;
     @endphp
 
     <div class="flex min-h-screen">
@@ -54,7 +66,11 @@
                 </a>
             </div>
 
-            <nav class="flex-1 overflow-y-auto px-0 py-2">
+            <nav
+                class="flex-1 overflow-y-auto px-0 py-2"
+                @if($adminUser->hasPermission('messages.view')) data-admin-message-badge-root data-unread-url="{{ route('admin.messages.unread') }}" data-messages-url="{{ route('admin.messages.index') }}" @endif
+                @if($adminUser->hasPermission('bookings.view')) data-admin-booking-badge-root data-booking-unread-url="{{ route('admin.bookings.online-unread') }}" data-bookings-url="{{ route('admin.bookings.index') }}" @endif
+            >
                 @foreach (($sidebarSections ?? []) as $section)
                     @if (! empty($section['title']))
                         <p class="px-4 pb-2 pt-4 text-[0.7rem] font-bold uppercase tracking-[0.18em] text-[#d0d3cb]">
@@ -65,9 +81,10 @@
                     <div class="grid gap-1">
                         @foreach ($section['items'] as $item)
                             @php($icon = $sidebarIcons[$item['label']] ?? 'grid')
+                            @php($isActiveItem = request()->routeIs($item['route']) || ($item['label'] === 'Messages' && request()->routeIs('admin.messages.*')))
                             <a
                                 href="{{ route($item['route']) }}"
-                                class="@if (request()->routeIs($item['route'])) border-r-[3px] border-[#5e8b43] bg-[#edf5df] text-[#224133] @else text-[#69736a] hover:bg-[#fafbf7] @endif flex items-center gap-3 px-4 py-2.5 text-[0.8rem] font-medium transition"
+                                class="@if ($isActiveItem) border-r-[3px] border-[#5e8b43] bg-[#edf5df] text-[#224133] @else text-[#69736a] hover:bg-[#fafbf7] @endif flex items-center gap-3 px-4 py-2.5 text-[0.8rem] font-medium transition"
                             >
                                 <span class="inline-flex h-4 w-4 items-center justify-center text-[#8b9387]">
                                     @if ($icon === 'grid')
@@ -101,6 +118,11 @@
                                         <svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.6">
                                             <rect x="1.75" y="3" width="12.5" height="10" rx="1.75"></rect>
                                             <path d="M1.75 6h12.5M4.5 10.25h2.5"></path>
+                                        </svg>
+                                    @elseif ($icon === 'chat')
+                                        <svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.6">
+                                            <path d="M2.25 2.75h11.5v8H7l-3.75 2.5v-2.5h-1Z"></path>
+                                            <path d="M5 6.25h6M5 8.5h4"></path>
                                         </svg>
                                     @elseif ($icon === 'users')
                                         <svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.6">
@@ -139,7 +161,13 @@
                                         </svg>
                                     @endif
                                 </span>
-                                {{ $item['label'] }}
+                                <span class="flex-1">{{ $item['label'] }}</span>
+                                @if ($item['label'] === 'Bookings')
+                                    <span class="{{ $adminOnlineBookingUnreadCount > 0 ? '' : 'hidden' }} min-w-5 rounded-full bg-[#dc3f36] px-1.5 py-0.5 text-center text-[0.62rem] font-bold text-white shadow-[0_0_0_2px_rgba(220,63,54,0.14)]" data-admin-booking-badge aria-label="{{ $adminOnlineBookingUnreadCount }} new online bookings">{{ $adminOnlineBookingUnreadCount }}</span>
+                                @endif
+                                @if ($item['label'] === 'Messages')
+                                    <span class="{{ $adminMessageUnreadCount > 0 ? '' : 'hidden' }} min-w-5 rounded-full bg-[#dc3f36] px-1.5 py-0.5 text-center text-[0.62rem] font-bold text-white shadow-[0_0_0_2px_rgba(220,63,54,0.14)]" data-admin-message-badge aria-label="{{ $adminMessageUnreadCount }} unread customer conversations">{{ $adminMessageUnreadCount }}</span>
+                                @endif
                             </a>
                         @endforeach
                     </div>

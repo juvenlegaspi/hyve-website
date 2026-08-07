@@ -17,6 +17,8 @@ return [
             'bookings.manage',
             'payments.view',
             'payments.manage',
+            'messages.view',
+            'messages.manage',
             'sales_monitoring.view',
             'reports.view',
             'settings.view',
@@ -33,6 +35,8 @@ return [
             'bookings.manage',
             'payments.view',
             'payments.manage',
+            'messages.view',
+            'messages.manage',
         ],
         'audit' => [
             'dashboard.view',
@@ -68,6 +72,7 @@ return [
             'items' => [
                 ['label' => 'Bookings', 'route' => 'admin.bookings.index', 'permission' => 'bookings.view'],
                 ['label' => 'Payments', 'route' => 'admin.sections.payments', 'permission' => 'payments.view'],
+                ['label' => 'Messages', 'route' => 'admin.messages.index', 'permission' => 'messages.view'],
             ],
         ],
         [
@@ -102,6 +107,7 @@ return [
         ['module' => 'Calendar & Events', 'super_admin' => 'full', 'admin' => 'full', 'front_desk' => 'read', 'audit' => 'none', 'owner' => 'none'],
         ['module' => 'Bookings', 'super_admin' => 'full', 'admin' => 'full', 'front_desk' => 'full', 'audit' => 'none', 'owner' => 'none'],
         ['module' => 'Payments', 'super_admin' => 'full', 'admin' => 'full', 'front_desk' => 'full', 'audit' => 'read', 'owner' => 'none'],
+        ['module' => 'Messages', 'super_admin' => 'full', 'admin' => 'full', 'front_desk' => 'full', 'audit' => 'none', 'owner' => 'none'],
         ['module' => 'Sales Monitoring', 'super_admin' => 'full', 'admin' => 'read', 'front_desk' => 'none', 'audit' => 'read', 'owner' => 'read'],
         ['module' => 'Users', 'super_admin' => 'full', 'admin' => 'none', 'front_desk' => 'none', 'audit' => 'none', 'owner' => 'none'],
         ['module' => 'Credits', 'super_admin' => 'full', 'admin' => 'read', 'front_desk' => 'none', 'audit' => 'none', 'owner' => 'none'],

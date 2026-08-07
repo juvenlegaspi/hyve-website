@@ -4818,3 +4818,459 @@
         }
     }
 }
+
+@layer components {
+    .hyve-faq-chat {
+        position: fixed;
+        right: 1.25rem;
+        bottom: 1.25rem;
+        z-index: 90;
+        display: grid;
+        justify-items: end;
+        gap: 0.75rem;
+        font-family: "Instrument Sans", sans-serif;
+    }
+
+    .hyve-faq-chat__panel {
+        display: flex;
+        width: min(23rem, calc(100vw - 2rem));
+        max-height: min(39rem, calc(100vh - 7rem));
+        overflow: hidden;
+        flex-direction: column;
+        border: 1px solid rgba(17, 52, 44, 0.14);
+        border-radius: 1.35rem;
+        background: #fffdf8;
+        box-shadow: 0 1.5rem 4rem rgba(17, 52, 44, 0.22);
+        animation: hyve-faq-chat-open 180ms ease-out;
+    }
+
+    .hyve-faq-chat__panel[hidden] {
+        display: none;
+    }
+
+    .hyve-faq-chat__header {
+        display: grid;
+        flex: 0 0 auto;
+        grid-template-columns: auto 1fr auto;
+        align-items: center;
+        gap: 0.7rem;
+        padding: 0.9rem 1rem;
+        background: #11342c;
+        color: #fff;
+    }
+
+    .hyve-faq-chat__brand {
+        display: grid;
+        width: 2.3rem;
+        height: 2.3rem;
+        place-items: center;
+        border-radius: 999px;
+        background: #f1d49a;
+        color: #11342c;
+        font-family: Georgia, serif;
+        font-size: 1.15rem;
+        font-weight: 800;
+    }
+
+    .hyve-faq-chat__header strong,
+    .hyve-faq-chat__header span {
+        display: block;
+    }
+
+    .hyve-faq-chat__header strong {
+        font-size: 0.92rem;
+    }
+
+    .hyve-faq-chat__header span {
+        margin-top: 0.08rem;
+        color: rgba(255, 255, 255, 0.72);
+        font-size: 0.68rem;
+    }
+
+    .hyve-faq-chat__close {
+        display: grid;
+        flex-shrink: 0;
+        width: 2rem;
+        height: 2rem;
+        cursor: pointer;
+        place-items: center;
+        border: 0;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.1);
+        color: #fff;
+        font-size: 1.35rem;
+        line-height: 1;
+    }
+
+    .hyve-faq-chat__body {
+        display: grid;
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-y: auto;
+        gap: 0.75rem;
+        padding: 0.9rem;
+    }
+
+    .hyve-faq-chat__body[hidden],
+    .hyve-support-chat__start[hidden],
+    .hyve-support-chat__conversation[hidden] {
+        display: none;
+    }
+
+    .hyve-faq-chat__message,
+    .hyve-faq-chat__answer {
+        border-radius: 1rem 1rem 1rem 0.3rem;
+        background: #f3f6ed;
+        color: #263a33;
+        padding: 0.78rem 0.85rem;
+        font-size: 0.76rem;
+        line-height: 1.5;
+    }
+
+    .hyve-faq-chat__message p,
+    .hyve-faq-chat__answer p {
+        margin: 0.25rem 0 0;
+    }
+
+    .hyve-faq-chat__answer {
+        border: 1px solid #dce8cf;
+        background: #fbfff6;
+    }
+
+    .hyve-faq-chat__answer a {
+        display: inline-block;
+        margin-top: 0.45rem;
+        color: #326b36;
+        font-weight: 750;
+        text-decoration: underline;
+        text-underline-offset: 0.18rem;
+    }
+
+    .hyve-faq-chat__topics {
+        display: grid;
+        gap: 0.42rem;
+    }
+
+    .hyve-faq-chat__topics button {
+        width: 100%;
+        cursor: pointer;
+        border: 1px solid #dce5d5;
+        border-radius: 0.75rem;
+        background: #fff;
+        color: #29433a;
+        padding: 0.62rem 0.72rem;
+        font-size: 0.72rem;
+        font-weight: 650;
+        text-align: left;
+        transition: border-color 150ms ease, background 150ms ease, transform 150ms ease;
+    }
+
+    .hyve-faq-chat__topics button:hover,
+    .hyve-faq-chat__topics button.is-active {
+        border-color: #79a84f;
+        background: #f4faeb;
+        transform: translateX(0.12rem);
+    }
+
+    .hyve-faq-chat__staff-button {
+        display: grid;
+        width: 100%;
+        cursor: pointer;
+        gap: 0.1rem;
+        border: 0;
+        border-radius: 0.85rem;
+        background: #11342c;
+        color: #fff;
+        padding: 0.72rem 0.8rem;
+        font-size: 0.75rem;
+        font-weight: 750;
+        text-align: left;
+    }
+
+    .hyve-faq-chat__staff-button span {
+        color: rgba(255, 255, 255, 0.68);
+        font-size: 0.63rem;
+        font-weight: 500;
+    }
+
+    .hyve-faq-chat__back {
+        justify-self: start;
+        cursor: pointer;
+        border: 0;
+        background: transparent;
+        color: #497059;
+        padding: 0;
+        font-size: 0.68rem;
+        font-weight: 700;
+    }
+
+    .hyve-support-chat__intro {
+        border-radius: 0.9rem;
+        background: #f1f6ea;
+        padding: 0.75rem 0.8rem;
+        color: #294138;
+        font-size: 0.75rem;
+    }
+
+    .hyve-support-chat__intro p {
+        margin: 0.2rem 0 0;
+        color: #718075;
+        font-size: 0.67rem;
+        line-height: 1.45;
+    }
+
+    .hyve-support-chat__start {
+        display: grid;
+        gap: 0.6rem;
+    }
+
+    .hyve-support-chat__start label {
+        display: grid;
+        gap: 0.22rem;
+        color: #50635a;
+        font-size: 0.65rem;
+        font-weight: 700;
+    }
+
+    .hyve-support-chat__start input,
+    .hyve-support-chat__start textarea,
+    .hyve-support-chat__reply textarea {
+        width: 100%;
+        resize: none;
+        border: 1px solid #d7e1d2;
+        border-radius: 0.7rem;
+        background: #fff;
+        color: #20372f;
+        padding: 0.58rem 0.65rem;
+        font-size: 0.7rem;
+        font-weight: 500;
+        outline: none;
+    }
+
+    .hyve-support-chat__start input:focus,
+    .hyve-support-chat__start textarea:focus,
+    .hyve-support-chat__reply textarea:focus {
+        border-color: #6f9e56;
+        box-shadow: 0 0 0 3px rgba(111, 158, 86, 0.12);
+    }
+
+    .hyve-support-chat__contact-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.5rem;
+    }
+
+    .hyve-support-chat__start > button,
+    .hyve-support-chat__reply button {
+        cursor: pointer;
+        border: 0;
+        border-radius: 0.72rem;
+        background: #397a40;
+        color: #fff;
+        padding: 0.65rem 0.8rem;
+        font-size: 0.7rem;
+        font-weight: 750;
+    }
+
+    .hyve-support-chat__start button:disabled,
+    .hyve-support-chat__reply button:disabled {
+        cursor: wait;
+        opacity: 0.65;
+    }
+
+    .hyve-support-chat__feedback {
+        min-height: 0.9rem;
+        margin: 0;
+        color: #a8483a;
+        font-size: 0.63rem;
+    }
+
+    .hyve-support-chat__conversation {
+        display: grid;
+        min-height: 0;
+        gap: 0.55rem;
+    }
+
+    .hyve-support-chat__status {
+        color: #7c887f;
+        font-size: 0.62rem;
+        text-align: center;
+    }
+
+    .hyve-support-chat__status span {
+        color: #397441;
+        font-weight: 800;
+        text-transform: capitalize;
+    }
+
+    .hyve-support-chat__messages {
+        display: flex;
+        min-height: 10rem;
+        max-height: 17rem;
+        overflow-y: auto;
+        flex-direction: column;
+        gap: 0.5rem;
+        padding: 0.15rem;
+    }
+
+    .hyve-support-chat__bubble {
+        max-width: 86%;
+        align-self: flex-start;
+        border-radius: 0.8rem 0.8rem 0.8rem 0.2rem;
+        background: #edf2e8;
+        color: #294037;
+        padding: 0.55rem 0.65rem;
+        font-size: 0.68rem;
+        line-height: 1.45;
+        overflow-wrap: anywhere;
+    }
+
+    .hyve-support-chat__bubble.is-customer {
+        align-self: flex-end;
+        border-radius: 0.8rem 0.8rem 0.2rem 0.8rem;
+        background: #397a40;
+        color: #fff;
+    }
+
+    .hyve-support-chat__bubble strong,
+    .hyve-support-chat__bubble time {
+        display: block;
+        font-size: 0.57rem;
+    }
+
+    .hyve-support-chat__bubble time {
+        margin-top: 0.2rem;
+        opacity: 0.65;
+    }
+
+    .hyve-support-chat__bubble .hyve-support-chat__action {
+        display: inline-grid;
+        min-height: 2rem;
+        margin-top: 0.45rem;
+        place-items: center;
+        border-radius: 999px;
+        background: #fff;
+        color: #286b34;
+        padding: 0.35rem 0.75rem;
+        font-size: 0.62rem;
+        font-weight: 800;
+        text-decoration: none;
+    }
+
+    .hyve-support-chat__reply {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        align-items: end;
+        gap: 0.4rem;
+    }
+
+    .hyve-support-chat__controls {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 0.35rem;
+    }
+
+    .hyve-support-chat__controls button {
+        cursor: pointer;
+        border: 0;
+        background: transparent;
+        color: #748078;
+        padding: 0.2rem;
+        font-size: 0.59rem;
+        text-decoration: underline;
+        text-underline-offset: 0.14rem;
+    }
+
+    .hyve-faq-chat__footer {
+        display: grid;
+        flex: 0 0 auto;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.55rem;
+        padding: 0.75rem 0.9rem 0.9rem;
+        border-top: 1px solid #e7ece2;
+    }
+
+    .hyve-faq-chat__footer a {
+        display: grid;
+        min-height: 2.55rem;
+        place-items: center;
+        border: 1px solid #d7e1d1;
+        border-radius: 999px;
+        color: #244138;
+        font-size: 0.72rem;
+        font-weight: 750;
+    }
+
+    .hyve-faq-chat__footer .hyve-faq-chat__primary {
+        border-color: #3d7f40;
+        background: #3d7f40;
+        color: #fff;
+    }
+
+    .hyve-faq-chat__launcher {
+        display: inline-flex;
+        min-height: 3.2rem;
+        cursor: pointer;
+        align-items: center;
+        gap: 0.55rem;
+        border: 1px solid rgba(255, 255, 255, 0.28);
+        border-radius: 999px;
+        background: #11342c;
+        box-shadow: 0 0.85rem 2.1rem rgba(17, 52, 44, 0.25);
+        color: #fff;
+        padding: 0.72rem 1rem;
+        font-size: 0.78rem;
+        font-weight: 750;
+    }
+
+    .hyve-faq-chat__launcher svg {
+        width: 1.35rem;
+        height: 1.35rem;
+    }
+
+    @keyframes hyve-faq-chat-open {
+        from { opacity: 0; transform: translateY(0.6rem) scale(0.98); }
+        to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+}
+
+@media (max-width: 640px) {
+    @layer components {
+        .hyve-faq-chat {
+            right: 0.8rem;
+            bottom: 0.8rem;
+        }
+
+        .hyve-faq-chat__panel {
+            position: fixed;
+            top: max(0.75rem, env(safe-area-inset-top));
+            right: 0.75rem;
+            bottom: calc(4.85rem + env(safe-area-inset-bottom));
+            left: 0.75rem;
+            width: auto;
+            max-height: none;
+        }
+
+        .hyve-faq-chat__header {
+            position: relative;
+            z-index: 2;
+            padding-top: max(0.9rem, env(safe-area-inset-top));
+        }
+
+        .hyve-faq-chat__close {
+            width: 2.25rem;
+            height: 2.25rem;
+        }
+
+        .hyve-faq-chat__launcher span {
+            display: none;
+        }
+
+        .hyve-faq-chat__launcher {
+            width: 3.25rem;
+            padding: 0;
+            justify-content: center;
+        }
+    }
+}

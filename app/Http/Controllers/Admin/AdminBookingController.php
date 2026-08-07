@@ -50,6 +50,7 @@ class AdminBookingController extends Controller
     public function index(Request $request): View
     {
         $this->syncDueBookingsProgress();
+        $this->markOnlineBookingActivitiesRead();
 
         $filters = $this->bookingFilters($request);
         $bookings = $this->bookingListingPaginator($request, $filters);
@@ -83,6 +84,31 @@ class AdminBookingController extends Controller
             'current_page' => $bookings->currentPage(),
             'last_page' => $bookings->lastPage(),
             'bookings' => $bookings->items(),
+        ]);
+    }
+
+    public function onlineBookingUnread(): JsonResponse
+    {
+        if (! Schema::hasTable('booking_activities')) {
+            return response()->json([
+                'unread_total' => 0,
+                'latest_booking' => null,
+            ]);
+        }
+
+        $query = $this->unreadOnlineBookingActivitiesQuery();
+        $latest = (clone $query)
+            ->with('bookingHeader:id,reference_no,customer_name')
+            ->latest('id')
+            ->first();
+
+        return response()->json([
+            'unread_total' => (clone $query)->distinct()->count('booking_header_id'),
+            'latest_booking' => $latest ? [
+                'id' => $latest->getKey(),
+                'reference_no' => (string) ($latest->bookingHeader?->reference_no ?: $latest->reference_no),
+                'customer_name' => (string) ($latest->bookingHeader?->customer_name ?: $latest->customer_name ?: 'Customer'),
+            ] : null,
         ]);
     }
 
@@ -1526,6 +1552,23 @@ class AdminBookingController extends Controller
             'created_at_human' => optional($activity->created_at)->diffForHumans(),
             'is_read' => $activity->read_at !== null,
         ];
+    }
+
+    private function unreadOnlineBookingActivitiesQuery()
+    {
+        return BookingActivity::query()
+            ->where('event_key', 'booking_submitted')
+            ->whereNull('read_at')
+            ->whereHas('bookingHeader', fn ($query) => $query->where('source', BookingHeader::SOURCE_WEB));
+    }
+
+    private function markOnlineBookingActivitiesRead(): void
+    {
+        if (! Schema::hasTable('booking_activities')) {
+            return;
+        }
+
+        $this->unreadOnlineBookingActivitiesQuery()->update(['read_at' => now()]);
     }
 
     /**
