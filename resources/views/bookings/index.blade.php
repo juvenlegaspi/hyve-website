@@ -577,7 +577,57 @@
                                 <div class="booking-details-main">
                                     @if ($adminMode || auth()->guest())
                                         @if ($adminMode)
+                                            @php($adminCustomerType = old('admin_customer_type', 'guest'))
+                                            @php($selectedMemberId = (string) old('member_user_id', ''))
+                                            <input type="hidden" name="admin_customer_type" value="{{ $adminCustomerType }}" data-admin-customer-type>
+                                            <input type="hidden" name="member_user_id" value="{{ $selectedMemberId }}" data-member-user-id>
+
                                             <div class="mb-4 rounded-[1rem] border border-[#dce8d4] bg-[#f7faf2] p-4">
+                                                <div class="mb-3">
+                                                    <strong class="block text-[0.82rem] text-[#294531]">Who is this booking for?</strong>
+                                                    <span class="mt-1 block text-[0.72rem] text-[#758076]">Link registered members so this booking appears automatically in their HYVE account.</span>
+                                                </div>
+                                                <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                                    <button type="button" data-admin-customer-type-choice="guest" class="rounded-[0.8rem] border border-[#d9e4d2] bg-white px-3 py-2.5 text-left text-[0.78rem] font-semibold text-[#294531]">
+                                                        Guest / Walk-in
+                                                    </button>
+                                                    <button type="button" data-admin-customer-type-choice="member" class="rounded-[0.8rem] border border-[#d9e4d2] bg-white px-3 py-2.5 text-left text-[0.78rem] font-semibold text-[#294531]">
+                                                        Existing Member
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            <div data-member-customer-panel class="mb-4 rounded-[1rem] border border-[#bfd7ae] bg-[#f4faed] p-4 @if ($adminCustomerType !== 'member') hidden @endif">
+                                                <div class="mb-3">
+                                                    <strong class="block text-[0.82rem] text-[#294531]">Select the member account</strong>
+                                                    <span class="mt-1 block text-[0.72rem] text-[#758076]">Search by member name, email, or phone. The account details will be used for this booking.</span>
+                                                </div>
+                                                <label class="relative block">
+                                                    <span class="mb-1.5 block text-[0.72rem] font-semibold text-[#526358]">Search registered members</span>
+                                                    <input type="search" data-member-customer-search class="w-full rounded-[0.8rem] border border-[#cfe0c4] bg-white px-3 py-2.5 text-[0.82rem] text-[#24372f]" placeholder="Start typing a member..." autocomplete="off">
+                                                    <div data-member-customer-results class="absolute left-0 right-0 top-full z-30 mt-1 hidden max-h-64 overflow-y-auto rounded-[0.8rem] border border-[#cfe0c4] bg-white p-1.5 shadow-[0_18px_45px_rgba(35,58,42,0.16)]">
+                                                        @foreach ($memberAccounts as $memberAccount)
+                                                            <button
+                                                                type="button"
+                                                                data-member-customer-option
+                                                                data-member-id="{{ $memberAccount['id'] }}"
+                                                                data-name="{{ $memberAccount['name'] }}"
+                                                                data-email="{{ $memberAccount['email'] }}"
+                                                                data-phone="{{ $memberAccount['phone'] }}"
+                                                                class="block w-full rounded-[0.65rem] px-3 py-2.5 text-left transition hover:bg-[#f0f6eb] @if ($selectedMemberId === (string) $memberAccount['id']) is-selected @endif"
+                                                            >
+                                                                <strong class="block text-[0.78rem] text-[#24372f]">{{ $memberAccount['name'] }}</strong>
+                                                                <span class="mt-0.5 block text-[0.68rem] text-[#7f857c]">{{ $memberAccount['email'] }}{{ $memberAccount['phone'] ? ' · '.$memberAccount['phone'] : '' }} · {{ $memberAccount['booking_count'] }} booking{{ $memberAccount['booking_count'] !== 1 ? 's' : '' }}</span>
+                                                            </button>
+                                                        @endforeach
+                                                        <p data-member-customer-empty class="hidden px-3 py-3 text-[0.72rem] text-[#7f857c]">No active member account found.</p>
+                                                    </div>
+                                                </label>
+                                                <div data-member-customer-selected class="mt-3 hidden rounded-[0.7rem] bg-[#dff0d3] px-3 py-2 text-[0.72rem] font-semibold text-[#315c34]"></div>
+                                                @error('member_user_id') <small class="field-error mt-2 block">{{ $message }}</small> @enderror
+                                            </div>
+
+                                            <div data-guest-customer-panel class="mb-4 rounded-[1rem] border border-[#dce8d4] bg-[#f7faf2] p-4 @if ($adminCustomerType === 'member') hidden @endif">
                                                 <div class="mb-3">
                                                     <strong class="block text-[0.82rem] text-[#294531]">Returning customer</strong>
                                                     <span class="mt-1 block text-[0.72rem] text-[#758076]">Search a previous online or walk-in customer, then select the correct phone or email to fill the details automatically.</span>

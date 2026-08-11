@@ -61,7 +61,7 @@
                     <div>
                         <p class="mini-title">Find HYVE</p>
                         <h3>The Space Building, Mandaue City</h3>
-                        <p>A.S. Fortuna Street · Open Monday to Sunday, 24 hours</p>
+                        <p>A.S. Fortuna Street &middot; Standard hours: 8:00 AM - 2:00 AM</p>
                     </div>
 
                     <a

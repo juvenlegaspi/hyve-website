@@ -19,13 +19,13 @@ return [
     ],
     'quickFacts' => [
         ['label' => 'Address', 'value' => '10F The Space Building'],
-        ['label' => 'Hours', 'value' => 'Open 24/7'],
-        ['label' => 'Access', 'value' => 'Open 7 Days'],
+        ['label' => 'Hours', 'value' => '8:00 AM - 2:00 AM'],
+        ['label' => 'Access', 'value' => 'Check Live Schedule'],
         ['label' => 'Spaces', 'value' => '4 Ways to Work'],
     ],
     'booking' => [
-        'opening_time' => '00:00',
-        'closing_time' => '24:00',
+        'opening_time' => '08:00',
+        'closing_time' => '02:00',
         'slot_interval_minutes' => 30,
         'minimum_duration_minutes' => 120,
         'manual_start_authorization_minutes' => 60,
@@ -33,6 +33,11 @@ return [
         'extension_grace_minutes' => 30,
         'ended_extension_window_hours' => 24,
         'blocked_statuses' => ['pending', 'confirmed'],
+    ],
+    'support' => [
+        'conversation_retention_days' => 90,
+        'active_poll_seconds' => 5,
+        'background_poll_seconds' => 15,
     ],
     'spaces' => [
         [
@@ -204,8 +209,8 @@ return [
             'Mandaue City',
         ],
         'hours_lines' => [
-            'Monday to Sunday',
-            'Open 24 Hours',
+            'Standard booking hours',
+            '8:00 AM - 2:00 AM; check live closures',
         ],
         'map_url' => 'https://maps.google.com/?q=The+Space+Building+A.S.+Fortuna+Mandaue+City',
         'map_embed_url' => 'https://maps.google.com/?q=The+Space+Building+A.S.+Fortuna+Mandaue+City&output=embed',

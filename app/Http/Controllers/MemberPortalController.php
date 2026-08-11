@@ -113,7 +113,17 @@ class MemberPortalController extends Controller
 
     public function updateProfile(Request $request): RedirectResponse
     {
+        abort_if($request->user()?->isAdmin(), 403);
+
         $user = $request->user();
+
+        $request->merge([
+            'username' => trim(strtolower((string) $request->input('username'))),
+            'first_name' => trim((string) $request->input('first_name')),
+            'last_name' => trim((string) $request->input('last_name')),
+            'email' => trim(strtolower((string) $request->input('email'))),
+            'phone' => trim((string) $request->input('phone')),
+        ]);
 
         $validated = $request->validate([
             'username' => ['required', 'string', 'max:100', Rule::unique('booking_users', 'username')->ignore($user->id)],
@@ -136,6 +146,8 @@ class MemberPortalController extends Controller
 
     public function updatePassword(Request $request): RedirectResponse
     {
+        abort_if($request->user()?->isAdmin(), 403);
+
         $user = $request->user();
 
         $validated = $request->validate([
@@ -160,8 +172,8 @@ class MemberPortalController extends Controller
 
         $bookingHeader->load(['details.hyveRoom', 'details.space']);
 
-        if ($this->hasPendingBalancePayment($bookingHeader)) {
-            return redirect()->route('member.index')->with('member_success', 'You already have a pending balance payment for this booking. Please wait for admin review first.');
+        if ($this->hasPendingPayment($bookingHeader)) {
+            return redirect()->route('member.index')->with('member_success', 'You already have a payment waiting for admin review. Please wait before submitting another payment.');
         }
 
         $selectedHeaderSummary = $this->headerSummary($bookingHeader);
@@ -173,6 +185,14 @@ class MemberPortalController extends Controller
             (float) ($selectedHeaderSummary['balance_amount'] ?? 0)
         );
         $selectedPaymentAmount = round(max(0.01, $selectedPaymentAmount), 2);
+        $allRemainingBalance = round((float) BookingHeader::query()
+            ->where('booking_type', BookingHeader::TYPE_MEMBER)
+            ->where('user_id', $request->user()->id)
+            ->whereIn('status', [BookingHeader::STATUS_PENDING, 'confirmed'])
+            ->where('balance_amount', '>', 0)
+            ->whereDoesntHave('payments', fn ($query) => $query
+                ->where('status', BookingPayment::STATUS_PENDING))
+            ->sum('balance_amount'), 2);
 
         return view('member.balance-payment', [
             'meta' => [
@@ -183,6 +203,7 @@ class MemberPortalController extends Controller
             'selectedHeaderSummary' => $selectedHeaderSummary,
             'selectedBalanceItem' => $selectedItem,
             'selectedPaymentAmount' => $selectedPaymentAmount,
+            'allRemainingBalance' => $allRemainingBalance,
             'paymentSetting' => PaymentSetting::query()->active()->latest('updated_at')->first(),
             ...$this->memberData($request),
         ]);
@@ -402,13 +423,13 @@ class MemberPortalController extends Controller
             return redirect()->route('member.index')->with('member_success', 'This booking no longer has a remaining balance.');
         }
 
-        if ($this->hasPendingBalancePayment($bookingHeader)) {
-            return redirect()->route('member.index')->with('member_success', 'You already submitted a balance payment for this booking. Please wait for admin review.');
+        if ($this->hasPendingPayment($bookingHeader)) {
+            return redirect()->route('member.index')->with('member_success', 'You already have a payment waiting for admin review. Please wait before submitting another payment.');
         }
 
         $validated = $request->validate([
             'detail_id' => ['nullable', 'integer'],
-            'payment_scope' => ['nullable', Rule::in(['single', 'all'])],
+            'payment_scope' => ['required', Rule::in(['single', 'all'])],
             'payment_amount' => ['nullable', 'numeric', 'gt:0'],
             'payment_method' => ['required', Rule::in(['gcash', 'bank_transfer'])],
             'rules_agreement' => ['required', 'accepted'],
@@ -420,21 +441,41 @@ class MemberPortalController extends Controller
         $summary = $this->headerSummary($bookingHeader);
         $selectedItem = collect($summary['items'])->firstWhere('detail_id', (int) ($validated['detail_id'] ?? 0))
             ?? collect($summary['items'])->first();
-        $currentBalance = round((float) ($bookingHeader->balance_amount ?? 0), 2);
         $paymentScope = (string) ($validated['payment_scope'] ?? 'single');
+        $targetHeaders = $paymentScope === 'all'
+            ? BookingHeader::query()
+                ->where('booking_type', BookingHeader::TYPE_MEMBER)
+                ->where('user_id', $request->user()->id)
+                ->whereIn('status', [BookingHeader::STATUS_PENDING, 'confirmed'])
+                ->where('balance_amount', '>', 0)
+                ->whereDoesntHave('payments', fn ($query) => $query
+                    ->where('status', BookingPayment::STATUS_PENDING))
+                ->get()
+            : collect([$bookingHeader]);
+        $currentBalance = round((float) $targetHeaders->sum(fn (BookingHeader $header): float => (float) $header->balance_amount), 2);
         $defaultPaymentAmount = $paymentScope === 'all'
             ? $currentBalance
             : min(
                 round((float) ($selectedItem['amount'] ?? $currentBalance), 2),
                 $currentBalance
             );
-        $paymentAmount = array_key_exists('payment_amount', $validated) && $validated['payment_amount'] !== null
-            ? round((float) $validated['payment_amount'], 2)
-            : round($defaultPaymentAmount, 2);
+        $paymentAmount = $paymentScope === 'all'
+            ? $currentBalance
+            : (array_key_exists('payment_amount', $validated) && $validated['payment_amount'] !== null
+                ? round((float) $validated['payment_amount'], 2)
+                : round($defaultPaymentAmount, 2));
+        $maximumPaymentAmount = $paymentScope === 'all'
+            ? $currentBalance
+            : min(
+                round((float) ($selectedItem['amount'] ?? $currentBalance), 2),
+                $currentBalance
+            );
 
-        if ($paymentAmount <= 0 || $paymentAmount > $currentBalance) {
+        if ($paymentAmount <= 0 || $paymentAmount > $maximumPaymentAmount) {
             return back()->withErrors([
-                'payment_amount' => 'Enter a valid payment amount that does not exceed the remaining balance.',
+                'payment_amount' => $paymentScope === 'all'
+                    ? 'Enter a valid payment amount that does not exceed your total remaining balance.'
+                    : 'Enter a valid payment amount that does not exceed the selected booking balance.',
             ]);
         }
 
@@ -444,40 +485,65 @@ class MemberPortalController extends Controller
         $paymentNote = 'Submitted booking payment on '.now()->format('F j, Y g:i A')
             .' for Php '.number_format($paymentAmount, 2).'.';
 
-        DB::transaction(function () use ($request, $bookingHeader, $selectedItem, $validated, $paymentAmount, $paymentProofPath, $paymentProofName, $paymentNote, $newNotes, $currentBalance): void {
-            BookingPayment::query()->create([
-                'booking_header_id' => $bookingHeader->getKey(),
-                'booking_detail_id' => (int) ($selectedItem['detail_id'] ?? 0) > 0 ? (int) $selectedItem['detail_id'] : null,
-                'user_id' => $request->user()?->id,
-                'payment_type' => BookingPayment::TYPE_BALANCE,
-                'amount' => $paymentAmount,
-                'payment_method' => $validated['payment_method'],
-                'status' => BookingPayment::STATUS_PENDING,
-                'payment_proof_path' => $paymentProofPath,
-                'payment_proof_name' => $paymentProofName,
-                'notes' => collect([$paymentNote, $newNotes])
+        DB::transaction(function () use ($request, $bookingHeader, $targetHeaders, $paymentScope, $selectedItem, $validated, $paymentAmount, $paymentProofPath, $paymentProofName, $paymentNote, $newNotes): void {
+            $lockedHeaders = BookingHeader::query()
+                ->whereKey($targetHeaders->map(fn (BookingHeader $header) => $header->getKey())->all())
+                ->lockForUpdate()
+                ->get();
+
+            foreach ($lockedHeaders as $targetHeader) {
+                $targetBalance = round((float) ($targetHeader->balance_amount ?? 0), 2);
+
+                if ($targetBalance <= 0) {
+                    continue;
+                }
+
+                $allocatedAmount = $paymentScope === 'all' ? $targetBalance : $paymentAmount;
+                $allocatedNote = $paymentScope === 'all'
+                    ? $paymentNote.' Allocated Php '.number_format($allocatedAmount, 2).' to '.$targetHeader->reference_no.'.'
+                    : $paymentNote;
+                $isSelectedHeader = (int) $targetHeader->getKey() === (int) $bookingHeader->getKey();
+
+                BookingPayment::query()->create([
+                    'booking_header_id' => $targetHeader->getKey(),
+                    'booking_detail_id' => $isSelectedHeader && (int) ($selectedItem['detail_id'] ?? 0) > 0
+                        ? (int) $selectedItem['detail_id']
+                        : null,
+                    'user_id' => $request->user()?->id,
+                    'payment_type' => BookingPayment::TYPE_BALANCE,
+                    'amount' => $allocatedAmount,
+                    'payment_method' => $validated['payment_method'],
+                    'status' => BookingPayment::STATUS_PENDING,
+                    'payment_proof_path' => $paymentProofPath,
+                    'payment_proof_name' => $paymentProofName,
+                    'notes' => collect([$allocatedNote, $newNotes])
+                        ->filter(fn ($value) => $value !== '')
+                        ->implode(PHP_EOL.PHP_EOL),
+                    'paid_at' => now(),
+                ]);
+
+                $combinedNotes = collect([(string) ($targetHeader->notes ?? ''), $allocatedNote, $newNotes])
+                    ->map(fn ($value) => trim((string) $value))
                     ->filter(fn ($value) => $value !== '')
-                    ->implode(PHP_EOL.PHP_EOL),
-                'paid_at' => now(),
-            ]);
+                    ->implode(PHP_EOL.PHP_EOL);
 
-            $combinedNotes = collect([(string) ($bookingHeader->notes ?? ''), $paymentNote, $newNotes])
-                ->map(fn ($value) => trim((string) $value))
-                ->filter(fn ($value) => $value !== '')
-                ->implode(PHP_EOL.PHP_EOL);
-
-            $bookingHeader->update([
-                'payment_method' => $validated['payment_method'],
-                'payment_status' => 'pending_balance_verification',
-                'payment_proof_path' => $paymentProofPath,
-                'payment_proof_name' => $paymentProofName,
-                'downpayment_amount' => round((float) ($bookingHeader->downpayment_amount ?? 0) + $paymentAmount, 2),
-                'balance_amount' => round(max(0, $currentBalance - $paymentAmount), 2),
-                'notes' => $combinedNotes,
-            ]);
+                $targetHeader->update([
+                    'payment_method' => $validated['payment_method'],
+                    'payment_status' => 'pending_balance_verification',
+                    'payment_proof_path' => $paymentProofPath,
+                    'payment_proof_name' => $paymentProofName,
+                    'downpayment_amount' => round((float) ($targetHeader->downpayment_amount ?? 0) + $allocatedAmount, 2),
+                    'balance_amount' => round(max(0, $targetBalance - $allocatedAmount), 2),
+                    'notes' => $combinedNotes,
+                ]);
+            }
         });
 
-        return redirect()->route('member.index')->with('member_success', 'Remaining balance submitted successfully. HYVE will verify your payment shortly.');
+        $successMessage = $paymentScope === 'all'
+            ? 'All outstanding booking balances were submitted successfully. HYVE will verify your payment shortly.'
+            : 'Remaining balance submitted successfully. HYVE will verify your payment shortly.';
+
+        return redirect()->route('member.index')->with('member_success', $successMessage);
     }
 
     public function cancelBooking(Request $request, BookingHeader $bookingHeader): RedirectResponse
@@ -488,7 +554,11 @@ class MemberPortalController extends Controller
             403
         );
 
-        $bookingHeader->load('details');
+        $bookingHeader->load(['details', 'payments']);
+
+        if ($bookingHeader->payments->where('status', BookingPayment::STATUS_PENDING)->isNotEmpty()) {
+            return back()->with('member_success', 'This booking cannot be cancelled while a payment is waiting for admin review.');
+        }
 
         $hasUpcomingSlot = $bookingHeader->details->contains(function ($detail) {
             if (! $detail->booking_date) {
@@ -597,10 +667,15 @@ class MemberPortalController extends Controller
                     ->where('payment_type', BookingPayment::TYPE_BALANCE)
                     ->where('status', BookingPayment::STATUS_PENDING)
                     ->isNotEmpty();
+                $hasPendingPayment = $header->payments
+                    ->where('status', BookingPayment::STATUS_PENDING)
+                    ->isNotEmpty();
 
-                if ($hasPendingBalancePayment && $status !== 'cancelled') {
-                    $statusMeta = 'Balance payment submitted and waiting for admin verification';
+                if ($hasPendingPayment && $status !== 'cancelled') {
+                    $statusMeta = 'Payment submitted and waiting for admin verification';
                 }
+
+                $isActiveStatus = in_array($status, ['pending', 'confirmed'], true);
 
                 return [
                     'reference_no' => $header->reference_no,
@@ -620,7 +695,7 @@ class MemberPortalController extends Controller
                     'remaining_balance' => (float) ($header->balance_amount ?? 0),
                     'payment_badge_label' => ((float) ($header->balance_amount ?? 0) <= 0)
                         ? 'Paid'
-                        : ($hasPendingBalancePayment ? 'Payment submitted' : 'With balance'),
+                        : ($hasPendingPayment ? 'Payment submitted' : 'With balance'),
                     'payment_badge_class' => ((float) ($header->balance_amount ?? 0) <= 0)
                         ? 'is-paid'
                         : 'is-balance',
@@ -632,17 +707,18 @@ class MemberPortalController extends Controller
                         'cancelled' => 'is-cancelled',
                         default => 'is-pending',
                     },
-                    'is_upcoming' => $endAt ? $endAt->greaterThanOrEqualTo($now) : false,
+                    'is_upcoming' => $endAt ? $isActiveStatus && $endAt->greaterThanOrEqualTo($now) : false,
                     'can_cancel' => $endAt
-                        ? $endAt->greaterThanOrEqualTo($now) && in_array($status, ['pending', 'confirmed'], true)
+                        ? $endAt->greaterThanOrEqualTo($now) && $isActiveStatus && ! $hasPendingPayment
                         : false,
                     'can_pay_balance' => ((float) ($header->balance_amount ?? 0) > 0)
-                        && ! $hasPendingBalancePayment
-                        && in_array($status, ['pending', 'confirmed'], true),
+                        && ! $hasPendingPayment
+                        && $isActiveStatus,
                     'can_reschedule' => $startAt
                         ? $startAt->greaterThan($now)
                             && $now->lt($startAt->copy()->subHours(24))
-                            && in_array($status, ['pending', 'confirmed'], true)
+                            && $isActiveStatus
+                            && ! $hasPendingPayment
                         : false,
                     'reschedule_url' => route('member.bookings.reschedule', $detail),
                     'balance_payment_url' => route('member.bookings.balance-payment', [
@@ -650,6 +726,7 @@ class MemberPortalController extends Controller
                         'detail' => $detail->id,
                     ]),
                     'has_pending_balance_payment' => $hasPendingBalancePayment,
+                    'has_pending_payment' => $hasPendingPayment,
                     'is_long_stay' => $isLongStay,
                     'wifi_voucher' => $this->wifiVoucherService->payloadForBooking($header),
                 ];
@@ -679,6 +756,13 @@ class MemberPortalController extends Controller
             ->filter(fn (array $booking): bool => $booking['can_pay_balance'])
             ->unique('booking_header_id')
             ->values();
+        $paymentReviewCount = $activeHeaders
+            ->filter(fn (BookingHeader $header): bool => $header->payments
+                ->where('status', BookingPayment::STATUS_PENDING)
+                ->isNotEmpty())
+            ->count();
+        $nextConfirmedBooking = $upcomingBookings
+            ->first(fn (array $booking): bool => $booking['status_label'] === 'Confirmed');
 
         return [
             'navigation' => config('hyve.navigation', []),
@@ -689,10 +773,10 @@ class MemberPortalController extends Controller
             'memberStats' => [
                 'total_bookings' => $bookingHeaders->count(),
                 'total_hours' => (float) $bookingDetails->sum(fn ($detail) => (float) ($detail->duration_hours ?? 0)),
-                'upcoming_slots' => $bookingDetails->filter(fn ($detail) => optional($detail->booking_date)?->isToday() || optional($detail->booking_date)?->isFuture())->count(),
+                'upcoming_slots' => $upcomingBookings->count(),
             ],
             'memberInsights' => [
-                'next_booking' => $upcomingBookings->first(),
+                'next_booking' => $nextConfirmedBooking,
                 'outstanding_balance' => round((float) $activeHeaders->sum(fn (BookingHeader $header) => (float) $header->balance_amount), 2),
                 'pending_approval_count' => $activeHeaders
                     ->filter(fn (BookingHeader $header): bool => strtolower((string) $header->status) === BookingHeader::STATUS_PENDING)
@@ -702,6 +786,7 @@ class MemberPortalController extends Controller
                     ->unique('booking_header_id')
                     ->count(),
                 'payment_action_count' => $paymentActionBookings->count(),
+                'payment_review_count' => $paymentReviewCount,
                 'first_payment_action' => $paymentActionBookings->first(),
             ],
             'memberLiveRooms' => $this->liveRoomAvailability->memberSnapshot(),
@@ -781,7 +866,11 @@ class MemberPortalController extends Controller
     private function memberAnnouncementData(Request $request): array
     {
         if (! Schema::hasTable('member_announcements') || ! Schema::hasTable('member_announcement_reads')) {
-            return ['memberAnnouncements' => collect(), 'memberAnnouncementUnreadCount' => 0];
+            return [
+                'memberAnnouncements' => collect(),
+                'memberBookingNotifications' => collect(),
+                'memberNotificationUnreadCount' => 0,
+            ];
         }
 
         $userId = (int) $request->user()->id;
@@ -806,13 +895,43 @@ class MemberPortalController extends Controller
                 'is_read' => (int) $announcement->member_read_count > 0,
                 'read_url' => route('member.announcements.read', $announcement),
             ]);
+        $bookingNotifications = Schema::hasTable('member_booking_notification_reads')
+            ? BookingActivity::query()
+                ->whereIn('event_key', ['booking_approved', 'booking_line_approved'])
+                ->whereHas('bookingHeader', fn ($query) => $query
+                    ->where('booking_type', BookingHeader::TYPE_MEMBER)
+                    ->where('user_id', $userId))
+                ->withCount(['memberNotificationReads as member_notification_read_count' => fn ($query) => $query->where('user_id', $userId)])
+                ->latest('created_at')
+                ->latest('id')
+                ->limit(20)
+                ->get()
+                ->map(function (BookingActivity $activity): array {
+                    $schedule = collect([
+                        optional($activity->booking_date)->format('F j, Y'),
+                        trim((string) $activity->time_range),
+                    ])->filter()->implode(' · ');
+
+                    return [
+                        'id' => $activity->getKey(),
+                        'title' => 'Booking approved',
+                        'body' => 'Your booking '.$activity->reference_no.' has been approved by HYVE.'.($schedule !== '' ? ' '.$schedule.'.' : ''),
+                        'published_at' => optional($activity->created_at)->format('F j, Y g:i A'),
+                        'is_read' => (int) ($activity->member_notification_read_count ?? 0) > 0,
+                        'read_url' => route('member.booking-notifications.read', $activity),
+                    ];
+                })
+            : collect();
+        $announcementUnreadCount = MemberAnnouncement::query()
+            ->published()
+            ->whereDoesntHave('reads', fn ($query) => $query->where('user_id', $userId))
+            ->count();
 
         return [
             'memberAnnouncements' => $announcements,
-            'memberAnnouncementUnreadCount' => MemberAnnouncement::query()
-                ->published()
-                ->whereDoesntHave('reads', fn ($query) => $query->where('user_id', $userId))
-                ->count(),
+            'memberBookingNotifications' => $bookingNotifications,
+            'memberNotificationUnreadCount' => $announcementUnreadCount
+                + $bookingNotifications->where('is_read', false)->count(),
         ];
     }
 
@@ -1043,6 +1162,13 @@ class MemberPortalController extends Controller
             ->exists();
     }
 
+    private function hasPendingPayment(BookingHeader $bookingHeader): bool
+    {
+        return $bookingHeader->payments()
+            ->where('status', BookingPayment::STATUS_PENDING)
+            ->exists();
+    }
+
     private function memberOwnedBookingDetail(Request $request, BookingDetail $bookingDetail): BookingDetail
     {
         $bookingDetail->loadMissing(['bookingHeader.payments', 'bookingHeader.wifiVoucher', 'hyveRoom', 'space']);
@@ -1063,6 +1189,10 @@ class MemberPortalController extends Controller
         $detailStatus = strtolower((string) ($detail->status ?? BookingDetail::STATUS_PENDING));
 
         if (! in_array($headerStatus, ['pending', 'confirmed'], true) || ! in_array($detailStatus, ['pending', 'confirmed'], true)) {
+            return false;
+        }
+
+        if ($detail->bookingHeader?->payments?->where('status', BookingPayment::STATUS_PENDING)->isNotEmpty()) {
             return false;
         }
 
@@ -1223,9 +1353,16 @@ class MemberPortalController extends Controller
             ? (string) $override->closing_time
             : $defaultClosingTime;
 
+        $start = $this->slotBoundary($bookingDate, $openingTime);
+        $end = $this->slotBoundary($bookingDate, $closingTime);
+
+        if ($end->lte($start)) {
+            $end->addDay();
+        }
+
         return [
-            'start' => $this->slotBoundary($bookingDate, $openingTime),
-            'end' => $this->slotBoundary($bookingDate, $closingTime),
+            'start' => $start,
+            'end' => $end,
             'closed' => false,
         ];
     }

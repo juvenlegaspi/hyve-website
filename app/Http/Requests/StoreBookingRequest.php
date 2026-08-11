@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests;
 
+use App\Models\User;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use App\Models\HyveRoom;
@@ -83,6 +84,16 @@ class StoreBookingRequest extends FormRequest
         $rules = [
             'submission_token' => ['required', 'uuid'],
             'booking_mode' => ['nullable', Rule::in($bookingModes)],
+            'admin_customer_type' => [Rule::prohibitedIf(! $adminWalkIn), 'nullable', Rule::in(['guest', 'member'])],
+            'member_user_id' => [
+                Rule::prohibitedIf(! $adminWalkIn),
+                Rule::requiredIf($adminWalkIn && $this->input('admin_customer_type', 'guest') === 'member'),
+                'nullable',
+                'integer',
+                Rule::exists(User::class, 'id')->where(fn ($query) => $query
+                    ->where('status', 0)
+                    ->whereNotIn('role', User::adminPanelRoles())),
+            ],
             'walk_in_manual_start' => [Rule::prohibitedIf(! $adminWalkIn), 'nullable', 'boolean'],
             'hyve_room_id' => ['required_unless:booking_mode,schedule', 'integer', Rule::exists(HyveRoom::class, 'id')->where(fn ($query) => $query->where('status', 0))],
             'booking_date' => ['required_unless:booking_mode,schedule', 'date', 'after_or_equal:today'],

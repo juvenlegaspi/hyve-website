@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\BookingDetail;
 use App\Models\BookingHeader;
+use App\Models\BookingPayment;
 use App\Models\HyveRoom;
 use App\Models\HyveCalendarEvent;
 use App\Models\Space;
@@ -241,5 +242,129 @@ class MemberNavigationTest extends TestCase
             ->assertSee('data-member-booking-live-sync', false)
             ->assertSee('data-state-url="'.route('member.bookings.state').'"', false)
             ->assertSee('Confirmed');
+    }
+
+    public function test_cancelled_future_booking_is_not_presented_as_an_upcoming_visit(): void
+    {
+        $member = User::factory()->create();
+        $room = HyveRoom::query()->where('room_name', 'Room 1')->firstOrFail();
+        $header = BookingHeader::query()->create([
+            'user_id' => $member->id,
+            'reference_no' => 'HYVE-CANCELLED-FUTURE',
+            'customer_name' => $member->name,
+            'email' => $member->email,
+            'phone' => $member->phone,
+            'booking_type' => BookingHeader::TYPE_MEMBER,
+            'source' => BookingHeader::SOURCE_WEB,
+            'payment_method' => 'gcash',
+            'total_amount' => 319,
+            'downpayment_amount' => 0,
+            'balance_amount' => 319,
+            'status' => 'cancelled',
+        ]);
+
+        BookingDetail::query()->create([
+            'booking_header_id' => $header->id,
+            'space_id' => Space::query()->where('slug', $room->mappedSpaceSlug())->value('id'),
+            'hyve_room_id' => $room->id,
+            'booking_date' => now()->addDays(3)->toDateString(),
+            'start_time' => '08:00',
+            'end_time' => '10:00',
+            'duration_hours' => 2,
+            'guests' => 1,
+            'subtotal' => 319,
+            'status' => 'cancelled',
+        ]);
+
+        $this->actingAs($member)
+            ->get(route('member.dashboard'))
+            ->assertOk()
+            ->assertSee('No visit scheduled')
+            ->assertViewHas('upcomingBookings', fn ($bookings): bool => $bookings->isEmpty())
+            ->assertViewHas('pastBookings', fn ($bookings): bool => $bookings->count() === 1);
+    }
+
+    public function test_pending_payment_blocks_duplicate_payment_cancel_and_reschedule_actions(): void
+    {
+        $member = User::factory()->create();
+        $room = HyveRoom::query()->where('room_name', 'Room 1')->firstOrFail();
+        $header = BookingHeader::query()->create([
+            'user_id' => $member->id,
+            'reference_no' => 'HYVE-PAYMENT-REVIEW',
+            'customer_name' => $member->name,
+            'email' => $member->email,
+            'phone' => $member->phone,
+            'booking_type' => BookingHeader::TYPE_MEMBER,
+            'source' => BookingHeader::SOURCE_WEB,
+            'payment_method' => 'gcash',
+            'total_amount' => 749,
+            'downpayment_amount' => 100,
+            'balance_amount' => 649,
+            'status' => 'confirmed',
+        ]);
+        $detail = BookingDetail::query()->create([
+            'booking_header_id' => $header->id,
+            'space_id' => Space::query()->where('slug', $room->mappedSpaceSlug())->value('id'),
+            'hyve_room_id' => $room->id,
+            'booking_date' => now()->addDays(3)->toDateString(),
+            'start_time' => '08:00',
+            'end_time' => '10:00',
+            'duration_hours' => 2,
+            'guests' => 1,
+            'subtotal' => 749,
+            'status' => 'confirmed',
+        ]);
+        BookingPayment::query()->create([
+            'booking_header_id' => $header->id,
+            'booking_detail_id' => $detail->id,
+            'user_id' => $member->id,
+            'payment_type' => BookingPayment::TYPE_DOWNPAYMENT,
+            'amount' => 100,
+            'payment_method' => 'gcash',
+            'status' => BookingPayment::STATUS_PENDING,
+            'paid_at' => now(),
+        ]);
+
+        $this->actingAs($member)
+            ->get(route('member.dashboard'))
+            ->assertOk()
+            ->assertSee('Payment verification in progress');
+
+        $this->get(route('member.index'))
+            ->assertOk()
+            ->assertSee('data-booking-can-cancel="0"', false)
+            ->assertSee('data-booking-can-pay-balance="0"', false)
+            ->assertSee('data-booking-can-reschedule="0"', false);
+
+        $this->get(route('member.bookings.balance-payment', ['bookingHeader' => $header, 'detail' => $detail]))
+            ->assertRedirect(route('member.index'));
+        $this->get(route('member.bookings.reschedule', $detail))
+            ->assertRedirect(route('member.index'));
+        $this->from(route('member.index'))
+            ->post(route('member.bookings.cancel', $header))
+            ->assertRedirect(route('member.index'));
+
+        $this->assertSame('confirmed', $header->fresh()->status);
+    }
+
+    public function test_admin_cannot_mutate_an_account_through_member_profile_routes(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+
+        $this->actingAs($admin)
+            ->patch(route('member.profile.update'), [
+                'username' => 'changed-admin',
+                'first_name' => 'Changed',
+                'last_name' => 'Admin',
+                'email' => 'changed-admin@example.com',
+                'phone' => '09999999999',
+            ])
+            ->assertForbidden();
+
+        $this->patch(route('member.password.update'), [
+            'current_password' => 'password',
+            'password' => 'new-password',
+            'password_confirmation' => 'new-password',
+        ])->assertForbidden();
     }
 }

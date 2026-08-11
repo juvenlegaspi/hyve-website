@@ -64,15 +64,15 @@
 
                         <label>
                             <span>Current password</span>
-                            <input type="password" name="current_password">
+                            <input type="password" name="current_password" autocomplete="current-password" required>
                         </label>
                         <label>
                             <span>New password</span>
-                            <input type="password" name="password">
+                            <input type="password" name="password" autocomplete="new-password" minlength="8" required>
                         </label>
                         <label>
                             <span>Confirm password</span>
-                            <input type="password" name="password_confirmation">
+                            <input type="password" name="password_confirmation" autocomplete="new-password" minlength="8" required>
                         </label>
 
                         <button type="submit" class="button button--dark button--block">Update password</button>

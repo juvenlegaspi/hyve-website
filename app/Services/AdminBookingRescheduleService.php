@@ -696,7 +696,14 @@ class AdminBookingRescheduleService
             $closing = $override->closing_time ? substr((string) $override->closing_time, 0, 5) : $closing;
         }
 
-        return ['start' => $this->slotBoundary($date, $opening), 'end' => $this->slotBoundary($date, $closing), 'closed' => false];
+        $start = $this->slotBoundary($date, $opening);
+        $end = $this->slotBoundary($date, $closing);
+
+        if ($end->lte($start)) {
+            $end->addDay();
+        }
+
+        return ['start' => $start, 'end' => $end, 'closed' => false];
     }
 
     private function applyDateOverlap($query, string $startDate, string $endDate): void

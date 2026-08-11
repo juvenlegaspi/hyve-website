@@ -806,7 +806,7 @@ const setupMemberAnnouncementNotifications = () => {
 
     const feedUrl = panel?.dataset.feedUrl || notificationLinks[0]?.dataset.feedUrl || '';
     const csrfToken = panel?.dataset.csrfToken || '';
-    const lastAnnouncementKey = 'hyve-member-latest-announcement-id';
+    const lastAnnouncementKey = 'hyve-member-latest-notification-key';
     let initialized = false;
 
     const updateBadges = (count) => {
@@ -827,15 +827,19 @@ const setupMemberAnnouncementNotifications = () => {
             if (!response.ok) return;
             const data = await response.json();
             const unreadTotal = Number(data.unread_total || 0);
-            const latestId = Number(data.latest_announcement?.id || 0);
-            const previousId = Number(window.localStorage.getItem(lastAnnouncementKey) || 0);
+            const latestNotification = data.latest_notification || (data.latest_announcement ? {
+                key: `announcement:${data.latest_announcement.id}`,
+                title: data.latest_announcement.title,
+            } : null);
+            const latestKey = String(latestNotification?.key || '');
+            const previousKey = String(window.localStorage.getItem(lastAnnouncementKey) || '');
             updateBadges(unreadTotal);
 
-            if (initialized && latestId > previousId && 'Notification' in window && window.Notification.permission === 'granted') {
-                const browserNotice = new window.Notification('New HYVE announcement', {
-                    body: data.latest_announcement?.title || 'Open your member dashboard to read the update.',
+            if (initialized && latestKey && latestKey !== previousKey && 'Notification' in window && window.Notification.permission === 'granted') {
+                const browserNotice = new window.Notification('New HYVE notification', {
+                    body: latestNotification?.title || 'Open your member dashboard to read the update.',
                     icon: '/images/logohyve.jpg',
-                    tag: `hyve-member-announcement-${latestId}`,
+                    tag: `hyve-member-notification-${latestKey}`,
                 });
                 browserNotice.onclick = () => {
                     window.focus();
@@ -844,7 +848,7 @@ const setupMemberAnnouncementNotifications = () => {
                 };
             }
 
-            if (latestId > 0) window.localStorage.setItem(lastAnnouncementKey, String(latestId));
+            if (latestKey) window.localStorage.setItem(lastAnnouncementKey, latestKey);
             initialized = true;
         } catch (error) {
             // Keep the previous badge while temporarily offline.
@@ -2397,6 +2401,16 @@ const setupBookingPageV2 = () => {
     const returningCustomerSelected = form.querySelector('[data-returning-customer-selected]');
     const returningCustomerEmpty = form.querySelector('[data-returning-customer-empty]');
     const returningCustomerOptions = Array.from(form.querySelectorAll('[data-returning-customer-option]'));
+    const adminCustomerTypeInput = form.querySelector('[data-admin-customer-type]');
+    const adminCustomerTypeChoices = Array.from(form.querySelectorAll('[data-admin-customer-type-choice]'));
+    const memberUserIdInput = form.querySelector('[data-member-user-id]');
+    const memberCustomerPanel = form.querySelector('[data-member-customer-panel]');
+    const guestCustomerPanel = form.querySelector('[data-guest-customer-panel]');
+    const memberCustomerSearch = form.querySelector('[data-member-customer-search]');
+    const memberCustomerResults = form.querySelector('[data-member-customer-results]');
+    const memberCustomerSelected = form.querySelector('[data-member-customer-selected]');
+    const memberCustomerEmpty = form.querySelector('[data-member-customer-empty]');
+    const memberCustomerOptions = Array.from(form.querySelectorAll('[data-member-customer-option]'));
     const scheduleDateTitle = form.querySelector('[data-schedule-date-title]');
     const schedulePrev = form.querySelector('[data-schedule-prev]');
     const scheduleNext = form.querySelector('[data-schedule-next]');
@@ -2839,6 +2853,96 @@ const setupBookingPageV2 = () => {
         }
 
         returningCustomerResults?.classList.add('hidden');
+    };
+
+    const setGuestFieldsReadOnly = (readOnly) => {
+        [guestFirstName, guestLastName, guestEmail, guestPhone].forEach((input) => {
+            if (input) {
+                input.readOnly = readOnly;
+            }
+        });
+    };
+
+    const applyMemberCustomer = (option) => {
+        if (!option || !memberUserIdInput) {
+            return;
+        }
+
+        const nameParts = String(option.dataset.name || '').trim().split(/\s+/);
+        memberUserIdInput.value = option.dataset.memberId || '';
+
+        if (guestFirstName) guestFirstName.value = nameParts.shift() || '';
+        if (guestLastName) guestLastName.value = nameParts.join(' ');
+        if (guestEmail) guestEmail.value = option.dataset.email || '';
+        if (guestPhone) guestPhone.value = option.dataset.phone || '';
+
+        syncGuestFullName();
+        setGuestFieldsReadOnly(true);
+
+        if (memberCustomerSearch) {
+            memberCustomerSearch.value = option.dataset.name || '';
+        }
+
+        if (memberCustomerSelected) {
+            memberCustomerSelected.textContent = `Linked member: ${option.dataset.name || 'Member'} · ${option.dataset.email || option.dataset.phone || ''}. This booking will appear in their HYVE account.`;
+            memberCustomerSelected.dataset.selectedName = String(option.dataset.name || '').toLowerCase();
+            memberCustomerSelected.classList.remove('hidden');
+        }
+
+        memberCustomerOptions.forEach((item) => item.classList.toggle('is-selected', item === option));
+        memberCustomerResults?.classList.add('hidden');
+    };
+
+    const setAdminCustomerType = (type, clearSelection = false) => {
+        if (!adminCustomerTypeInput) {
+            return;
+        }
+
+        const normalizedType = type === 'member' ? 'member' : 'guest';
+        adminCustomerTypeInput.value = normalizedType;
+        memberCustomerPanel?.classList.toggle('hidden', normalizedType !== 'member');
+        guestCustomerPanel?.classList.toggle('hidden', normalizedType === 'member');
+
+        adminCustomerTypeChoices.forEach((button) => {
+            const active = button.dataset.adminCustomerTypeChoice === normalizedType;
+            button.setAttribute('aria-pressed', active ? 'true' : 'false');
+            button.classList.toggle('border-[#3f7f3e]', active);
+            button.classList.toggle('bg-[#eaf5e3]', active);
+        });
+
+        if (normalizedType === 'guest') {
+            setGuestFieldsReadOnly(false);
+
+            if (clearSelection && memberUserIdInput) {
+                memberUserIdInput.value = '';
+                if (memberCustomerSearch) memberCustomerSearch.value = '';
+                memberCustomerSelected?.classList.add('hidden');
+                memberCustomerOptions.forEach((item) => item.classList.remove('is-selected'));
+                if (guestFirstName) guestFirstName.value = '';
+                if (guestLastName) guestLastName.value = '';
+                if (guestEmail) guestEmail.value = '';
+                if (guestPhone) guestPhone.value = '';
+                syncGuestFullName();
+            }
+        }
+    };
+
+    const filterMemberCustomers = () => {
+        if (!memberCustomerSearch || !memberCustomerResults) {
+            return;
+        }
+
+        const query = String(memberCustomerSearch.value || '').trim().toLowerCase();
+        let visibleCount = 0;
+
+        memberCustomerOptions.forEach((option) => {
+            const matches = query !== '' && option.textContent.toLowerCase().includes(query);
+            option.classList.toggle('hidden', !matches);
+            visibleCount += matches ? 1 : 0;
+        });
+
+        memberCustomerEmpty?.classList.toggle('hidden', visibleCount > 0);
+        memberCustomerResults.classList.toggle('hidden', query === '');
     };
 
     const filterReturningCustomers = () => {
@@ -5207,9 +5311,37 @@ const setupBookingPageV2 = () => {
             returningCustomerSelected.dataset.selectedName = String(option.dataset.name || '').toLowerCase();
         }
     });
+    adminCustomerTypeChoices.forEach((button) => {
+        button.addEventListener('click', () => {
+            setAdminCustomerType(button.dataset.adminCustomerTypeChoice || 'guest', true);
+        });
+    });
+    memberCustomerSearch?.addEventListener('input', () => {
+        const query = String(memberCustomerSearch.value || '').trim().toLowerCase();
+
+        if (memberUserIdInput?.value && query !== String(memberCustomerSelected?.dataset.selectedName || '')) {
+            memberUserIdInput.value = '';
+            memberCustomerSelected?.classList.add('hidden');
+            memberCustomerOptions.forEach((item) => item.classList.remove('is-selected'));
+            setGuestFieldsReadOnly(false);
+        }
+
+        filterMemberCustomers();
+    });
+    memberCustomerResults?.addEventListener('click', (event) => {
+        const option = event.target.closest('[data-member-customer-option]');
+
+        if (option) {
+            applyMemberCustomer(option);
+        }
+    });
     document.addEventListener('click', (event) => {
         if (!returningCustomerResults?.contains(event.target) && event.target !== returningCustomerSearch) {
             returningCustomerResults?.classList.add('hidden');
+        }
+
+        if (!memberCustomerResults?.contains(event.target) && event.target !== memberCustomerSearch) {
+            memberCustomerResults?.classList.add('hidden');
         }
     });
     roomScrollPrev?.addEventListener('click', () => {
@@ -5437,6 +5569,11 @@ const setupBookingPageV2 = () => {
     });
 
     setBookingMode(bookingMode);
+    setAdminCustomerType(adminCustomerTypeInput?.value || 'guest');
+    if (memberUserIdInput?.value) {
+        const selectedMember = memberCustomerOptions.find((option) => option.dataset.memberId === memberUserIdInput.value);
+        if (selectedMember) applyMemberCustomer(selectedMember);
+    }
     syncBookingEndDateForCurrentMode();
     updatePaymentDestination();
     syncGuestFullName();
@@ -5632,6 +5769,104 @@ const setupAgreementModals = () => {
     });
 };
 
+const setupMemberBalancePayment = () => {
+    const form = document.querySelector('[data-member-balance-payment-form]');
+
+    if (!form) {
+        return;
+    }
+
+    const choices = [...form.querySelectorAll('[data-member-payment-choice]')];
+    const destinations = [...document.querySelectorAll('[data-member-payment-destination]')];
+    const scopeChoices = [...form.querySelectorAll('[data-member-payment-scope-choice]')];
+    const amountInput = form.querySelector('[data-member-payment-amount]');
+
+    const selectMethod = (method) => {
+        choices.forEach((choice) => {
+            const radio = choice.querySelector('input[name="payment_method"]');
+            const isSelected = choice.dataset.memberPaymentChoice === method;
+
+            if (radio) {
+                radio.checked = isSelected;
+            }
+
+            choice.classList.toggle('is-active', isSelected);
+        });
+
+        destinations.forEach((destination) => {
+            destination.classList.toggle(
+                'hidden',
+                destination.dataset.memberPaymentDestination !== method,
+            );
+        });
+    };
+
+    choices.forEach((choice) => {
+        const radio = choice.querySelector('input[name="payment_method"]');
+
+        choice.addEventListener('click', (event) => {
+            event.preventDefault();
+            selectMethod(choice.dataset.memberPaymentChoice || '');
+        });
+
+        radio?.addEventListener('change', () => {
+            if (radio.checked) {
+                selectMethod(radio.value);
+            }
+        });
+    });
+
+    const selectScope = (scope, updateAmount = true) => {
+        scopeChoices.forEach((choice) => {
+            const radio = choice.querySelector('input[name="payment_scope"]');
+            const isSelected = choice.dataset.memberPaymentScopeChoice === scope;
+
+            if (radio) {
+                radio.checked = isSelected;
+            }
+
+            choice.classList.toggle('is-active', isSelected);
+        });
+
+        if (!amountInput) {
+            return;
+        }
+
+        amountInput.readOnly = scope === 'all';
+
+        if (!updateAmount) {
+            return;
+        }
+
+        const amount = scope === 'all'
+            ? form.dataset.allPaymentAmount
+            : form.dataset.selectedPaymentAmount;
+
+        amountInput.value = amount || '';
+        amountInput.max = amount || form.dataset.allPaymentAmount || '';
+    };
+
+    scopeChoices.forEach((choice) => {
+        const radio = choice.querySelector('input[name="payment_scope"]');
+
+        choice.addEventListener('click', (event) => {
+            event.preventDefault();
+            selectScope(choice.dataset.memberPaymentScopeChoice || 'single');
+        });
+
+        radio?.addEventListener('change', () => {
+            if (radio.checked) {
+                selectScope(radio.value);
+            }
+        });
+    });
+
+    const selected = form.querySelector('input[name="payment_method"]:checked');
+    selectMethod(selected?.value || 'gcash');
+    const selectedScope = form.querySelector('input[name="payment_scope"]:checked');
+    selectScope(selectedScope?.value || 'single', false);
+};
+
 const setupBookingSubmissionGuards = () => {
     document.querySelectorAll('[data-booking-form]').forEach((form) => {
         const submit = form.querySelector('[data-checkout-submit]');
@@ -5700,6 +5935,13 @@ const setupHyveFaqChat = () => {
     const newConversationButton = chat.querySelector('[data-hyve-support-new]');
     const forgetConversationButton = chat.querySelector('[data-hyve-support-forget]');
     const handoffButton = chat.querySelector('[data-hyve-support-handoff]');
+    const olderButton = chat.querySelector('[data-hyve-support-older]');
+    const customerUnread = chat.querySelector('[data-hyve-support-customer-unread]');
+    const replying = chat.querySelector('[data-hyve-support-replying]');
+    const replyingName = chat.querySelector('[data-hyve-support-replying-name]');
+    const replyingBody = chat.querySelector('[data-hyve-support-replying-body]');
+    const replyCancel = chat.querySelector('[data-hyve-support-reply-cancel]');
+    const emojiButtons = [...chat.querySelectorAll('[data-hyve-support-insert-emoji]')];
     const createUrl = chat.dataset.supportCreateUrl || '';
     const csrfToken = chat.dataset.csrfToken || '';
     const storageKey = 'hyve-support-conversation-token';
@@ -5707,7 +5949,13 @@ const setupHyveFaqChat = () => {
     let pollUrl = '';
     let messageUrl = '';
     let handoffUrl = '';
+    let reactionUrlTemplate = '';
     let lastMessageSignature = '';
+    let replyToMessage = null;
+    let nextBeforeId = null;
+    let historyExhausted = false;
+    let pollTimer = null;
+    const messageStore = new Map();
 
     if (!panel || !toggle || !answer) {
         return;
@@ -5719,9 +5967,38 @@ const setupHyveFaqChat = () => {
 
         if (open) {
             close?.focus();
+            if (conversationToken && supportView && !supportView.hidden) {
+                loadConversation({ markRead: true });
+            }
         } else {
             toggle.focus();
         }
+    };
+
+    const isReadingConversation = () => !panel.hidden
+        && Boolean(supportView && !supportView.hidden)
+        && document.visibilityState === 'visible';
+
+    const updateCustomerUnread = (count) => {
+        const unreadCount = Math.max(0, Number(count || 0));
+        if (!customerUnread) return;
+        customerUnread.textContent = unreadCount > 99 ? '99+' : String(unreadCount);
+        customerUnread.hidden = unreadCount < 1;
+    };
+
+    const clearReplyTarget = () => {
+        replyToMessage = null;
+        if (replying) replying.hidden = true;
+        if (replyingName) replyingName.textContent = '';
+        if (replyingBody) replyingBody.textContent = '';
+    };
+
+    const selectReplyTarget = (message) => {
+        replyToMessage = message;
+        if (replyingName) replyingName.textContent = `Replying to ${message.sender_name || 'message'}`;
+        if (replyingBody) replyingBody.textContent = message.body || '';
+        if (replying) replying.hidden = false;
+        replyForm?.querySelector('textarea[name="message"]')?.focus();
     };
 
     const requestJson = async (url, options = {}) => {
@@ -5738,19 +6015,31 @@ const setupHyveFaqChat = () => {
 
         if (!response.ok) {
             const validationMessage = Object.values(data.errors || {}).flat()[0];
-            throw new Error(validationMessage || data.message || 'Unable to send your message right now.');
+            const requestError = new Error(validationMessage || data.message || 'Unable to send your message right now.');
+            requestError.status = response.status;
+            throw requestError;
         }
 
         return data;
     };
 
-    const renderConversation = (data) => {
+    const renderConversation = (data, { historyPage = false } = {}) => {
         conversationToken = String(data.token || conversationToken);
         pollUrl = String(data.poll_url || pollUrl);
         messageUrl = String(data.message_url || messageUrl);
         handoffUrl = String(data.handoff_url || handoffUrl);
-        const messages = Array.isArray(data.messages) ? data.messages : [];
-        const signature = messages.map((message) => message.id).join(',');
+        reactionUrlTemplate = String(data.reaction_url_template || reactionUrlTemplate);
+        const incomingMessages = Array.isArray(data.messages) ? data.messages : [];
+        incomingMessages.forEach((message) => messageStore.set(Number(message.id), message));
+        const messages = [...messageStore.values()].sort((first, second) => Number(first.id) - Number(second.id));
+        const signature = JSON.stringify(messages.map((message) => [message.id, message.body, message.reactions, message.my_reaction]));
+        const candidateBeforeId = data.has_more ? Number(data.next_before_id || 0) : null;
+        if (historyPage) {
+            nextBeforeId = candidateBeforeId;
+            historyExhausted = !data.has_more;
+        } else if (!historyExhausted && candidateBeforeId && (!nextBeforeId || candidateBeforeId < nextBeforeId)) {
+            nextBeforeId = candidateBeforeId;
+        }
 
         if (conversationToken) {
             try {
@@ -5765,8 +6054,12 @@ const setupHyveFaqChat = () => {
         if (statusLabel) statusLabel.textContent = data.status || 'open';
         if (modeLabel) modeLabel.textContent = data.mode === 'front_desk' ? 'HYVE Front Desk' : 'HYVE Assistant';
         if (handoffButton) handoffButton.hidden = data.mode === 'front_desk';
+        if (olderButton) olderButton.hidden = !nextBeforeId;
+        updateCustomerUnread(isReadingConversation() ? 0 : data.unread_count);
 
         if (messagesWrap && signature !== lastMessageSignature) {
+            const previousScrollHeight = messagesWrap.scrollHeight;
+            const wasNearBottom = messagesWrap.scrollHeight - messagesWrap.scrollTop - messagesWrap.clientHeight < 70;
             lastMessageSignature = signature;
             messagesWrap.replaceChildren();
             messages.forEach((message) => {
@@ -5776,10 +6069,26 @@ const setupHyveFaqChat = () => {
                 const body = document.createElement('div');
                 const time = document.createElement('time');
                 bubble.className = `hyve-support-chat__bubble${sender === 'customer' ? ' is-customer' : ''}`;
+                bubble.dataset.messageId = String(message.id);
                 senderName.textContent = message.sender_name || (sender === 'admin' ? 'HYVE Front Desk' : (sender === 'assistant' ? 'HYVE Assistant' : 'You'));
                 body.textContent = message.body || '';
                 time.textContent = message.created_at || '';
-                bubble.append(senderName, body);
+                bubble.append(senderName);
+                if (message.reply_to) {
+                    const quoted = document.createElement('button');
+                    const quotedName = document.createElement('strong');
+                    const quotedBody = document.createElement('span');
+                    quoted.type = 'button';
+                    quoted.className = 'hyve-support-chat__quoted';
+                    quotedName.textContent = message.reply_to.sender_name || 'Message';
+                    quotedBody.textContent = message.reply_to.body || '';
+                    quoted.append(quotedName, quotedBody);
+                    quoted.addEventListener('click', () => {
+                        messagesWrap.querySelector(`[data-message-id="${Number(message.reply_to.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    });
+                    bubble.append(quoted);
+                }
+                bubble.append(body);
                 if (message.action?.url) {
                     const action = document.createElement('a');
                     action.className = 'hyve-support-chat__action';
@@ -5787,21 +6096,74 @@ const setupHyveFaqChat = () => {
                     action.textContent = message.action.label || 'Open';
                     bubble.append(action);
                 }
-                bubble.append(time);
+                const tools = document.createElement('div');
+                const replyButton = document.createElement('button');
+                const reactionPicker = document.createElement('div');
+                tools.className = 'hyve-support-chat__message-tools';
+                replyButton.type = 'button';
+                replyButton.textContent = 'Reply';
+                replyButton.addEventListener('click', () => selectReplyTarget(message));
+                reactionPicker.className = 'hyve-support-chat__reaction-picker';
+                ['\u{1F44D}', '\u{2764}\u{FE0F}', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F64F}'].forEach((emoji) => {
+                    const reactionButton = document.createElement('button');
+                    reactionButton.type = 'button';
+                    reactionButton.textContent = emoji;
+                    reactionButton.classList.toggle('is-active', message.my_reaction === emoji);
+                    reactionButton.addEventListener('click', async () => {
+                        if (!reactionUrlTemplate) return;
+                        try {
+                            renderConversation(await requestJson(reactionUrlTemplate.replace('__MESSAGE__', String(message.id)), {
+                                method: 'POST',
+                                body: JSON.stringify({ emoji }),
+                            }));
+                        } catch (error) {
+                            if (replyFeedback) replyFeedback.textContent = error.message;
+                        }
+                    });
+                    reactionPicker.append(reactionButton);
+                });
+                tools.append(replyButton, reactionPicker);
+                bubble.append(time, tools);
+                if (Array.isArray(message.reactions) && message.reactions.length) {
+                    const reactions = document.createElement('div');
+                    reactions.className = 'hyve-support-chat__reactions';
+                    message.reactions.forEach((reaction) => {
+                        const badge = document.createElement('button');
+                        badge.type = 'button';
+                        badge.textContent = `${reaction.emoji} ${reaction.count}`;
+                        badge.classList.toggle('is-active', message.my_reaction === reaction.emoji);
+                        badge.addEventListener('click', async () => {
+                            if (!reactionUrlTemplate) return;
+                            renderConversation(await requestJson(reactionUrlTemplate.replace('__MESSAGE__', String(message.id)), {
+                                method: 'POST',
+                                body: JSON.stringify({ emoji: reaction.emoji }),
+                            }));
+                        });
+                        reactions.append(badge);
+                    });
+                    bubble.append(reactions);
+                }
                 messagesWrap.append(bubble);
             });
-            messagesWrap.scrollTop = messagesWrap.scrollHeight;
+            if (historyPage) {
+                messagesWrap.scrollTop = messagesWrap.scrollHeight - previousScrollHeight;
+            } else if (wasNearBottom || previousScrollHeight === 0) {
+                messagesWrap.scrollTop = messagesWrap.scrollHeight;
+            }
         }
     };
 
-    const loadConversation = async ({ clearInvalid = false } = {}) => {
+    const loadConversation = async ({ clearInvalid = false, markRead = false, beforeId = null } = {}) => {
         if (!conversationToken) return;
 
         try {
-            const url = pollUrl || `/support/conversations/${encodeURIComponent(conversationToken)}`;
-            renderConversation(await requestJson(url, { method: 'GET' }));
+            const baseUrl = pollUrl || `/support/conversations/${encodeURIComponent(conversationToken)}`;
+            const url = new URL(baseUrl, window.location.origin);
+            if (markRead) url.searchParams.set('mark_read', '1');
+            if (beforeId) url.searchParams.set('before_id', String(beforeId));
+            renderConversation(await requestJson(url.toString(), { method: 'GET' }), { historyPage: Boolean(beforeId) });
         } catch (error) {
-            if (clearInvalid) {
+            if (clearInvalid || error.status === 404) {
                 conversationToken = '';
                 window.localStorage.removeItem(storageKey);
                 startForm?.removeAttribute('hidden');
@@ -5813,7 +6175,7 @@ const setupHyveFaqChat = () => {
     const showSupport = () => {
         if (faqView) faqView.hidden = true;
         if (supportView) supportView.hidden = false;
-        if (conversationToken) loadConversation();
+        if (conversationToken) loadConversation({ markRead: true });
     };
 
     const showFaq = () => {
@@ -5826,7 +6188,13 @@ const setupHyveFaqChat = () => {
         pollUrl = '';
         messageUrl = '';
         handoffUrl = '';
+        reactionUrlTemplate = '';
         lastMessageSignature = '';
+        nextBeforeId = null;
+        historyExhausted = false;
+        messageStore.clear();
+        clearReplyTarget();
+        updateCustomerUnread(0);
         try {
             window.localStorage.removeItem(storageKey);
         } catch (error) {
@@ -5848,6 +6216,22 @@ const setupHyveFaqChat = () => {
     close?.addEventListener('click', () => setOpen(false));
     supportOpen?.addEventListener('click', showSupport);
     supportBack?.addEventListener('click', showFaq);
+    olderButton?.addEventListener('click', async () => {
+        if (!nextBeforeId) return;
+        olderButton.disabled = true;
+        await loadConversation({ beforeId: nextBeforeId });
+        olderButton.disabled = false;
+    });
+    replyCancel?.addEventListener('click', clearReplyTarget);
+    emojiButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+            const input = replyForm?.querySelector('textarea[name="message"]');
+            if (!input) return;
+            input.value += button.dataset.hyveSupportInsertEmoji || '';
+            input.focus();
+            button.closest('details')?.removeAttribute('open');
+        });
+    });
     newConversationButton?.addEventListener('click', () => {
         if (window.confirm('Start a new conversation? Your previous conversation will remain in the HYVE Front Desk inbox, but it will no longer be shown in this browser.')) {
             resetLocalConversation();
@@ -5931,13 +6315,21 @@ const setupHyveFaqChat = () => {
         try {
             renderConversation(await requestJson(messageUrl, {
                 method: 'POST',
-                body: JSON.stringify({ message }),
+                body: JSON.stringify({ message, reply_to_message_id: replyToMessage?.id || null }),
             }));
             if (input) input.value = '';
+            clearReplyTarget();
         } catch (error) {
             if (replyFeedback) replyFeedback.textContent = error.message;
         } finally {
             if (submit) submit.disabled = false;
+        }
+    });
+
+    replyForm?.querySelector('textarea[name="message"]')?.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+            event.preventDefault();
+            replyForm.requestSubmit();
         }
     });
 
@@ -5948,9 +6340,23 @@ const setupHyveFaqChat = () => {
     }
 
     if (conversationToken) {
-        loadConversation({ clearInvalid: true });
+        loadConversation({ clearInvalid: true, markRead: false });
     }
-    window.setInterval(() => loadConversation(), 5000);
+    const schedulePoll = () => {
+        window.clearTimeout(pollTimer);
+        const delay = document.visibilityState !== 'visible' ? 60000 : (isReadingConversation() ? 5000 : 15000);
+        pollTimer = window.setTimeout(async () => {
+            await loadConversation({ markRead: isReadingConversation() });
+            schedulePoll();
+        }, delay);
+    };
+    schedulePoll();
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && conversationToken) {
+            loadConversation({ markRead: isReadingConversation() });
+        }
+        schedulePoll();
+    });
 
     document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape' && !panel.hidden) {
@@ -5984,6 +6390,11 @@ const setupAdminSupportMessages = () => {
     const sendBookingButton = root.querySelector('[data-admin-support-send-booking]');
     const notificationButton = root.querySelector('[data-admin-support-enable-notifications]');
     const unread = root.querySelector('[data-admin-support-unread]');
+    const replying = root.querySelector('[data-admin-support-replying]');
+    const replyingName = root.querySelector('[data-admin-support-replying-name]');
+    const replyingBody = root.querySelector('[data-admin-support-replying-body]');
+    const replyCancel = root.querySelector('[data-admin-support-reply-cancel]');
+    const emojiButtons = [...root.querySelectorAll('[data-admin-support-insert-emoji]')];
     const feedUrl = root.dataset.feedUrl || '';
     const csrfToken = root.dataset.csrfToken || '';
     let selectedId = null;
@@ -5991,6 +6402,22 @@ const setupAdminSupportMessages = () => {
     let lastThreadSignature = '';
     let loading = false;
     let searchTimer = null;
+    let replyToMessage = null;
+
+    const clearReplyTarget = () => {
+        replyToMessage = null;
+        replying?.classList.add('hidden');
+        replying?.classList.remove('flex');
+    };
+
+    const selectReplyTarget = (message) => {
+        replyToMessage = message;
+        if (replyingName) replyingName.textContent = `Replying to ${message.sender_name || 'message'}`;
+        if (replyingBody) replyingBody.textContent = message.body || '';
+        replying?.classList.remove('hidden');
+        replying?.classList.add('flex');
+        replyForm?.querySelector('textarea[name="message"]')?.focus();
+    };
 
     const requestJson = async (url, options = {}) => {
         const response = await fetch(url, {
@@ -6066,6 +6493,7 @@ const setupAdminSupportMessages = () => {
     };
 
     const renderThread = (conversation) => {
+        const previousConversationId = selectedConversation?.id;
         selectedConversation = conversation;
         if (!conversation) {
             empty?.classList.remove('hidden');
@@ -6075,6 +6503,7 @@ const setupAdminSupportMessages = () => {
         }
 
         selectedId = Number(conversation.id);
+        if (Number(previousConversationId) !== Number(conversation.id)) clearReplyTarget();
         empty?.classList.add('hidden');
         active?.classList.remove('hidden');
         active?.classList.add('flex');
@@ -6097,7 +6526,7 @@ const setupAdminSupportMessages = () => {
         }
 
         const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
-        const signature = messages.map((message) => message.id).join(',');
+        const signature = JSON.stringify(messages.map((message) => [message.id, message.body, message.reactions, message.my_reaction, message.is_read]));
         if (!messagesWrap || signature === lastThreadSignature) return;
         lastThreadSignature = signature;
         messagesWrap.replaceChildren();
@@ -6109,12 +6538,30 @@ const setupAdminSupportMessages = () => {
             const isAdmin = message.sender === 'admin';
             const isAssistant = message.sender === 'assistant';
             article.className = `max-w-[82%] rounded-[1rem] px-3.5 py-2.5 text-[0.75rem] leading-relaxed shadow-sm ${isAdmin ? 'ml-auto rounded-br-[0.25rem] bg-[#34753d] text-white' : (isAssistant ? 'mr-auto rounded-bl-[0.25rem] border border-[#e5dcc9] bg-[#fffaf0] text-[#5d4a28]' : 'mr-auto rounded-bl-[0.25rem] border border-[#e0e7dc] bg-white text-[#284138]')}`;
+            article.dataset.messageId = String(message.id);
             sender.className = 'mb-0.5 block text-[0.62rem] font-bold opacity-75';
             sender.textContent = message.sender_name || (isAdmin ? 'HYVE Front Desk' : conversation.customer_name);
             body.textContent = message.body || '';
             time.className = 'mt-1 block text-[0.56rem] opacity-60';
             time.textContent = `${message.created_at || ''}${isAdmin ? ` · ${message.is_read ? 'Read' : 'Sent'}` : ''}`;
-            article.append(sender, body);
+            article.append(sender);
+            if (message.reply_to) {
+                const quoted = document.createElement('button');
+                const quotedName = document.createElement('strong');
+                const quotedBody = document.createElement('span');
+                quoted.type = 'button';
+                quoted.className = 'mb-2 block w-full rounded-lg border-l-4 border-current bg-white/30 px-2.5 py-2 text-left';
+                quotedName.className = 'block text-[0.59rem] font-bold opacity-80';
+                quotedBody.className = 'block truncate text-[0.62rem] opacity-70';
+                quotedName.textContent = message.reply_to.sender_name || 'Message';
+                quotedBody.textContent = message.reply_to.body || '';
+                quoted.append(quotedName, quotedBody);
+                quoted.addEventListener('click', () => {
+                    messagesWrap.querySelector(`[data-message-id="${Number(message.reply_to.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                });
+                article.append(quoted);
+            }
+            article.append(body);
             if (message.action?.url) {
                 const action = document.createElement('a');
                 action.href = message.action.url;
@@ -6124,7 +6571,53 @@ const setupAdminSupportMessages = () => {
                 action.textContent = message.action.label || 'Open';
                 article.append(action);
             }
-            article.append(time);
+            const tools = document.createElement('div');
+            const replyButton = document.createElement('button');
+            const reactionPicker = document.createElement('div');
+            tools.className = 'mt-2 flex flex-wrap items-center gap-1';
+            replyButton.type = 'button';
+            replyButton.className = `rounded-full px-2 py-0.5 text-[0.56rem] font-bold ${isAdmin ? 'bg-white/20 text-white' : 'bg-[#edf3e8] text-[#486052]'}`;
+            replyButton.textContent = 'Reply';
+            replyButton.addEventListener('click', () => selectReplyTarget(message));
+            reactionPicker.className = 'flex flex-wrap gap-0.5';
+            ['\u{1F44D}', '\u{2764}\u{FE0F}', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F64F}'].forEach((emoji) => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = `rounded-full px-1 py-0.5 text-[0.66rem] ${message.my_reaction === emoji ? 'bg-[#f1d49a] ring-2 ring-[#d8ac59]' : (isAdmin ? 'bg-white/15' : 'bg-[#edf3e8]')}`;
+                button.textContent = emoji;
+                button.addEventListener('click', async () => {
+                    if (!message.reaction_url) return;
+                    try {
+                        renderThread(await requestJson(message.reaction_url, {
+                            method: 'POST',
+                            body: JSON.stringify({ emoji }),
+                        }));
+                    } catch (error) {
+                        if (feedback) feedback.textContent = error.message;
+                    }
+                });
+                reactionPicker.append(button);
+            });
+            tools.append(replyButton, reactionPicker);
+            article.append(time, tools);
+            if (Array.isArray(message.reactions) && message.reactions.length) {
+                const reactions = document.createElement('div');
+                reactions.className = 'mt-1.5 flex flex-wrap gap-1';
+                message.reactions.forEach((reaction) => {
+                    const badge = document.createElement('button');
+                    badge.type = 'button';
+                    badge.className = `rounded-full border px-2 py-0.5 text-[0.58rem] ${message.my_reaction === reaction.emoji ? 'border-[#d8ac59] bg-[#fff1cc] text-[#6c5421]' : (isAdmin ? 'border-white/25 bg-white/15 text-white' : 'border-[#dce5d7] bg-white text-[#486052]')}`;
+                    badge.textContent = `${reaction.emoji} ${reaction.count}`;
+                    badge.addEventListener('click', async () => {
+                        renderThread(await requestJson(message.reaction_url, {
+                            method: 'POST',
+                            body: JSON.stringify({ emoji: reaction.emoji }),
+                        }));
+                    });
+                    reactions.append(badge);
+                });
+                article.append(reactions);
+            }
             messagesWrap.append(article);
         });
         messagesWrap.scrollTop = messagesWrap.scrollHeight;
@@ -6139,6 +6632,7 @@ const setupAdminSupportMessages = () => {
             if (String(searchInput?.value || '').trim()) params.set('search', String(searchInput.value).trim());
             if (statusFilter?.value && statusFilter.value !== 'all') params.set('status', statusFilter.value);
             if (unreadFilter?.checked) params.set('unread', '1');
+            if (document.visibilityState === 'visible') params.set('mark_read', '1');
             const data = await requestJson(`${feedUrl}${params.size ? `?${params.toString()}` : ''}`, { method: 'GET' });
             const conversations = Array.isArray(data.conversations) ? data.conversations : [];
             if (!selectedId && data.selected) selectedId = Number(data.selected.id);
@@ -6161,9 +6655,10 @@ const setupAdminSupportMessages = () => {
         try {
             renderThread(await requestJson(selectedConversation.reply_url, {
                 method: 'POST',
-                body: JSON.stringify({ message, action }),
+                body: JSON.stringify({ message, action, reply_to_message_id: replyToMessage?.id || null }),
             }));
             if (input) input.value = '';
+            clearReplyTarget();
             if (feedback) feedback.textContent = 'Reply sent. The customer will receive it in the chat widget.';
             await loadFeed();
         } catch (error) {
@@ -6177,6 +6672,23 @@ const setupAdminSupportMessages = () => {
         event.preventDefault();
         const input = replyForm.querySelector('textarea[name="message"]');
         await sendAdminReply(String(input?.value || '').trim());
+    });
+
+    replyForm?.querySelector('textarea[name="message"]')?.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+            event.preventDefault();
+            replyForm.requestSubmit();
+        }
+    });
+    replyCancel?.addEventListener('click', clearReplyTarget);
+    emojiButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+            const input = replyForm?.querySelector('textarea[name="message"]');
+            if (!input) return;
+            input.value += button.dataset.adminSupportInsertEmoji || '';
+            input.focus();
+            button.closest('details')?.removeAttribute('open');
+        });
     });
 
     quickReplies.forEach((button) => {
@@ -6431,6 +6943,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupMemberLiveRooms();
     setupMemberAnnouncementNotifications();
     setupMemberBookingModal();
+    setupMemberBalancePayment();
     setupAgreementModals();
     setupSpacesBrowser();
     setupReveal();

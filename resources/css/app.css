@@ -6336,10 +6336,143 @@
 
     .hyve-support-chat__reply {
         display: grid;
-        grid-template-columns: 1fr auto;
+        gap: 0.4rem;
+    }
+
+    .hyve-support-chat__composer {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
         align-items: end;
         gap: 0.4rem;
     }
+
+    .hyve-support-chat__replying {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        border-left: 3px solid #397a40;
+        border-radius: 0.55rem;
+        background: #f1f6ec;
+        color: #52665a;
+        padding: 0.42rem 0.55rem;
+    }
+
+    .hyve-support-chat__replying[hidden] { display: none; }
+    .hyve-support-chat__replying strong,
+    .hyve-support-chat__replying small { display: block; }
+    .hyve-support-chat__replying small {
+        max-width: 15rem;
+        overflow: hidden;
+        color: #78847b;
+        font-size: 0.57rem;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .hyve-support-chat__replying > button,
+    .hyve-support-chat__emoji-picker summary {
+        display: grid;
+        width: 2.25rem;
+        height: 2.25rem;
+        cursor: pointer;
+        place-items: center;
+        border: 1px solid #d7e1d2;
+        border-radius: 0.7rem;
+        background: #fff;
+        color: #456054;
+        padding: 0;
+    }
+
+    .hyve-support-chat__emoji-picker { position: relative; }
+    .hyve-support-chat__emoji-picker summary { list-style: none; font-size: 1.1rem; }
+    .hyve-support-chat__emoji-picker summary::-webkit-details-marker { display: none; }
+    .hyve-support-chat__emoji-picker > div {
+        position: absolute;
+        z-index: 4;
+        bottom: 2.65rem;
+        left: 0;
+        display: grid;
+        grid-template-columns: repeat(4, 2rem);
+        gap: 0.2rem;
+        border: 1px solid #dce5d7;
+        border-radius: 0.8rem;
+        background: #fff;
+        box-shadow: 0 0.7rem 2rem rgba(17, 52, 44, 0.18);
+        padding: 0.4rem;
+    }
+
+    .hyve-support-chat__emoji-picker > div button {
+        min-height: 2rem;
+        background: transparent;
+        color: inherit;
+        padding: 0;
+        font-size: 1rem;
+    }
+
+    .hyve-support-chat__older {
+        justify-self: center;
+        cursor: pointer;
+        border: 0;
+        background: transparent;
+        color: #397441;
+        font-size: 0.6rem;
+        font-weight: 750;
+        text-decoration: underline;
+    }
+
+    .hyve-support-chat__older[hidden] { display: none; }
+
+    .hyve-support-chat__quoted {
+        display: block;
+        width: 100%;
+        margin: 0.25rem 0 0.4rem;
+        cursor: pointer;
+        border: 0;
+        border-left: 3px solid currentColor;
+        border-radius: 0.35rem;
+        background: rgba(255, 255, 255, 0.42);
+        color: inherit;
+        padding: 0.35rem 0.45rem;
+        text-align: left;
+    }
+
+    .hyve-support-chat__quoted span {
+        display: block;
+        overflow: hidden;
+        font-size: 0.58rem;
+        opacity: 0.78;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .hyve-support-chat__message-tools,
+    .hyve-support-chat__reaction-picker,
+    .hyve-support-chat__reactions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.18rem;
+    }
+
+    .hyve-support-chat__message-tools { margin-top: 0.3rem; }
+    .hyve-support-chat__message-tools button,
+    .hyve-support-chat__reactions button {
+        min-height: 1.45rem;
+        cursor: pointer;
+        border: 1px solid rgba(76, 111, 88, 0.18);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.72);
+        color: #42604f;
+        padding: 0.1rem 0.35rem;
+        font-size: 0.56rem;
+    }
+
+    .hyve-support-chat__reaction-picker button { opacity: 0.7; }
+    .hyve-support-chat__reaction-picker button:hover,
+    .hyve-support-chat__reaction-picker button.is-active,
+    .hyve-support-chat__reactions button.is-active { opacity: 1; outline: 2px solid #a9c78f; }
+    .hyve-support-chat__reactions { margin-top: 0.3rem; }
 
     .hyve-support-chat__controls {
         display: flex;
@@ -6386,6 +6519,7 @@
     }
 
     .hyve-faq-chat__launcher {
+        position: relative;
         display: inline-flex;
         min-height: 3.2rem;
         cursor: pointer;
@@ -6399,6 +6533,82 @@
         padding: 0.72rem 1rem;
         font-size: 0.78rem;
         font-weight: 750;
+    }
+
+    .hyve-faq-chat__unread {
+        position: absolute;
+        top: -0.35rem;
+        right: -0.2rem;
+        display: grid;
+        min-width: 1.25rem;
+        height: 1.25rem;
+        place-items: center;
+        border: 2px solid #fff;
+        border-radius: 999px;
+        background: #d83b32;
+        color: #fff;
+        padding: 0 0.25rem;
+        font-size: 0.58rem;
+    }
+
+    .hyve-faq-chat__unread[hidden] { display: none; }
+
+    .admin-support-emoji-picker {
+        position: relative;
+        flex: 0 0 auto;
+    }
+
+    .admin-support-emoji-picker > summary {
+        display: grid;
+        width: 3rem;
+        min-height: 3rem;
+        cursor: pointer;
+        place-items: center;
+        border: 1px solid #d8e1d3;
+        border-radius: 0.9rem;
+        background: #fff;
+        color: #345648;
+        font-size: 1.15rem;
+        list-style: none;
+    }
+
+    .admin-support-emoji-picker > summary::-webkit-details-marker { display: none; }
+
+    .admin-support-emoji-picker__menu {
+        position: absolute;
+        z-index: 30;
+        bottom: calc(100% + 0.55rem);
+        left: 0;
+        display: grid;
+        width: 10.5rem;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.3rem;
+        border: 1px solid #dfe7d8;
+        border-radius: 0.9rem;
+        background: #fff;
+        box-shadow: 0 0.8rem 2.2rem rgba(17, 52, 44, 0.2);
+        padding: 0.55rem;
+    }
+
+    .admin-support-emoji-picker__menu button {
+        display: grid;
+        width: 2rem;
+        height: 2rem;
+        cursor: pointer;
+        place-items: center;
+        border: 0;
+        border-radius: 0.55rem;
+        background: transparent;
+        padding: 0;
+        font-family: "Segoe UI Emoji", "Apple Color Emoji", sans-serif;
+        font-size: 1.1rem;
+        line-height: 1;
+    }
+
+    .admin-support-emoji-picker__menu button:hover,
+    .admin-support-emoji-picker__menu button:focus-visible {
+        background: #f1f6ec;
+        outline: none;
     }
 
     .hyve-faq-chat__launcher svg {

@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\BookingDetail;
 use App\Models\BookingHeader;
+use App\Models\BookingPayment;
 use App\Models\HyveRoom;
 use App\Models\Space;
 use App\Models\User;
@@ -170,6 +171,100 @@ class BookingSubmissionTest extends TestCase
         $this->assertDatabaseMissing('booking_payments', [
             'booking_header_id' => $header->getKey(),
         ]);
+    }
+
+    public function test_admin_can_link_a_new_booking_to_an_existing_member_account(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 6, 9, 7, 0));
+
+        try {
+            $admin = User::factory()->create(['role' => User::ROLE_ADMIN, 'status' => 0]);
+            $member = User::factory()->create([
+                'role' => User::ROLE_MEMBER,
+                'status' => 0,
+                'first_name' => 'Juven',
+                'last_name' => 'Legaspi',
+                'email' => 'juven.member@example.com',
+                'number' => '09171234567',
+            ]);
+            $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+
+            $this->actingAs($admin)
+                ->get(route('admin.bookings.create'))
+                ->assertOk()
+                ->assertSee('Existing Member')
+                ->assertSee('Juven Legaspi')
+                ->assertSee('juven.member@example.com');
+
+            $this->actingAs($admin)
+                ->post(route('admin.bookings.store'), [
+                    'booking_mode' => 'room',
+                    'admin_customer_type' => 'member',
+                    'member_user_id' => $member->id,
+                    'full_name' => 'Tampered Name',
+                    'email' => 'tampered@example.com',
+                    'phone' => '09999999999',
+                    'hyve_room_id' => $room->id,
+                    'booking_date' => '2026-06-10',
+                    'start_time' => '08:00',
+                    'end_time' => '10:00',
+                    'guests' => 1,
+                    'downpayment_amount' => 0,
+                    'payment_method' => 'pay_later',
+                ])
+                ->assertRedirect(route('admin.bookings.index'))
+                ->assertSessionHas('admin_success');
+
+            $header = BookingHeader::query()->where('user_id', $member->id)->firstOrFail();
+
+            $this->assertSame(BookingHeader::SOURCE_ADMIN, $header->source);
+            $this->assertSame(BookingHeader::TYPE_MEMBER, $header->booking_type);
+            $this->assertSame('Juven Legaspi', $header->customer_name);
+            $this->assertSame('juven.member@example.com', $header->email);
+            $this->assertSame('09171234567', $header->phone);
+
+            $this->actingAs($member)
+                ->get(route('member.index'))
+                ->assertOk()
+                ->assertSee($header->reference_no);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_admin_cannot_link_a_booking_to_an_admin_account(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 6, 9, 7, 0));
+
+        try {
+            $admin = User::factory()->create(['role' => User::ROLE_ADMIN, 'status' => 0]);
+            $otherAdmin = User::factory()->create(['role' => User::ROLE_FRONT_DESK, 'status' => 0]);
+            $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+
+            $this->actingAs($admin)
+                ->post(route('admin.bookings.store'), [
+                    'booking_mode' => 'room',
+                    'admin_customer_type' => 'member',
+                    'member_user_id' => $otherAdmin->id,
+                    'full_name' => 'Invalid Member',
+                    'email' => 'invalid-member@example.com',
+                    'phone' => '09171234567',
+                    'hyve_room_id' => $room->id,
+                    'booking_date' => '2026-06-10',
+                    'start_time' => '08:00',
+                    'end_time' => '10:00',
+                    'guests' => 1,
+                    'downpayment_amount' => 0,
+                    'payment_method' => 'pay_later',
+                ])
+                ->assertSessionHasErrors('member_user_id');
+
+            $this->assertDatabaseMissing('booking_headers', [
+                'email' => 'invalid-member@example.com',
+            ]);
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     public function test_online_booking_still_rejects_a_zero_downpayment(): void
@@ -1374,6 +1469,56 @@ class BookingSubmissionTest extends TestCase
         ]);
     }
 
+    public function test_room_layout_keeps_common_area_available_when_only_the_representative_table_is_booked(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 6, 9, 8, 0));
+
+        try {
+            $tables = HyveRoom::query()
+                ->active()
+                ->where('room_name', 'like', 'Table %')
+                ->orderBy('id')
+                ->get();
+
+            $this->assertGreaterThan(1, $tables->count());
+
+            $header = BookingHeader::query()->create([
+                'reference_no' => 'HYVE-LAYOUT-COMMON-001',
+                'customer_name' => 'Common Area Layout Client',
+                'email' => 'common-layout@example.com',
+                'phone' => '+639181112226',
+                'booking_type' => BookingHeader::TYPE_GUEST,
+                'source' => BookingHeader::SOURCE_WEB,
+                'status' => BookingHeader::STATUS_PENDING,
+            ]);
+
+            BookingDetail::query()->create([
+                'booking_header_id' => $header->id,
+                'space_id' => Space::query()->where('slug', 'common-area')->value('id'),
+                'hyve_room_id' => $tables->first()->id,
+                'booking_date' => '2026-06-10',
+                'start_time' => '08:00',
+                'end_time' => '10:00',
+                'guests' => 1,
+                'status' => BookingDetail::STATUS_PENDING,
+            ]);
+
+            $response = $this->getJson(route('bookings.room-layout', [
+                'booking_date' => '2026-06-10',
+            ]));
+
+            $response->assertOk();
+            $commonArea = collect($response->json('rooms'))->firstWhere('room_name', 'Common Area');
+
+            $this->assertNotNull($commonArea);
+            $this->assertSame('available', $commonArea['status']);
+            $this->assertContains('08:00', collect($commonArea['available_slots'])->pluck('value')->all());
+            $this->assertNotContains('08:00', collect($commonArea['booked_slots'])->pluck('value')->all());
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
     public function test_member_can_open_the_balance_payment_page_for_their_booking(): void
     {
         $user = User::factory()->create();
@@ -1414,7 +1559,7 @@ class BookingSubmissionTest extends TestCase
             ->assertOk()
             ->assertSee('Pay Remaining Balance')
             ->assertSee('Pay selected booking only')
-            ->assertSee('Pay all remaining');
+            ->assertSee('Pay all my outstanding bookings');
     }
 
     public function test_member_can_submit_a_remaining_balance_payment(): void
@@ -1454,10 +1599,39 @@ class BookingSubmissionTest extends TestCase
             'status' => BookingDetail::STATUS_PENDING,
         ]);
 
+        $otherHeader = BookingHeader::query()->create([
+            'user_id' => $user->id,
+            'reference_no' => 'HYVE-BAL-000002-B',
+            'customer_name' => $user->name,
+            'email' => $user->email,
+            'phone' => $user->phone,
+            'booking_type' => BookingHeader::TYPE_MEMBER,
+            'source' => BookingHeader::SOURCE_WEB,
+            'payment_method' => 'gcash',
+            'payment_status' => 'partially_paid',
+            'total_amount' => 300,
+            'downpayment_amount' => 100,
+            'balance_amount' => 200,
+            'status' => 'confirmed',
+        ]);
+
+        BookingDetail::query()->create([
+            'booking_header_id' => $otherHeader->id,
+            'space_id' => $spaceId,
+            'hyve_room_id' => $room->id,
+            'booking_date' => now()->addDays(2)->toDateString(),
+            'start_time' => '10:00',
+            'end_time' => '12:00',
+            'guests' => 2,
+            'subtotal' => 300,
+            'status' => 'confirmed',
+        ]);
+
         $response = $this->actingAs($user)
             ->post(route('member.bookings.balance-payment.store', $header), [
-                'payment_scope' => 'single',
+                'payment_scope' => 'all',
                 'detail_id' => $detail->id,
+                'payment_amount' => 100,
                 'payment_method' => 'bank_transfer',
                 'rules_agreement' => '1',
                 'payment_proof' => UploadedFile::fake()->create('balance-proof.png', 120, 'image/png'),
@@ -1468,9 +1642,17 @@ class BookingSubmissionTest extends TestCase
         $response->assertSessionHas('member_success');
 
         $header->refresh();
+        $otherHeader->refresh();
 
         $this->assertSame(1598.00, (float) $header->downpayment_amount);
         $this->assertSame(0.00, (float) $header->balance_amount);
+        $this->assertSame(300.00, (float) $otherHeader->downpayment_amount);
+        $this->assertSame(0.00, (float) $otherHeader->balance_amount);
+        $this->assertSame(2, BookingPayment::query()
+            ->whereIn('booking_header_id', [$header->id, $otherHeader->id])
+            ->where('payment_type', BookingPayment::TYPE_BALANCE)
+            ->where('status', BookingPayment::STATUS_PENDING)
+            ->count());
         $this->assertSame('bank_transfer', $header->payment_method);
         $this->assertSame('pending_balance_verification', $header->payment_status);
         $this->assertStringContainsString('Paid the remaining balance today.', (string) $header->notes);
@@ -1512,7 +1694,7 @@ class BookingSubmissionTest extends TestCase
             'start_time' => '08:00',
             'end_time' => '10:00',
             'guests' => 2,
-            'subtotal' => 1598,
+            'subtotal' => 700,
             'status' => BookingDetail::STATUS_PENDING,
         ]);
 
@@ -1524,7 +1706,7 @@ class BookingSubmissionTest extends TestCase
             'start_time' => '08:00',
             'end_time' => '10:00',
             'guests' => 2,
-            'subtotal' => 299,
+            'subtotal' => 1197,
             'status' => BookingDetail::STATUS_PENDING,
         ]);
 
@@ -1542,8 +1724,8 @@ class BookingSubmissionTest extends TestCase
 
         $header->refresh();
 
-        $this->assertSame(1897.00, (float) $header->downpayment_amount);
-        $this->assertSame(0.00, (float) $header->balance_amount);
+        $this->assertSame(1200.00, (float) $header->downpayment_amount);
+        $this->assertSame(697.00, (float) $header->balance_amount);
     }
 
     public function test_today_room_layout_only_returns_current_and_future_hourly_slots(): void
@@ -1602,23 +1784,98 @@ class BookingSubmissionTest extends TestCase
         ]);
     }
 
-    public function test_book_by_room_offers_next_day_end_times_for_an_overnight_booking(): void
+    public function test_book_by_room_uses_the_8am_opening_and_2am_next_day_cutoff(): void
     {
+        Carbon::setTestNow(Carbon::create(2026, 6, 9, 7, 0));
+
+        try {
+            $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+            $bookingDate = '2026-06-10';
+
+            $startResponse = $this->getJson(route('bookings.availability', [
+                'hyve_room_id' => $room->id,
+                'booking_date' => $bookingDate,
+            ]));
+
+            $startResponse->assertOk();
+            $this->assertSame('08:00', $startResponse->json('start_times.0.value'));
+            $this->assertSame('23:30', collect($startResponse->json('start_times'))->last()['value']);
+
+            $endResponse = $this->getJson(route('bookings.availability', [
+                'hyve_room_id' => $room->id,
+                'booking_date' => $bookingDate,
+                'start_time' => '08:00',
+            ]));
+
+            $endResponse->assertOk();
+            $this->assertSame('10:00', $endResponse->json('end_times.0.value'));
+            $this->assertSame('02:00', collect($endResponse->json('end_times'))->last()['value']);
+            $this->assertSame('2:00 AM next day', collect($endResponse->json('end_times'))->last()['label']);
+            $this->assertSame('18 hours', collect($endResponse->json('end_times'))->last()['duration_label']);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_book_by_room_offers_end_times_only_until_the_2am_overnight_cutoff(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 6, 9, 7, 0));
         $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
-        $bookingDate = now()->addDays(2)->toDateString();
+        $bookingDate = '2026-06-10';
 
-        $response = $this->getJson(route('bookings.availability', [
-            'hyve_room_id' => $room->id,
-            'booking_date' => $bookingDate,
-            'start_time' => '23:00',
-        ]));
+        try {
+            $response = $this->getJson(route('bookings.availability', [
+                'hyve_room_id' => $room->id,
+                'booking_date' => $bookingDate,
+                'start_time' => '23:00',
+            ]));
 
-        $response->assertOk();
-        $response->assertJsonFragment([
-            'value' => '03:00',
-            'label' => '3:00 AM next day',
-            'duration_label' => '4 hours',
-        ]);
+            $response->assertOk();
+            $response->assertJsonFragment([
+                'value' => '02:00',
+                'label' => '2:00 AM next day',
+                'duration_label' => '3 hours',
+            ]);
+            $response->assertJsonMissing([
+                'value' => '02:30',
+            ]);
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_book_by_room_rejects_a_submitted_end_time_after_the_2am_cutoff(): void
+    {
+        Carbon::setTestNow(Carbon::create(2026, 6, 9, 7, 0));
+
+        try {
+            $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+            $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
+
+            $this->actingAs($admin)
+                ->from(route('admin.bookings.create'))
+                ->post(route('admin.bookings.store'), [
+                    'booking_mode' => 'room',
+                    'full_name' => 'After Cutoff Customer',
+                    'email' => 'after-cutoff@example.com',
+                    'phone' => '09171234567',
+                    'hyve_room_id' => $room->id,
+                    'booking_date' => '2026-06-10',
+                    'start_time' => '23:00',
+                    'end_time' => '02:30',
+                    'guests' => 2,
+                    'downpayment_amount' => 0,
+                    'payment_method' => 'pay_later',
+                ])
+                ->assertRedirect(route('admin.bookings.create'))
+                ->assertSessionHasErrors('end_time');
+
+            $this->assertDatabaseMissing('booking_headers', [
+                'email' => 'after-cutoff@example.com',
+            ]);
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     public function test_overnight_booking_saves_the_actual_next_day_end_date(): void
@@ -1635,7 +1892,7 @@ class BookingSubmissionTest extends TestCase
             'hyve_room_id' => $room->id,
             'booking_date' => $bookingDate->toDateString(),
             'start_time' => '23:00',
-            'end_time' => '03:00',
+            'end_time' => '02:00',
             'guests' => 4,
             'downpayment_amount' => 0,
             'payment_method' => 'pay_later',
@@ -1646,10 +1903,10 @@ class BookingSubmissionTest extends TestCase
         $this->assertSame($bookingDate->toDateString(), $detail->booking_date->toDateString());
         $this->assertSame($bookingDate->copy()->addDay()->toDateString(), $detail->booking_end_date->toDateString());
         $this->assertSame('23:00', (string) $detail->start_time);
-        $this->assertSame('03:00', (string) $detail->end_time);
+        $this->assertSame('02:00', (string) $detail->end_time);
     }
 
-    public function test_overnight_booking_blocks_its_early_morning_time_on_the_next_date(): void
+    public function test_early_morning_start_times_remain_closed_after_an_overnight_booking(): void
     {
         $room = HyveRoom::query()->where('room_name', 'Conference Room')->firstOrFail();
         $bookingDate = now()->addDays(2);
@@ -1670,7 +1927,7 @@ class BookingSubmissionTest extends TestCase
             'booking_date' => $bookingDate->toDateString(),
             'booking_end_date' => $bookingDate->copy()->addDay()->toDateString(),
             'start_time' => '23:00',
-            'end_time' => '03:00',
+            'end_time' => '02:00',
             'guests' => 4,
             'charge_period' => 'hourly',
             'status' => BookingDetail::STATUS_PENDING,
@@ -1683,7 +1940,8 @@ class BookingSubmissionTest extends TestCase
 
         $response->assertOk();
         $response->assertJsonMissing(['value' => '01:00']);
-        $response->assertJsonFragment(['value' => '03:00']);
+        $response->assertJsonMissing(['value' => '03:00']);
+        $response->assertJsonFragment(['value' => '08:00']);
     }
 
     public function test_today_end_time_options_only_show_future_ranges_from_the_selected_start_time(): void

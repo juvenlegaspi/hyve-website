@@ -84,6 +84,7 @@ Route::middleware('throttle:30,1')->prefix('support')->name('support.')->group(f
     Route::get('/conversations/{publicToken}', [SupportChatController::class, 'show'])->name('conversations.show');
     Route::post('/conversations/{publicToken}/messages', [SupportChatController::class, 'message'])->name('conversations.message');
     Route::post('/conversations/{publicToken}/handoff', [SupportChatController::class, 'handoff'])->name('conversations.handoff');
+    Route::post('/conversations/{publicToken}/messages/{message}/reaction', [SupportChatController::class, 'react'])->name('conversations.reaction');
 });
 
 Route::middleware('auth')->group(function () {
@@ -105,6 +106,7 @@ Route::middleware('auth')->group(function () {
     Route::get('/my-announcements/feed', [MemberAnnouncementController::class, 'feed'])->name('member.announcements.feed');
     Route::post('/my-announcements/read-all', [MemberAnnouncementController::class, 'markAllRead'])->name('member.announcements.read-all');
     Route::post('/my-announcements/{announcement}/read', [MemberAnnouncementController::class, 'markRead'])->name('member.announcements.read');
+    Route::post('/my-booking-notifications/{bookingActivity}/read', [MemberAnnouncementController::class, 'markBookingNotificationRead'])->name('member.booking-notifications.read');
 });
 
 Route::middleware('auth')->prefix('admin')->name('admin.')->group(function () {
@@ -118,6 +120,7 @@ Route::middleware('auth')->prefix('admin')->name('admin.')->group(function () {
 
     Route::middleware('permission:messages.manage')->group(function () {
         Route::post('/messages/{conversation}/reply', [AdminSupportMessageController::class, 'reply'])->name('messages.reply');
+        Route::post('/messages/{conversation}/messages/{message}/reaction', [AdminSupportMessageController::class, 'react'])->name('messages.reaction');
         Route::patch('/messages/{conversation}/status', [AdminSupportMessageController::class, 'status'])->name('messages.status');
         Route::delete('/messages/{conversation}', [AdminSupportMessageController::class, 'destroy'])->name('messages.destroy');
     });

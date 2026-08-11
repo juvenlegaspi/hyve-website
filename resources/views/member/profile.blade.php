@@ -64,23 +64,23 @@
 
                         <label>
                             <span>Username</span>
-                            <input type="text" name="username" value="{{ old('username', $member->username) }}">
+                            <input type="text" name="username" value="{{ old('username', $member->username) }}" autocomplete="username" required>
                         </label>
                         <label>
                             <span>First name</span>
-                            <input type="text" name="first_name" value="{{ old('first_name', $member->first_name) }}">
+                            <input type="text" name="first_name" value="{{ old('first_name', $member->first_name) }}" autocomplete="given-name" required>
                         </label>
                         <label>
                             <span>Last name</span>
-                            <input type="text" name="last_name" value="{{ old('last_name', $member->last_name) }}">
+                            <input type="text" name="last_name" value="{{ old('last_name', $member->last_name) }}" autocomplete="family-name" required>
                         </label>
                         <label>
                             <span>Email</span>
-                            <input type="email" name="email" value="{{ old('email', $member->email) }}">
+                            <input type="email" name="email" value="{{ old('email', $member->email) }}" autocomplete="email" required>
                         </label>
                         <label>
                             <span>Phone</span>
-                            <input type="text" name="phone" value="{{ old('phone', $member->phone) }}">
+                            <input type="tel" name="phone" value="{{ old('phone', $member->phone) }}" autocomplete="tel" required>
                         </label>
 
                         <button type="submit" class="button button--dark button--block">Save profile</button>

@@ -153,7 +153,18 @@
                             </article>
                         @endif
 
-                        @if ($memberInsights['payment_action_count'] === 0 && $memberInsights['pending_approval_count'] === 0)
+                        @if ($memberInsights['payment_review_count'] > 0)
+                            <article>
+                                <div class="member-action-center__icon">{{ $memberInsights['payment_review_count'] }}</div>
+                                <div>
+                                    <strong>Payment verification in progress</strong>
+                                    <p>{{ $memberInsights['payment_review_count'] }} {{ $memberInsights['payment_review_count'] === 1 ? 'payment is' : 'payments are' }} waiting for HYVE review. Another payment, cancellation, or reschedule is temporarily disabled for the affected booking.</p>
+                                </div>
+                                <span class="member-action-center__status">Verifying</span>
+                            </article>
+                        @endif
+
+                        @if ($memberInsights['payment_action_count'] === 0 && $memberInsights['pending_approval_count'] === 0 && $memberInsights['payment_review_count'] === 0)
                             <article class="is-clear">
                                 <div class="member-action-center__icon">&#10003;</div>
                                 <div>
@@ -176,16 +187,35 @@
                 >
                     <div class="member-announcements__head">
                         <div>
-                            <span>HYVE announcements</span>
-                            <h2>Updates from the HYVE team</h2>
-                            <p>Important workspace notices and member updates are posted here.</p>
+                            <span>HYVE notifications</span>
+                            <h2>Booking approvals &amp; team updates</h2>
+                            <p>Your booking approvals, important workspace notices, and member updates are posted here.</p>
                         </div>
-                        @if ($memberAnnouncementUnreadCount > 0)
+                        @if ($memberNotificationUnreadCount > 0)
                             <button type="button" data-member-announcements-read-all>Mark all as read</button>
                         @endif
                     </div>
 
                     <div class="member-announcements__list" data-member-announcements-list>
+                        @foreach ($memberBookingNotifications as $notification)
+                            <article class="member-announcement-item is-important @if(!$notification['is_read']) is-unread @endif" data-booking-notification-id="{{ $notification['id'] }}">
+                                <div class="member-announcement-item__marker"></div>
+                                <div>
+                                    <div class="member-announcement-item__meta">
+                                        <span>Booking update</span>
+                                        <time>{{ $notification['published_at'] }}</time>
+                                    </div>
+                                    <h3>{{ $notification['title'] }}</h3>
+                                    <p>{{ $notification['body'] }}</p>
+                                </div>
+                                @if (!$notification['is_read'])
+                                    <button type="button" data-announcement-read-url="{{ $notification['read_url'] }}">Mark read</button>
+                                @else
+                                    <span class="member-announcement-item__read">Read</span>
+                                @endif
+                            </article>
+                        @endforeach
+
                         @forelse ($memberAnnouncements as $announcement)
                             <article class="member-announcement-item is-{{ $announcement['priority'] }} @if(!$announcement['is_read']) is-unread @endif" data-announcement-id="{{ $announcement['id'] }}">
                                 <div class="member-announcement-item__marker"></div>
@@ -204,10 +234,12 @@
                                 @endif
                             </article>
                         @empty
-                            <div class="member-updates-empty">
-                                <strong>No announcements right now.</strong>
-                                <p>Official HYVE announcements will appear here.</p>
-                            </div>
+                            @if ($memberBookingNotifications->isEmpty())
+                                <div class="member-updates-empty">
+                                    <strong>No notifications right now.</strong>
+                                    <p>Booking approvals and official HYVE announcements will appear here.</p>
+                                </div>
+                            @endif
                         @endforelse
                     </div>
                 </section>

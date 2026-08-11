@@ -31,6 +31,7 @@ class AdminSupportMessageController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'status' => ['nullable', 'in:all,open,closed'],
             'unread' => ['nullable', 'boolean'],
+            'mark_read' => ['nullable', 'boolean'],
         ]);
         $selectedId = $request->integer('conversation_id');
         $search = trim((string) ($validated['search'] ?? ''));
@@ -62,7 +63,7 @@ class AdminSupportMessageController extends Controller
             ? $conversations->firstWhere('id', $selectedId)
             : $conversations->first();
 
-        if ($selected) {
+        if ($selected && ($validated['mark_read'] ?? false)) {
             $selected->forceFill([
                 'admin_last_read_at' => now(),
                 'admin_last_read_message_id' => $selected->messages()->max('id'),
@@ -107,13 +108,16 @@ class AdminSupportMessageController extends Controller
         $validated = $request->validate([
             'message' => ['required', 'string', 'max:2000'],
             'action' => ['nullable', 'in:booking'],
+            'reply_to_message_id' => ['nullable', 'integer', 'min:1'],
         ]);
+        $replyToId = $this->replyTargetId($conversation, $validated['reply_to_message_id'] ?? null);
 
-        DB::transaction(function () use ($request, $conversation, $validated): void {
+        DB::transaction(function () use ($request, $conversation, $validated, $replyToId): void {
             $now = now();
             $message = $conversation->messages()->create([
                 'sender_type' => SupportMessage::SENDER_ADMIN,
                 'sender_user_id' => $request->user()?->getKey(),
+                'reply_to_message_id' => $replyToId,
                 'body' => trim($validated['message']),
                 'action_type' => ($validated['action'] ?? null) === 'booking' ? 'booking' : null,
                 'action_label' => ($validated['action'] ?? null) === 'booking' ? 'Book Now' : null,
@@ -128,6 +132,29 @@ class AdminSupportMessageController extends Controller
                 'admin_last_read_message_id' => $message->getKey(),
             ])->save();
         });
+
+        return response()->json($this->adminConversationPayload($conversation->fresh()));
+    }
+
+    public function react(Request $request, SupportConversation $conversation, SupportMessage $message): JsonResponse
+    {
+        $validated = $request->validate([
+            'emoji' => ['nullable', 'string', 'in:👍,❤️,😂,😮,😢,🙏'],
+        ]);
+        abort_unless((int) $message->support_conversation_id === (int) $conversation->getKey(), 404);
+
+        $actorKey = 'admin:'.$request->user()->getKey();
+        $reaction = $message->reactions()->where('actor_key', $actorKey)->first();
+        $emoji = $validated['emoji'] ?? null;
+
+        if (! $emoji || $reaction?->emoji === $emoji) {
+            $reaction?->delete();
+        } else {
+            $message->reactions()->updateOrCreate(
+                ['actor_key' => $actorKey],
+                ['actor_type' => SupportMessage::SENDER_ADMIN, 'actor_user_id' => $request->user()->getKey(), 'emoji' => $emoji],
+            );
+        }
 
         return response()->json($this->adminConversationPayload($conversation->fresh()));
     }
@@ -178,8 +205,9 @@ class AdminSupportMessageController extends Controller
     /** @return array<string, mixed> */
     private function adminConversationPayload(SupportConversation $conversation): array
     {
-        $conversation->load(['messages.senderUser', 'assignedUser']);
+        $conversation->load(['messages.senderUser', 'messages.replyTo:id,sender_type,body', 'messages.reactions:id,support_message_id,actor_key,emoji', 'assignedUser']);
         $bookingMatch = $this->bookingMatch($conversation);
+        $adminActorKey = 'admin:'.auth()->id();
 
         return [
             'id' => $conversation->getKey(),
@@ -203,6 +231,21 @@ class AdminSupportMessageController extends Controller
                 },
                 'body' => $message->body,
                 'created_at' => optional($message->created_at)->format('M j, Y g:i A'),
+                'reply_to' => $message->replyTo ? [
+                    'id' => $message->replyTo->getKey(),
+                    'sender_name' => match ($message->replyTo->sender_type) {
+                        SupportMessage::SENDER_CUSTOMER => $conversation->customer_name,
+                        SupportMessage::SENDER_ASSISTANT => 'HYVE Assistant',
+                        default => 'HYVE Front Desk',
+                    },
+                    'body' => str($message->replyTo->body)->limit(100)->toString(),
+                ] : null,
+                'reactions' => $message->reactions->groupBy('emoji')->map(fn ($items, $emoji): array => [
+                    'emoji' => $emoji,
+                    'count' => $items->count(),
+                ])->values()->all(),
+                'my_reaction' => $message->reactions->firstWhere('actor_key', $adminActorKey)?->emoji,
+                'reaction_url' => route('admin.messages.reaction', [$conversation, $message]),
                 'action' => $message->action_url ? [
                     'type' => $message->action_type,
                     'label' => $message->action_label,
@@ -213,6 +256,18 @@ class AdminSupportMessageController extends Controller
                     && $message->getKey() <= $conversation->customer_last_read_message_id,
             ])->all(),
         ];
+    }
+
+    private function replyTargetId(SupportConversation $conversation, mixed $replyToId): ?int
+    {
+        if (! $replyToId) {
+            return null;
+        }
+
+        $replyToId = (int) $replyToId;
+        abort_unless($conversation->messages()->whereKey($replyToId)->exists(), 422, 'The message being replied to is no longer available.');
+
+        return $replyToId;
     }
 
     /** @return array<string, mixed>|null */

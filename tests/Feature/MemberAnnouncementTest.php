@@ -2,8 +2,13 @@
 
 namespace Tests\Feature;
 
+use App\Models\BookingDetail;
+use App\Models\BookingHeader;
+use App\Models\HyveRoom;
 use App\Models\MemberAnnouncement;
 use App\Models\MemberAnnouncementRead;
+use App\Models\MemberBookingNotificationRead;
+use App\Models\Space;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -100,7 +105,7 @@ class MemberAnnouncementTest extends TestCase
             ->get(route('member.dashboard'))
             ->assertOk()
             ->assertSee('Community Update')
-            ->assertSee('HYVE announcements')
+            ->assertSee('HYVE notifications')
             ->assertDontSee('Future Notice')
             ->assertDontSee('Expired Notice');
     }
@@ -120,6 +125,62 @@ class MemberAnnouncementTest extends TestCase
             'published_at' => now()->toDateTimeString(),
             'is_active' => '1',
         ])->assertForbidden();
+    }
+
+    public function test_admin_booking_approval_creates_an_unread_member_notification(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        $member = User::factory()->create(['role' => User::ROLE_MEMBER]);
+        $room = HyveRoom::query()->where('room_name', 'Room 1')->firstOrFail();
+        $header = BookingHeader::query()->create([
+            'user_id' => $member->id,
+            'reference_no' => 'HYVE-MEMBER-NOTIFY-1',
+            'customer_name' => $member->name,
+            'email' => $member->email,
+            'phone' => $member->phone,
+            'booking_type' => BookingHeader::TYPE_MEMBER,
+            'source' => BookingHeader::SOURCE_WEB,
+            'payment_method' => 'gcash',
+            'total_amount' => 749,
+            'downpayment_amount' => 749,
+            'balance_amount' => 0,
+            'status' => BookingHeader::STATUS_PENDING,
+        ]);
+        BookingDetail::query()->create([
+            'booking_header_id' => $header->id,
+            'space_id' => Space::query()->where('slug', $room->mappedSpaceSlug())->value('id'),
+            'hyve_room_id' => $room->id,
+            'booking_date' => now()->addDays(2)->toDateString(),
+            'start_time' => '08:00',
+            'end_time' => '10:00',
+            'guests' => 1,
+            'subtotal' => 749,
+            'status' => BookingDetail::STATUS_PENDING,
+        ]);
+
+        $this->actingAs($admin)
+            ->post(route('admin.bookings.approve', $header))
+            ->assertRedirect();
+
+        $feed = $this->actingAs($member)
+            ->getJson(route('member.announcements.feed'))
+            ->assertOk()
+            ->assertJsonPath('unread_total', 1)
+            ->assertJsonPath('booking_notifications.0.title', 'Booking approved')
+            ->assertJsonPath('booking_notifications.0.reference_no', 'HYVE-MEMBER-NOTIFY-1')
+            ->assertJsonPath('booking_notifications.0.is_read', false);
+
+        $readUrl = $feed->json('booking_notifications.0.read_url');
+        $this->postJson($readUrl)->assertOk();
+        $this->getJson(route('member.announcements.feed'))
+            ->assertJsonPath('unread_total', 0)
+            ->assertJsonPath('booking_notifications.0.is_read', true);
+
+        $this->get(route('member.dashboard'))
+            ->assertOk()
+            ->assertSee('Booking approvals &amp; team updates', false)
+            ->assertSee('Your booking HYVE-MEMBER-NOTIFY-1 has been approved by HYVE.');
+        $this->assertSame(1, MemberBookingNotificationRead::query()->count());
     }
 
     private function publishedAnnouncement(): MemberAnnouncement

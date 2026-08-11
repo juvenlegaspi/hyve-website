@@ -4,6 +4,14 @@
     @php
         $member = auth()->user();
         $initials = strtoupper(substr((string) $member->first_name, 0, 1).substr((string) $member->last_name, 0, 1));
+        $savedPaymentMethod = old('payment_method', $selectedHeader->payment_method);
+        $selectedPaymentMethod = in_array($savedPaymentMethod, ['gcash', 'bank_transfer'], true)
+            ? $savedPaymentMethod
+            : 'gcash';
+        $selectedPaymentScope = old('payment_scope', 'single');
+        $displayedPaymentAmount = $selectedPaymentScope === 'all'
+            ? (float) $allRemainingBalance
+            : (float) old('payment_amount', $selectedPaymentAmount);
     @endphp
 
     <div class="site-shell">
@@ -59,7 +67,15 @@
                                 <h2>Pay booking balance</h2>
                                 <p>Enter the amount you paid, then upload your proof so admin can verify it.</p>
 
-                                <form action="{{ route('member.bookings.balance-payment.store', $selectedHeader) }}" method="POST" enctype="multipart/form-data" class="member-form">
+                                <form
+                                    action="{{ route('member.bookings.balance-payment.store', $selectedHeader) }}"
+                                    method="POST"
+                                    enctype="multipart/form-data"
+                                    class="member-form"
+                                    data-member-balance-payment-form
+                                    data-selected-payment-amount="{{ number_format((float) $selectedPaymentAmount, 2, '.', '') }}"
+                                    data-all-payment-amount="{{ number_format((float) $allRemainingBalance, 2, '.', '') }}"
+                                >
                                     @csrf
                                     <input type="hidden" name="detail_id" value="{{ $selectedBalanceItem['detail_id'] ?? '' }}">
 
@@ -76,9 +92,10 @@
                                                     type="number"
                                                     name="payment_amount"
                                                     min="0.01"
-                                                    max="{{ number_format((float) $selectedHeaderSummary['balance_amount'], 2, '.', '') }}"
+                                                    max="{{ number_format($selectedPaymentScope === 'all' ? (float) $allRemainingBalance : (float) $selectedPaymentAmount, 2, '.', '') }}"
                                                     step="0.01"
-                                                    value="{{ old('payment_amount', number_format((float) $selectedPaymentAmount, 2, '.', '')) }}"
+                                                    value="{{ number_format($displayedPaymentAmount, 2, '.', '') }}"
+                                                    data-member-payment-amount
                                                 >
                                                 @error('payment_amount') <small class="field-error">{{ $message }}</small> @enderror
                                                 <small>Enter any amount up to the remaining balance.</small>
@@ -87,27 +104,28 @@
                                             <div class="booking-checkout__method-block">
                                                 <span>Payment scope</span>
                                                 <div class="booking-checkout__methods booking-checkout__methods--compact">
-                                                    <label class="booking-checkout__method-card @if(old('payment_scope', 'single') === 'single') is-active @endif">
-                                                        <input type="radio" name="payment_scope" value="single" class="hidden" @checked(old('payment_scope', 'single') === 'single')>
+                                                    <label class="booking-checkout__method-card @if($selectedPaymentScope === 'single') is-active @endif" data-member-payment-scope-choice="single">
+                                                        <input type="radio" name="payment_scope" value="single" class="hidden" @checked($selectedPaymentScope === 'single')>
                                                         <strong>Pay selected booking only</strong>
                                                     </label>
-                                                    <label class="booking-checkout__method-card @if(old('payment_scope') === 'all') is-active @endif">
-                                                        <input type="radio" name="payment_scope" value="all" class="hidden" @checked(old('payment_scope') === 'all')>
-                                                        <strong>Pay all remaining</strong>
+                                                    <label class="booking-checkout__method-card @if($selectedPaymentScope === 'all') is-active @endif" data-member-payment-scope-choice="all">
+                                                        <input type="radio" name="payment_scope" value="all" class="hidden" @checked($selectedPaymentScope === 'all')>
+                                                        <strong>Pay all my outstanding bookings</strong>
                                                     </label>
                                                 </div>
+                                                <small>All outstanding: Php {{ number_format((float) $allRemainingBalance, 2) }} across your active bookings.</small>
                                             </div>
 
                                             <div class="booking-checkout__method-block">
                                                 <span>Payment method</span>
                                                 <div class="booking-checkout__methods booking-checkout__methods--compact">
-                                                    <label class="booking-checkout__method-card @if(old('payment_method', $selectedHeader->payment_method) === 'gcash') is-active @endif">
-                                                        <input type="radio" name="payment_method" value="gcash" class="hidden" @checked(old('payment_method', $selectedHeader->payment_method) === 'gcash')>
+                                                    <label class="booking-checkout__method-card @if($selectedPaymentMethod === 'gcash') is-active @endif" data-member-payment-choice="gcash">
+                                                        <input type="radio" name="payment_method" value="gcash" class="hidden" @checked($selectedPaymentMethod === 'gcash')>
                                                         <span class="booking-checkout__method-icon">$</span>
                                                         <strong>GCash</strong>
                                                     </label>
-                                                    <label class="booking-checkout__method-card @if(old('payment_method', $selectedHeader->payment_method) === 'bank_transfer') is-active @endif">
-                                                        <input type="radio" name="payment_method" value="bank_transfer" class="hidden" @checked(old('payment_method', $selectedHeader->payment_method) === 'bank_transfer')>
+                                                    <label class="booking-checkout__method-card @if($selectedPaymentMethod === 'bank_transfer') is-active @endif" data-member-payment-choice="bank_transfer">
+                                                        <input type="radio" name="payment_method" value="bank_transfer" class="hidden" @checked($selectedPaymentMethod === 'bank_transfer')>
                                                         <span class="booking-checkout__method-icon">B</span>
                                                         <strong>Bank Transfer</strong>
                                                     </label>
@@ -174,32 +192,25 @@
 
                                 @if ($paymentSetting)
                                     <div class="booking-checkout__note" style="margin-top:1rem;">
-                                        @php
-                                            $selectedMethod = old('payment_method', $selectedHeader->payment_method);
-                                        @endphp
-
-                                        @if ($selectedMethod === 'bank_transfer')
-                                            <div>
-                                                <p>{{ $paymentSetting->bank_name ?? 'Sample Bank' }}</p>
-                                                <p>{{ $paymentSetting->bank_account_name ?? 'HYVE Workspace' }}</p>
-                                                <p>{{ $paymentSetting->bank_account_number ?? '012345678901' }}</p>
-                                                @if ($paymentSetting->bank_qr_path)
-                                                    <div style="margin-top:0.75rem;">
-                                                        <img src="{{ route('payment-qr.show', 'bank') }}" alt="Bank transfer QR code" style="width:min(100%, 220px); border-radius:1rem; border:1px solid #dfe7d8; background:#fff; padding:0.7rem;">
-                                                    </div>
-                                                @endif
-                                            </div>
-                                        @else
-                                            <div>
-                                                <p>{{ $paymentSetting->gcash_account_name ?? 'HYVE Workspace' }}</p>
-                                                <p>{{ $paymentSetting->gcash_number ?? '0917 123 4567' }}</p>
-                                                @if ($paymentSetting->gcash_qr_path)
-                                                    <div style="margin-top:0.75rem;">
-                                                        <img src="{{ route('payment-qr.show', 'gcash') }}" alt="GCash QR code" style="width:min(100%, 220px); border-radius:1rem; border:1px solid #dfe7d8; background:#fff; padding:0.7rem;">
-                                                    </div>
-                                                @endif
-                                            </div>
-                                        @endif
+                                        <div data-member-payment-destination="bank_transfer" @class(['hidden' => $selectedPaymentMethod !== 'bank_transfer'])>
+                                            <p>{{ $paymentSetting->bank_name ?? 'Sample Bank' }}</p>
+                                            <p>{{ $paymentSetting->bank_account_name ?? 'HYVE Workspace' }}</p>
+                                            <p>{{ $paymentSetting->bank_account_number ?? '012345678901' }}</p>
+                                            @if ($paymentSetting->bank_qr_path)
+                                                <div style="margin-top:0.75rem;">
+                                                    <img src="{{ route('payment-qr.show', 'bank') }}" alt="Bank transfer QR code" style="width:min(100%, 220px); border-radius:1rem; border:1px solid #dfe7d8; background:#fff; padding:0.7rem;">
+                                                </div>
+                                            @endif
+                                        </div>
+                                        <div data-member-payment-destination="gcash" @class(['hidden' => $selectedPaymentMethod !== 'gcash'])>
+                                            <p>{{ $paymentSetting->gcash_account_name ?? 'HYVE Workspace' }}</p>
+                                            <p>{{ $paymentSetting->gcash_number ?? '0917 123 4567' }}</p>
+                                            @if ($paymentSetting->gcash_qr_path)
+                                                <div style="margin-top:0.75rem;">
+                                                    <img src="{{ route('payment-qr.show', 'gcash') }}" alt="GCash QR code" style="width:min(100%, 220px); border-radius:1rem; border:1px solid #dfe7d8; background:#fff; padding:0.7rem;">
+                                                </div>
+                                            @endif
+                                        </div>
                                     </div>
                                 @endif
                             </div>

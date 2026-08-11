@@ -210,15 +210,6 @@ class AdminRoomScheduleController extends Controller
             ]);
         }
 
-        $start = $this->minutesForTime($openingTime);
-        $end = $this->minutesForTime($closingTime);
-
-        if ($end <= $start) {
-            throw ValidationException::withMessages([
-                'closing_time' => 'Closing time must be later than opening time.',
-            ]);
-        }
-
         return $validated;
     }
 
@@ -229,17 +220,6 @@ class AdminRoomScheduleController extends Controller
         }
 
         return (bool) preg_match('/^(?:[01]\d|2[0-3]):(?:00|30)$/', $value);
-    }
-
-    private function minutesForTime(string $value): int
-    {
-        if ($value === '24:00') {
-            return 24 * 60;
-        }
-
-        [$hours, $minutes] = array_map('intval', explode(':', $value));
-
-        return ($hours * 60) + $minutes;
     }
 
     private function resolvedMonthSeed(Request $request, Carbon $today): Carbon

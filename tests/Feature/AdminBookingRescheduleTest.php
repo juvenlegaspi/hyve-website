@@ -169,6 +169,25 @@ class AdminBookingRescheduleTest extends TestCase
         $this->assertTrue(collect($conflictSlots['start_times'])->firstWhere('value', '10:00')['available']);
     }
 
+    public function test_slot_picker_allows_overnight_rescheduling_only_until_2am(): void
+    {
+        Carbon::setTestNow('2026-08-10 09:00:00');
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        [, $detail] = $this->createBooking('2026-08-12');
+
+        $slots = $this->actingAs($admin)
+            ->postJson(route('admin.booking-details.reschedule.slots', $detail), [
+                'hyve_room_id' => $detail->hyve_room_id,
+                'booking_date' => '2026-08-12',
+                'start_time' => '23:00',
+            ])
+            ->assertOk()
+            ->json();
+
+        $this->assertTrue(collect($slots['end_times'])->firstWhere('value', '02:00')['available']);
+        $this->assertNull(collect($slots['end_times'])->firstWhere('value', '02:30'));
+    }
+
     public function test_price_change_requires_explicit_admin_confirmation(): void
     {
         Mail::fake();

@@ -71,6 +71,10 @@
                     <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto overscroll-contain bg-[#fafbf7] p-4 sm:p-5" data-admin-support-messages></div>
 
                     <form class="shrink-0 border-t border-[#e5ebe0] bg-white p-3 sm:p-4" data-admin-support-reply-form>
+                        <div class="mb-2 hidden items-center justify-between gap-3 rounded-[0.75rem] border-l-4 border-[#4c8750] bg-[#f3f8ed] px-3 py-2 text-[0.67rem] text-[#52665a]" data-admin-support-replying>
+                            <span class="min-w-0"><strong class="block" data-admin-support-replying-name></strong><small class="block truncate" data-admin-support-replying-body></small></span>
+                            <button type="button" class="text-lg leading-none" data-admin-support-reply-cancel aria-label="Cancel reply">&times;</button>
+                        </div>
                         <div class="mb-2 flex flex-wrap gap-1.5" data-admin-support-quick-replies>
                             <button type="button" class="rounded-full border border-[#dce5d7] px-2.5 py-1 text-[0.61rem] font-semibold text-[#5c7064]" data-quick-reply="Thank you for contacting HYVE. How can we assist you further?">Thank customer</button>
                             <button type="button" class="rounded-full border border-[#dce5d7] px-2.5 py-1 text-[0.61rem] font-semibold text-[#5c7064]" data-quick-reply="May we know your preferred date, start time, and room?">Ask schedule</button>
@@ -78,7 +82,15 @@
                             <button type="button" class="rounded-full border border-[#cfe0c7] bg-[#f3f8ed] px-2.5 py-1 text-[0.61rem] font-semibold text-[#39713d]" data-admin-support-send-booking>Send Book Now</button>
                         </div>
                         <div class="flex items-end gap-2">
-                            <textarea name="message" rows="2" maxlength="2000" required class="min-h-[3rem] flex-1 resize-none rounded-[0.9rem] border border-[#d8e1d3] px-3.5 py-2.5 text-[0.78rem] outline-none focus:border-[#6d9c53]" placeholder="Type your reply to the customer…"></textarea>
+                            <details class="admin-support-emoji-picker" data-admin-support-emoji-picker>
+                                <summary aria-label="Choose emoji">&#9786;</summary>
+                                <div class="admin-support-emoji-picker__menu">
+                                    @foreach (['😀', '😊', '😂', '😍', '👍', '❤️', '🙏', '🎉'] as $emoji)
+                                        <button type="button" data-admin-support-insert-emoji="{{ $emoji }}">{{ $emoji }}</button>
+                                    @endforeach
+                                </div>
+                            </details>
+                            <textarea name="message" rows="2" maxlength="2000" required class="min-h-[3rem] flex-1 resize-none rounded-[0.9rem] border border-[#d8e1d3] px-3.5 py-2.5 text-[0.78rem] outline-none focus:border-[#6d9c53]" placeholder="Type your reply... (Enter to send, Shift+Enter for a new line)"></textarea>
                             <button type="submit" class="min-h-[3rem] rounded-[0.9rem] bg-[#34753d] px-5 text-[0.75rem] font-bold text-white disabled:opacity-60">Send reply</button>
                         </div>
                         <p class="mt-1.5 text-[0.64rem] text-[#93998f]" data-admin-support-feedback>Replies appear automatically in the customer’s HYVE chat widget.</p>

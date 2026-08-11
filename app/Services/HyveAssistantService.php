@@ -63,7 +63,7 @@ class HyveAssistantService
         }
 
         if ($this->containsAny($question, ['hour', 'hours', 'open time', 'closing', 'close', '24 hour', '24/7', 'schedule'])) {
-            return $this->answer('HYVE is open 24 hours, Monday to Sunday. Individual room schedules still depend on existing reservations, so please check live availability before visiting.');
+            return $this->answer('HYVE standard booking hours are 8:00 AM to 2:00 AM. Temporary closures, including Sunday closures when active, appear in live availability, so please check the booking page before visiting.');
         }
 
         if ($this->containsAny($question, ['walk in', 'walk-in', 'walkin'])) {

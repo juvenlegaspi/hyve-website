@@ -141,7 +141,7 @@ class SupportChatTest extends TestCase
             ->assertJsonPath('latest_message.customer_name', 'Alex Guest');
 
         $this->actingAs($frontDesk)
-            ->getJson(route('admin.messages.feed', ['conversation_id' => $conversation->id]))
+            ->getJson(route('admin.messages.feed', ['conversation_id' => $conversation->id, 'mark_read' => 1]))
             ->assertOk()
             ->assertJsonPath('selected.customer_name', 'Alex Guest')
             ->assertJsonPath('selected.messages.0.body', 'Can somebody help me book?')
@@ -157,7 +157,7 @@ class SupportChatTest extends TestCase
             ->assertJsonPath('messages.1.action.label', 'Book Now')
             ->assertJsonPath('messages.1.is_read', false);
 
-        $this->getJson(route('support.conversations.show', $token))
+        $this->getJson(route('support.conversations.show', ['publicToken' => $token, 'mark_read' => 1]))
             ->assertOk()
             ->assertJsonPath('messages.1.body', 'Yes. You can also use the booking link below.')
             ->assertJsonPath('messages.1.action.label', 'Book Now');
@@ -211,7 +211,7 @@ class SupportChatTest extends TestCase
         $closedConversation->update(['status' => SupportConversation::STATUS_CLOSED]);
 
         $this->actingAs($admin)
-            ->getJson(route('admin.messages.feed', ['search' => 'closed@example.com', 'status' => 'closed']))
+            ->getJson(route('admin.messages.feed', ['search' => 'closed@example.com', 'status' => 'closed', 'mark_read' => 1]))
             ->assertOk()
             ->assertJsonCount(1, 'conversations')
             ->assertJsonPath('conversations.0.customer_name', 'Closed Customer');
@@ -221,5 +221,108 @@ class SupportChatTest extends TestCase
             ->assertOk()
             ->assertJsonCount(1, 'conversations')
             ->assertJsonPath('conversations.0.customer_name', 'Open Customer');
+    }
+
+    public function test_customer_and_front_desk_can_reply_to_and_react_to_messages(): void
+    {
+        $frontDesk = User::factory()->create(['role' => User::ROLE_FRONT_DESK]);
+        $created = $this->postJson(route('support.conversations.store'), [
+            'customer_name' => 'Messenger Customer',
+            'email' => 'messenger@example.com',
+            'message' => 'Is this available?',
+            'mode' => SupportConversation::MODE_FRONT_DESK,
+        ])->assertCreated();
+        $conversation = SupportConversation::query()->firstOrFail();
+        $firstMessage = $conversation->messages()->firstOrFail();
+
+        $adminReply = $this->actingAs($frontDesk)
+            ->postJson(route('admin.messages.reply', $conversation), [
+                'message' => 'Yes, it is available.',
+                'reply_to_message_id' => $firstMessage->id,
+            ])->assertOk()
+            ->assertJsonPath('messages.1.reply_to.id', $firstMessage->id);
+        $adminMessage = SupportMessage::query()->findOrFail($adminReply->json('messages.1.id'));
+
+        $this->postJson(route('support.conversations.message', $created->json('token')), [
+            'message' => 'Thank you!',
+            'reply_to_message_id' => $adminMessage->id,
+        ])->assertOk()
+            ->assertJsonPath('messages.2.reply_to.id', $adminMessage->id);
+
+        $this->postJson(route('support.conversations.reaction', [$created->json('token'), $adminMessage]), [
+            'emoji' => '👍',
+        ])->assertOk()
+            ->assertJsonPath('messages.1.my_reaction', '👍');
+
+        $this->actingAs($frontDesk)
+            ->postJson(route('admin.messages.reaction', [$conversation, $firstMessage]), ['emoji' => '❤️'])
+            ->assertOk()
+            ->assertJsonPath('messages.0.my_reaction', '❤️');
+
+        $this->assertDatabaseCount('support_message_reactions', 2);
+    }
+
+    public function test_background_poll_does_not_mark_admin_reply_as_read_until_chat_is_opened(): void
+    {
+        $frontDesk = User::factory()->create(['role' => User::ROLE_FRONT_DESK]);
+        $created = $this->postJson(route('support.conversations.store'), [
+            'customer_name' => 'Unread Customer',
+            'phone' => '09175550000',
+            'message' => 'Hello Front Desk',
+            'mode' => SupportConversation::MODE_FRONT_DESK,
+        ])->assertCreated();
+        $conversation = SupportConversation::query()->firstOrFail();
+
+        $this->actingAs($frontDesk)->postJson(route('admin.messages.reply', $conversation), [
+            'message' => 'Hello! How can we help?',
+        ])->assertOk();
+
+        $this->getJson(route('support.conversations.show', $created->json('token')))
+            ->assertOk()
+            ->assertJsonPath('unread_count', 1);
+
+        $this->actingAs($frontDesk)
+            ->getJson(route('admin.messages.feed', ['conversation_id' => $conversation->id]))
+            ->assertJsonPath('selected.messages.1.is_read', false);
+
+        $this->getJson(route('support.conversations.show', ['publicToken' => $created->json('token'), 'mark_read' => 1]))
+            ->assertOk()
+            ->assertJsonPath('unread_count', 0);
+
+        $this->actingAs($frontDesk)
+            ->getJson(route('admin.messages.feed', ['conversation_id' => $conversation->id]))
+            ->assertJsonPath('selected.messages.1.is_read', true);
+    }
+
+    public function test_customer_can_load_older_conversation_messages(): void
+    {
+        $created = $this->postJson(route('support.conversations.store'), [
+            'customer_name' => 'Long Conversation',
+            'email' => 'history@example.com',
+            'message' => 'Message 1',
+            'mode' => SupportConversation::MODE_FRONT_DESK,
+        ])->assertCreated();
+        $conversation = SupportConversation::query()->firstOrFail();
+
+        foreach (range(2, 56) as $number) {
+            $conversation->messages()->create([
+                'sender_type' => SupportMessage::SENDER_CUSTOMER,
+                'body' => 'Message '.$number,
+            ]);
+        }
+
+        $latest = $this->getJson(route('support.conversations.show', $created->json('token')))
+            ->assertOk()
+            ->assertJsonCount(50, 'messages')
+            ->assertJsonPath('has_more', true)
+            ->assertJsonPath('messages.49.body', 'Message 56');
+
+        $this->getJson(route('support.conversations.show', [
+            'publicToken' => $created->json('token'),
+            'before_id' => $latest->json('next_before_id'),
+        ]))->assertOk()
+            ->assertJsonCount(6, 'messages')
+            ->assertJsonPath('has_more', false)
+            ->assertJsonPath('messages.0.body', 'Message 1');
     }
 }

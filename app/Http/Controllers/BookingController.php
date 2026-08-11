@@ -13,6 +13,7 @@ use App\Models\HyveRoom;
 use App\Models\HyveScheduleOverride;
 use App\Models\PaymentSetting;
 use App\Models\Space;
+use App\Models\User;
 use App\Services\HyveOperatingScheduleService;
 use App\Support\HyveCalendarService;
 use App\Support\HyvePricing;
@@ -80,6 +81,7 @@ class BookingController extends Controller
 
         $memberBookings = collect();
         $returningCustomers = $adminMode ? $this->returningCustomerOptions() : collect();
+        $memberAccounts = $adminMode ? $this->memberAccountOptions() : collect();
         $spaces = Space::query()
             ->active()
             ->orderBy('sort_order')
@@ -214,6 +216,7 @@ class BookingController extends Controller
             'monthlyPlansByRoom' => $longStayPlansByRoom,
             'memberBookings' => $memberBookings,
             'returningCustomers' => $returningCustomers,
+            'memberAccounts' => $memberAccounts,
             'oldScheduleSummary' => $oldScheduleSummary,
             'user' => $user,
             'adminMode' => $adminMode,
@@ -250,6 +253,25 @@ class BookingController extends Controller
             })
             ->values()
             ->take(300);
+    }
+
+    private function memberAccountOptions(): Collection
+    {
+        return User::query()
+            ->where('status', 0)
+            ->whereNotIn('role', User::adminPanelRoles())
+            ->withCount('bookingHeaders')
+            ->orderBy('first_name')
+            ->orderBy('last_name')
+            ->get(['id', 'first_name', 'last_name', 'email', 'number', 'role'])
+            ->map(fn (User $member): array => [
+                'id' => $member->getKey(),
+                'name' => trim($member->first_name.' '.$member->last_name),
+                'email' => (string) $member->email,
+                'phone' => (string) $member->number,
+                'booking_count' => (int) $member->booking_headers_count,
+            ])
+            ->values();
     }
 
     private function bookingContactIdentity(?string $phone, ?string $email): string
@@ -498,7 +520,15 @@ class BookingController extends Controller
             ->get();
         $sharedTableRepresentative = $this->sharedTableRepresentative($rooms);
         $displayRooms = $this->displayBookingRooms($rooms, $sharedTableRepresentative);
-        $snapshots = $this->roomLayoutSnapshots($displayRooms, $validated['booking_date'], $sharedTableRepresentative);
+        $sharedTableRooms = $rooms
+            ->filter(fn (HyveRoom $room): bool => $room->isSharedTable())
+            ->values();
+        $snapshots = $this->roomLayoutSnapshots(
+            $displayRooms,
+            $validated['booking_date'],
+            $sharedTableRepresentative,
+            $sharedTableRooms,
+        );
 
         return response()->json([
             'booking_date' => $validated['booking_date'],
@@ -531,8 +561,18 @@ class BookingController extends Controller
      *     status: string
      * }>
      */
-    private function roomLayoutSnapshots(Collection $rooms, string $bookingDate, ?HyveRoom $sharedTableRepresentative = null): array
+    private function roomLayoutSnapshots(
+        Collection $rooms,
+        string $bookingDate,
+        ?HyveRoom $sharedTableRepresentative = null,
+        ?Collection $sharedTableRooms = null,
+    ): array
     {
+        $sharedTableRooms ??= HyveRoom::query()
+            ->active()
+            ->where('room_name', 'like', 'Table %')
+            ->orderBy('id')
+            ->get();
         $spaceIdsBySlug = Space::query()
             ->active()
             ->whereIn('slug', $rooms->map(fn (HyveRoom $room): string => $room->mappedSpaceSlug())->unique()->values()->all())
@@ -573,6 +613,47 @@ class BookingController extends Controller
                     'available_slots' => collect(),
                     'booked_slots' => collect(),
                     'status' => 'closed',
+                ];
+
+                continue;
+            }
+
+            if ($room->isSharedTable()) {
+                $commonAreaOccupancy = $this->commonAreaOccupancyBySlot(
+                    $bookingDate,
+                    $sharedTableRooms,
+                    Carbon::parse($bookingDate)->addDay()->toDateString(),
+                );
+                $calendarBlockedRanges = $this->scheduleAndCalendarBlockedRangesForHorizon($scheduleRoom, $bookingDate);
+                $availableSlots = $this->slotWindowsWithPricing(
+                    $room,
+                    $bookingDate,
+                    $this->hourlyWindowsForCommonArea(
+                        $effectiveStart,
+                        $dayEnd,
+                        $commonAreaOccupancy,
+                        $sharedTableRooms->count(),
+                        $calendarBlockedRanges,
+                        false,
+                    ),
+                    $sharedTableRepresentative,
+                );
+                $bookedSlots = $this->hourlyWindowsForCommonArea(
+                    $effectiveStart,
+                    $dayEnd,
+                    $commonAreaOccupancy,
+                    $sharedTableRooms->count(),
+                    $calendarBlockedRanges,
+                    true,
+                );
+                $status = $availableSlots->isEmpty()
+                    ? 'occupied'
+                    : ($bookedSlots->isNotEmpty() ? 'booked' : 'available');
+
+                $snapshots[$room->id] = [
+                    'available_slots' => $availableSlots,
+                    'booked_slots' => $bookedSlots,
+                    'status' => $status,
                 ];
 
                 continue;
@@ -1063,7 +1144,23 @@ class BookingController extends Controller
             ? $request->file('student_id_proof')?->getClientOriginalName()
             : null;
 
-        $contactDetails = ($user && ! $adminMode)
+        $linkedMember = $adminMode && ($validated['admin_customer_type'] ?? 'guest') === 'member'
+            ? User::query()
+                ->whereKey((int) $validated['member_user_id'])
+                ->where('status', 0)
+                ->whereNotIn('role', User::adminPanelRoles())
+                ->firstOrFail()
+            : null;
+
+        $contactDetails = $linkedMember
+            ? [
+                'user_id' => $linkedMember->id,
+                'customer_name' => trim($linkedMember->first_name.' '.$linkedMember->last_name),
+                'email' => $linkedMember->email,
+                'phone' => $linkedMember->number ?? '',
+                'booking_type' => BookingHeader::TYPE_MEMBER,
+            ]
+            : (($user && ! $adminMode)
             ? [
                 'user_id' => $user->id,
                 'customer_name' => trim($user->first_name.' '.$user->last_name),
@@ -1076,10 +1173,10 @@ class BookingController extends Controller
                 'email' => $validated['email'],
                 'phone' => $validated['phone'],
                 'booking_type' => $isMonthlyMode ? BookingHeader::TYPE_MONTHLY : BookingHeader::TYPE_GUEST,
-            ];
+            ]);
 
         try {
-            $header = $this->database->transaction(function () use ($user, $contactDetails, $validated, $bookingItems, $grandTotal, $paymentProofPath, $paymentProofName, $studentIdProofPath, $studentIdProofName, $customerDownpayment, $remainingBalance, $paymentStatus, $adminMode, $isCashWalkIn, $isOpenTimeMode, $submissionToken): BookingHeader {
+            $header = $this->database->transaction(function () use ($user, $linkedMember, $contactDetails, $validated, $bookingItems, $grandTotal, $paymentProofPath, $paymentProofName, $studentIdProofPath, $studentIdProofName, $customerDownpayment, $remainingBalance, $paymentStatus, $adminMode, $isCashWalkIn, $isOpenTimeMode, $submissionToken): BookingHeader {
                 $bookingItems = $this->lockAndResolveBookingItemsAvailable($bookingItems);
 
                 $header = null;
@@ -1199,7 +1296,7 @@ class BookingController extends Controller
                 if ($customerDownpayment > 0) {
                     BookingPayment::query()->create([
                         'booking_header_id' => $header->getKey(),
-                        'user_id' => $user?->getKey(),
+                        'user_id' => $linkedMember?->getKey() ?? $user?->getKey(),
                         'payment_type' => BookingPayment::TYPE_DOWNPAYMENT,
                         'amount' => $customerDownpayment,
                         'payment_method' => (string) $validated['payment_method'],
@@ -1600,7 +1697,7 @@ class BookingController extends Controller
 
         $status = 'available';
 
-        if ($blockedRanges->isNotEmpty() && $startTimes->isNotEmpty()) {
+        if ($bookedWindows->isNotEmpty() && $startTimes->isNotEmpty()) {
             $status = 'booked';
         }
 
@@ -1901,9 +1998,16 @@ class BookingController extends Controller
             ? (string) $override->closing_time
             : $defaultClosingTime;
 
+        $start = $this->slotBoundary($bookingDate, $openingTime);
+        $end = $this->slotBoundary($bookingDate, $closingTime);
+
+        if ($end->lte($start)) {
+            $end->addDay();
+        }
+
         return [
-            'start' => $this->slotBoundary($bookingDate, $openingTime),
-            'end' => $this->slotBoundary($bookingDate, $closingTime),
+            'start' => $start,
+            'end' => $end,
             'closed' => false,
         ];
     }
@@ -2376,33 +2480,58 @@ class BookingController extends Controller
      */
     private function scheduleAndCalendarBlockedRangesForHorizon(HyveRoom $room, string $bookingDate): Collection
     {
-        $ranges = collect();
+        $horizonStart = Carbon::parse($bookingDate)->startOfDay();
+        $horizonEnd = $horizonStart->copy()->addDays(2);
+        $openRanges = collect();
+        $calendarRanges = collect();
 
         foreach ([0, 1] as $dayOffset) {
             $date = Carbon::parse($bookingDate)->addDays($dayOffset)->toDateString();
-            $dateStart = Carbon::parse($date)->startOfDay();
-            $dateEnd = $dateStart->copy()->addDay();
             $schedule = $this->scheduleWindowForDate($date, $room);
 
             if ($schedule['closed'] || $this->isFullDayBlockedByCalendarEvent($room, $date)) {
-                $ranges->push(['start' => $dateStart, 'end' => $dateEnd]);
-
                 continue;
             }
 
-            if ($schedule['start']->gt($dateStart)) {
-                $ranges->push(['start' => $dateStart, 'end' => $schedule['start']]);
+            $openRanges->push([
+                'start' => $schedule['start']->copy(),
+                'end' => $schedule['end']->copy(),
+            ]);
+            $calendarRanges = $calendarRanges->concat($this->calendarBlockedRangesForRoom($room, $date));
+        }
+
+        $mergedOpenRanges = $this->mergeRanges(
+            $openRanges->sortBy(fn (array $range): int => $range['start']->timestamp)->values()
+        );
+        $closedRanges = collect();
+        $cursor = $horizonStart->copy();
+
+        foreach ($mergedOpenRanges as $range) {
+            $start = $range['start']->copy()->max($horizonStart);
+            $end = $range['end']->copy()->min($horizonEnd);
+
+            if ($end->lte($horizonStart) || $start->gte($horizonEnd)) {
+                continue;
             }
 
-            if ($schedule['end']->lt($dateEnd)) {
-                $ranges->push(['start' => $schedule['end'], 'end' => $dateEnd]);
+            if ($start->gt($cursor)) {
+                $closedRanges->push(['start' => $cursor->copy(), 'end' => $start->copy()]);
             }
 
-            $ranges = $ranges->concat($this->calendarBlockedRangesForRoom($room, $date));
+            if ($end->gt($cursor)) {
+                $cursor = $end->copy();
+            }
+        }
+
+        if ($cursor->lt($horizonEnd)) {
+            $closedRanges->push(['start' => $cursor, 'end' => $horizonEnd]);
         }
 
         return $this->mergeRanges(
-            $ranges->sortBy(fn (array $range): int => $range['start']->timestamp)->values()
+            $closedRanges
+                ->concat($calendarRanges)
+                ->sortBy(fn (array $range): int => $range['start']->timestamp)
+                ->values()
         );
     }
 
@@ -2518,8 +2647,9 @@ class BookingController extends Controller
         $slotIntervalMinutes = (int) config('hyve.booking.slot_interval_minutes', 30);
         $startTimes = collect();
         $cursor = $effectiveStart->copy();
+        $lastStartBoundary = $effectiveStart->copy()->startOfDay()->addDay()->min($dayEnd);
 
-        while ($cursor->lt($dayEnd) && $cursor->copy()->addMinutes($minimumDuration)->lte($horizonEnd)) {
+        while ($cursor->lt($lastStartBoundary) && $cursor->copy()->addMinutes($minimumDuration)->lte($horizonEnd)) {
             $availableUntil = $this->availableUntil($blockedRanges, $cursor, $horizonEnd);
 
             if ($availableUntil && $cursor->diffInMinutes($availableUntil, true) >= $minimumDuration) {
@@ -2540,8 +2670,9 @@ class BookingController extends Controller
         $slotIntervalMinutes = (int) config('hyve.booking.slot_interval_minutes', 30);
         $startTimes = collect();
         $cursor = $effectiveStart->copy();
+        $lastStartBoundary = $effectiveStart->copy()->startOfDay()->addDay()->min($dayEnd);
 
-        while ($cursor->lt($dayEnd) && $cursor->copy()->addMinutes($minimumDuration)->lte($horizonEnd)) {
+        while ($cursor->lt($lastStartBoundary) && $cursor->copy()->addMinutes($minimumDuration)->lte($horizonEnd)) {
             $end = $cursor->copy()->addMinutes($minimumDuration);
 
             if ($this->commonAreaWindowAvailable($cursor, $end, $occupancy, $capacity, $calendarBlockedRanges)) {
@@ -2713,6 +2844,7 @@ class BookingController extends Controller
     {
         $slotMinutes = 120;
         $windows = collect();
+        $lastStartBoundary = $effectiveStart->copy()->startOfDay()->addDay()->min($dayEnd);
 
         if ($booked) {
             foreach ($blockedRanges as $range) {
@@ -2721,7 +2853,7 @@ class BookingController extends Controller
                 while ($cursor->copy()->addMinutes($slotMinutes)->lte($range['end'])) {
                     $end = $cursor->copy()->addMinutes($slotMinutes);
 
-                    if ($end->gt($effectiveStart) && $cursor->lt($dayEnd)) {
+                    if ($end->gt($effectiveStart) && $cursor->lt($lastStartBoundary)) {
                         $windows->push($this->windowPayload($cursor, $end));
                     }
 
@@ -2741,7 +2873,7 @@ class BookingController extends Controller
 
             $windowEnd = $range['start']->copy();
 
-            while ($cursor->copy()->addMinutes($slotMinutes)->lte($windowEnd)) {
+            while ($cursor->lt($lastStartBoundary) && $cursor->copy()->addMinutes($slotMinutes)->lte($windowEnd)) {
                 $end = $cursor->copy()->addMinutes($slotMinutes);
                 $windows->push($this->windowPayload($cursor, $end));
                 $cursor->addMinutes($slotMinutes);
@@ -2752,7 +2884,7 @@ class BookingController extends Controller
             }
         }
 
-        while ($cursor->copy()->addMinutes($slotMinutes)->lte($dayEnd)) {
+        while ($cursor->lt($lastStartBoundary) && $cursor->copy()->addMinutes($slotMinutes)->lte($dayEnd)) {
             $end = $cursor->copy()->addMinutes($slotMinutes);
             $windows->push($this->windowPayload($cursor, $end));
             $cursor->addMinutes($slotMinutes);
@@ -2766,8 +2898,9 @@ class BookingController extends Controller
         $slotMinutes = 120;
         $windows = collect();
         $cursor = $effectiveStart->copy();
+        $lastStartBoundary = $effectiveStart->copy()->startOfDay()->addDay()->min($dayEnd);
 
-        while ($cursor->copy()->addMinutes($slotMinutes)->lte($dayEnd)) {
+        while ($cursor->lt($lastStartBoundary) && $cursor->copy()->addMinutes($slotMinutes)->lte($dayEnd)) {
             $end = $cursor->copy()->addMinutes($slotMinutes);
             $available = $this->commonAreaWindowAvailable($cursor, $end, $occupancy, $capacity, $calendarBlockedRanges);
 

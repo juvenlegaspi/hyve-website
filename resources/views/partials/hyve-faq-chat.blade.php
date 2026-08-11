@@ -91,10 +91,25 @@
 
             <div class="hyve-support-chat__conversation" data-hyve-support-conversation hidden>
                 <div class="hyve-support-chat__status"><span data-hyve-support-mode>HYVE Assistant</span> &middot; <span data-hyve-support-status>Open</span></div>
+                <button type="button" class="hyve-support-chat__older" data-hyve-support-older hidden>Load older messages</button>
                 <div class="hyve-support-chat__messages" data-hyve-support-messages aria-live="polite"></div>
                 <form class="hyve-support-chat__reply" data-hyve-support-reply-form>
-                    <textarea name="message" rows="2" maxlength="2000" required placeholder="Type a message..."></textarea>
-                    <button type="submit" aria-label="Send message">Send</button>
+                    <div class="hyve-support-chat__replying" data-hyve-support-replying hidden>
+                        <span><strong data-hyve-support-replying-name></strong><small data-hyve-support-replying-body></small></span>
+                        <button type="button" data-hyve-support-reply-cancel aria-label="Cancel reply">&times;</button>
+                    </div>
+                    <div class="hyve-support-chat__composer">
+                        <details class="hyve-support-chat__emoji-picker">
+                            <summary aria-label="Choose emoji">&#9786;</summary>
+                            <div>
+                                @foreach (['😀', '😊', '😂', '😍', '👍', '❤️', '🙏', '🎉'] as $emoji)
+                                    <button type="button" data-hyve-support-insert-emoji="{{ $emoji }}">{{ $emoji }}</button>
+                                @endforeach
+                            </div>
+                        </details>
+                        <textarea name="message" rows="2" maxlength="2000" required placeholder="Type a message... (Enter to send)"></textarea>
+                        <button type="submit" aria-label="Send message">Send</button>
+                    </div>
                 </form>
                 <p class="hyve-support-chat__feedback" data-hyve-support-reply-feedback></p>
                 <button type="button" class="hyve-support-chat__handoff" data-hyve-support-handoff>Chat with HYVE Front Desk</button>
@@ -112,7 +127,7 @@
 
         <template data-hyve-faq-template="booking"><strong>How to book</strong><p>Open the booking page, choose a room, select an available date and time, then complete your customer and payment details.</p><a href="{{ route('bookings.index') }}">Check availability and book &rarr;</a></template>
         <template data-hyve-faq-template="rates"><strong>HYVE rates</strong><p>Rates depend on the selected space, schedule, and stay period. The booking page calculates the live total before checkout.</p><a href="{{ route('home') }}#rates">View rates &rarr;</a></template>
-        <template data-hyve-faq-template="hours"><strong>Open 24 hours</strong><p>HYVE is open Monday to Sunday, 24 hours. Available booking times still depend on existing room reservations.</p></template>
+        <template data-hyve-faq-template="hours"><strong>Standard hours: 8:00 AM - 2:00 AM</strong><p>Temporary closures, including Sunday closures when active, appear in live availability. Please check the booking page before visiting.</p></template>
         <template data-hyve-faq-template="walk-in"><strong>Walk-ins are welcome</strong><p>Yes. Visit HYVE and the front-desk staff can check availability and create your walk-in booking.</p><a href="tel:{{ $hyveChatPhoneHref }}">Call {{ $hyveChatPhoneDisplay }} &rarr;</a></template>
         <template data-hyve-faq-template="payments"><strong>Payment options</strong><p>Available methods may include GCash, bank transfer, and cash for eligible walk-in transactions. The valid options and instructions appear during checkout.</p></template>
         <template data-hyve-faq-template="discounts"><strong>HYVE discounts</strong><p>Available offers include the 2-hour Common Area voucher, engagement, board reviewee, Early Bird, Senior, and PWD discounts. Eligibility and supporting ID or reference may be required.</p><a href="mailto:{{ $hyveChatEmail }}">Ask HYVE about eligibility &rarr;</a></template>
@@ -122,5 +137,6 @@
     <button type="button" class="hyve-faq-chat__launcher" data-hyve-faq-toggle aria-controls="hyve-faq-chat-panel" aria-expanded="false">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-5 4v-4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm3 5a1 1 0 1 0 0 2 1 1 0 0 0 0-2Zm5 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2Zm5 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z" fill="currentColor"/></svg>
         <span>Ask HYVE</span>
+        <strong class="hyve-faq-chat__unread" data-hyve-support-customer-unread hidden>0</strong>
     </button>
 </aside>

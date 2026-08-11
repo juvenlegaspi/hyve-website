@@ -17,7 +17,7 @@
             <a
                 href="{{ route('member.dashboard') }}#hyve-announcements"
                 class="member-notification-bell"
-                aria-label="Member announcements"
+                aria-label="Member notifications"
                 data-member-announcement-notification
                 data-feed-url="{{ route('member.announcements.feed') }}"
             >
@@ -37,7 +37,7 @@
             class="mobile-menu__link member-mobile-announcement-link"
             data-member-announcement-notification
             data-feed-url="{{ route('member.announcements.feed') }}"
-        >Announcements <span class="hidden" data-member-announcement-badge>0</span></a>
+        >Notifications <span class="hidden" data-member-announcement-badge>0</span></a>
         <a href="{{ route('member.profile.edit') }}" class="mobile-menu__link">Edit profile</a>
         <a href="{{ route('member.password.edit') }}" class="mobile-menu__link">Change password</a>
         <a href="{{ route('bookings.index') }}" class="button button--dark button--block">Book a space</a>
