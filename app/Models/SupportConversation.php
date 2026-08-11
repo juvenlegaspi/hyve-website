@@ -14,7 +14,12 @@ class SupportConversation extends Model
     use HasFactory;
 
     public const STATUS_OPEN = 'open';
+
     public const STATUS_CLOSED = 'closed';
+
+    public const MODE_ASSISTANT = 'assistant';
+
+    public const MODE_FRONT_DESK = 'front_desk';
 
     protected $fillable = [
         'public_token',
@@ -24,6 +29,7 @@ class SupportConversation extends Model
         'email',
         'phone',
         'status',
+        'mode',
         'last_message_at',
         'customer_last_read_at',
         'customer_last_read_message_id',
@@ -62,7 +68,7 @@ class SupportConversation extends Model
 
     public function scopeWithUnreadForAdmin(Builder $query): Builder
     {
-        return $query->where(function (Builder $unread): void {
+        return $query->where('mode', self::MODE_FRONT_DESK)->where(function (Builder $unread): void {
             $unread->whereHas('messages', function (Builder $messages): void {
                 $messages->where('sender_type', SupportMessage::SENDER_CUSTOMER)
                     ->whereColumn('support_messages.id', '>', 'support_conversations.admin_last_read_message_id');

@@ -20,15 +20,16 @@ use App\Services\BookingProgressSyncService;
 use App\Services\BookingRescheduledTextService;
 use App\Services\BookingWifiVoucherService;
 use App\Services\HyveDiscountService;
+use App\Services\HyveOperatingScheduleService;
 use App\Support\HyvePricing;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
@@ -45,6 +46,7 @@ class AdminBookingController extends Controller
         private readonly BookingProgressSyncService $progressSync,
         private readonly AdminBookingRescheduleService $rescheduleService,
         private readonly HyveDiscountService $discounts,
+        private readonly HyveOperatingScheduleService $operatingSchedule,
     ) {}
 
     public function index(Request $request): View
@@ -963,7 +965,7 @@ class AdminBookingController extends Controller
             );
 
         return (string) $detail->status === BookingDetail::STATUS_CONFIRMED
-            && ! $this->isLongStayDetail($detail)
+            && ! in_array((string) $detail->charge_period, ['weekly', 'monthly'], true)
             && ! $detail->is_open_time
             && $detail->hyve_room_id !== null
             && $detail->bookingHeader !== null
@@ -1065,7 +1067,10 @@ class AdminBookingController extends Controller
     {
         $bookingDate = optional($detail->booking_date)->toDateString();
 
-        if (! $detail->booking_header_id || ! $detail->hyve_room_id || ! $bookingDate || $this->isLongStayDetail($detail)) {
+        if (! $detail->booking_header_id
+            || ! $detail->hyve_room_id
+            || ! $bookingDate
+            || in_array((string) $detail->charge_period, ['weekly', 'monthly'], true)) {
             return collect([$detail]);
         }
 
@@ -1077,7 +1082,11 @@ class AdminBookingController extends Controller
             ->orderBy('booking_date')
             ->orderBy('start_time')
             ->get()
-            ->filter(fn (BookingDetail $sessionDetail): bool => ! $this->isLongStayDetail($sessionDetail))
+            ->filter(fn (BookingDetail $sessionDetail): bool => ! in_array(
+                (string) $sessionDetail->charge_period,
+                ['weekly', 'monthly'],
+                true
+            ))
             ->values();
     }
 
@@ -1204,6 +1213,10 @@ class AdminBookingController extends Controller
     /** @return array{0: Carbon, 1: Carbon}|null */
     private function extensionScheduleWindow(HyveRoom $room, string $bookingDate): ?array
     {
+        if ($this->operatingSchedule->isGloballyClosed($bookingDate)) {
+            return null;
+        }
+
         $override = HyveScheduleOverride::query()
             ->whereDate('booking_date', $bookingDate)
             ->where(function ($query) use ($room): void {
@@ -1271,8 +1284,7 @@ class AdminBookingController extends Controller
         array $quote,
         Carbon $extensionStart,
         float $extensionAmount,
-    ): array
-    {
+    ): array {
         $header->loadMissing('payments');
         $discount = $this->discounts->calculate(
             $header,

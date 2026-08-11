@@ -36,6 +36,7 @@
             'Bookings' => 'calendar-check',
             'Payments' => 'card',
             'Messages' => 'chat',
+            'Announcements' => 'bell',
             'Sales Monitoring' => 'chart',
             'Users' => 'users',
             'Reports' => 'chart',
@@ -124,6 +125,11 @@
                                             <path d="M2.25 2.75h11.5v8H7l-3.75 2.5v-2.5h-1Z"></path>
                                             <path d="M5 6.25h6M5 8.5h4"></path>
                                         </svg>
+                                    @elseif ($icon === 'bell')
+                                        <svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.6">
+                                            <path d="M3.5 11.5h9l-1.1-1.7V6.9A3.4 3.4 0 0 0 8 3.5a3.4 3.4 0 0 0-3.4 3.4v2.9L3.5 11.5Z"></path>
+                                            <path d="M6.5 12.2a1.5 1.5 0 0 0 3 0M8 1.8v1.4"></path>
+                                        </svg>
                                     @elseif ($icon === 'users')
                                         <svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.6">
                                             <circle cx="6" cy="5.5" r="2"></circle>
@@ -196,16 +202,68 @@
             </div>
         </aside>
 
+        <div class="hidden lg:hidden" data-admin-mobile-nav aria-hidden="true">
+            <button
+                type="button"
+                class="fixed inset-0 z-[10030] bg-[#10251f]/55 backdrop-blur-[2px]"
+                data-admin-mobile-nav-close
+                aria-label="Close admin menu"
+            ></button>
+            <aside class="fixed inset-y-0 left-0 z-[10040] flex w-[min(19rem,88vw)] flex-col bg-white shadow-2xl" role="dialog" aria-modal="true" aria-label="Admin navigation">
+                <div class="flex items-center justify-between border-b border-[#edf1ea] px-4 py-4">
+                    <a href="{{ route('admin.dashboard') }}" class="flex items-baseline gap-2">
+                        <span class="text-[1.18rem] font-black tracking-[-0.04em] text-black">HYVE</span>
+                        <span class="text-[0.78rem] font-medium text-black">{{ $panelLabel }}</span>
+                    </a>
+                    <button type="button" class="flex h-10 w-10 items-center justify-center rounded-full border border-[#dce4d8] text-xl text-[#385346]" data-admin-mobile-nav-close aria-label="Close admin menu">&times;</button>
+                </div>
+
+                <nav class="flex-1 overflow-y-auto px-3 py-3">
+                    @foreach (($sidebarSections ?? []) as $section)
+                        @if (! empty($section['title']))
+                            <p class="px-2 pb-1.5 pt-4 text-[0.68rem] font-bold uppercase tracking-[0.18em] text-[#b5bbb0]">{{ $section['title'] }}</p>
+                        @endif
+                        <div class="grid gap-1">
+                            @foreach ($section['items'] as $item)
+                                @php($isActiveMobileItem = request()->routeIs($item['route']) || ($item['label'] === 'Messages' && request()->routeIs('admin.messages.*')))
+                                <a href="{{ route($item['route']) }}" class="@if ($isActiveMobileItem) bg-[#edf5df] text-[#224133] @else text-[#626e65] @endif flex min-h-11 items-center gap-3 rounded-xl px-3 py-2.5 text-[0.82rem] font-semibold">
+                                    <span class="h-2 w-2 shrink-0 rounded-full @if ($isActiveMobileItem) bg-[#5e8b43] @else bg-[#cbd2c7] @endif"></span>
+                                    <span class="flex-1">{{ $item['label'] }}</span>
+                                    @if ($item['label'] === 'Bookings')
+                                        <span class="{{ $adminOnlineBookingUnreadCount > 0 ? '' : 'hidden' }} min-w-5 rounded-full bg-[#dc3f36] px-1.5 py-0.5 text-center text-[0.62rem] font-bold text-white" data-admin-booking-badge>{{ $adminOnlineBookingUnreadCount }}</span>
+                                    @endif
+                                    @if ($item['label'] === 'Messages')
+                                        <span class="{{ $adminMessageUnreadCount > 0 ? '' : 'hidden' }} min-w-5 rounded-full bg-[#dc3f36] px-1.5 py-0.5 text-center text-[0.62rem] font-bold text-white" data-admin-message-badge>{{ $adminMessageUnreadCount }}</span>
+                                    @endif
+                                </a>
+                            @endforeach
+                        </div>
+                    @endforeach
+                </nav>
+
+                <div class="border-t border-[#edf1ea] p-3">
+                    <div class="mb-2 rounded-xl bg-[#f7f9f4] px-3 py-2">
+                        <strong class="block truncate text-[0.78rem] text-[#19352c]">{{ $adminUser->name ?? 'Admin' }}</strong>
+                        <span class="block truncate text-[0.66rem] text-[#899286]">{{ $adminUser->email ?? str_replace('_', ' ', (string) ($adminUser->role ?? 'admin')) }}</span>
+                    </div>
+                    <form action="{{ route('logout') }}" method="POST">
+                        @csrf
+                        <button type="submit" class="w-full rounded-xl border border-[#dbe5d1] px-3 py-2.5 text-[0.76rem] font-semibold text-[#48624f]">Log out</button>
+                    </form>
+                </div>
+            </aside>
+        </div>
+
         <main class="min-w-0 flex-1">
             <div class="border-b border-[#e6eadf] bg-white px-4 py-4 lg:hidden">
                 <div class="flex items-center justify-between gap-3">
-                    <a href="{{ route('admin.dashboard') }}" class="text-[1.2rem] font-black tracking-[-0.05em] text-black">HYVE {{ $panelLabel }}</a>
-                    <form action="{{ route('logout') }}" method="POST">
-                        @csrf
-                        <button type="submit" class="rounded-full border border-[#dbe5d1] px-3 py-2 text-[0.74rem] font-semibold text-[#48624f]">
-                            Log out
-                        </button>
-                    </form>
+                    <button type="button" class="flex h-10 w-10 items-center justify-center rounded-full border border-[#dbe5d1] text-[#365448]" data-admin-mobile-nav-open aria-label="Open admin menu" aria-expanded="false">
+                        <svg viewBox="0 0 20 20" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                            <path d="M3 5.5h14M3 10h14M3 14.5h14"></path>
+                        </svg>
+                    </button>
+                    <a href="{{ route('admin.dashboard') }}" class="flex-1 text-[1.1rem] font-black tracking-[-0.05em] text-black">HYVE {{ $panelLabel }}</a>
+                    <span class="text-[0.68rem] font-semibold text-[#7c887d]">Menu</span>
                 </div>
             </div>
 

@@ -13,6 +13,7 @@ use App\Models\HyveRoom;
 use App\Models\HyveScheduleOverride;
 use App\Models\PaymentSetting;
 use App\Models\Space;
+use App\Services\HyveOperatingScheduleService;
 use App\Support\HyveCalendarService;
 use App\Support\HyvePricing;
 use Illuminate\Database\DatabaseManager;
@@ -56,6 +57,7 @@ class BookingController extends Controller
         private readonly DatabaseManager $database,
         private readonly HyvePricing $pricing,
         private readonly HyveCalendarService $calendarService,
+        private readonly HyveOperatingScheduleService $operatingSchedule,
     ) {}
 
     public function index(Request $request): View|RedirectResponse
@@ -460,6 +462,7 @@ class BookingController extends Controller
             $startDate->toDateString(),
             $room->getKey(),
             $horizonDays,
+            $this->operatingSchedule->cacheSignature(),
         ]);
 
         $unavailableDates = Cache::remember(
@@ -468,7 +471,19 @@ class BookingController extends Controller
             fn (): array => $this->fullyBookedDates($room, $horizonDays, $startDate)->values()->all(),
         );
 
-        return response()->json(['unavailable_dates' => $unavailableDates]);
+        $recurringClosureDates = collect(range(0, max(0, $horizonDays - 1)))
+            ->map(fn (int $offset): Carbon => $startDate->copy()->addDays($offset))
+            ->filter(fn (Carbon $date): bool => $this->operatingSchedule->isGloballyClosed($date))
+            ->map(fn (Carbon $date): array => [
+                'value' => $date->toDateString(),
+                'label' => $date->format('M j, Y'),
+            ])
+            ->values();
+
+        return response()->json([
+            'unavailable_dates' => $unavailableDates,
+            'recurring_closure_dates' => $recurringClosureDates,
+        ]);
     }
 
     public function roomLayout(Request $request): JsonResponse
@@ -1860,6 +1875,15 @@ class BookingController extends Controller
     {
         $defaultOpeningTime = (string) config('hyve.booking.opening_time', '00:00');
         $defaultClosingTime = (string) config('hyve.booking.closing_time', '24:00');
+
+        if ($this->operatingSchedule->isGloballyClosed($bookingDate)) {
+            return [
+                'start' => $this->slotBoundary($bookingDate, $defaultOpeningTime),
+                'end' => $this->slotBoundary($bookingDate, $defaultOpeningTime),
+                'closed' => true,
+            ];
+        }
+
         $override = $this->scheduleOverrideForRoom($bookingDate, $room);
 
         if ($override?->isClosed()) {
@@ -2126,10 +2150,6 @@ class BookingController extends Controller
             : $endDate;
         $this->applyBookingDateOverlapConstraint($query, $startDate, $queryEndDate);
 
-        if (! in_array($useType, ['day', 'night'], true)) {
-            return ! $query->exists();
-        }
-
         $details = $query->get([
             'booking_date',
             'booking_end_date',
@@ -2138,15 +2158,19 @@ class BookingController extends Controller
             'charge_period',
         ]);
 
-        if ($details->isEmpty()) {
-            return true;
-        }
-
-        [$requestStartTime, $requestEndTime] = $this->pricing->longStayWindowForUseType($useType);
+        [$requestStartTime, $requestEndTime] = in_array($useType, ['day', 'night'], true)
+            ? $this->pricing->longStayWindowForUseType($useType)
+            : ['00:00', '24:00'];
         $start = Carbon::parse($startDate)->startOfDay();
         $end = Carbon::parse($endDate)->startOfDay();
+        $hasOperatingDay = false;
 
         for ($cursor = $start->copy(); $cursor->lte($end); $cursor->addDay()) {
+            if ($this->operatingSchedule->isGloballyClosed($cursor)) {
+                continue;
+            }
+
+            $hasOperatingDay = true;
             [$requestedStart, $requestedEnd] = $this->dateRange($cursor->toDateString(), $requestStartTime, $requestEndTime);
 
             foreach ($details as $detail) {
@@ -2158,7 +2182,7 @@ class BookingController extends Controller
             }
         }
 
-        return true;
+        return $hasOperatingDay;
     }
 
     /**
@@ -2362,6 +2386,7 @@ class BookingController extends Controller
 
             if ($schedule['closed'] || $this->isFullDayBlockedByCalendarEvent($room, $date)) {
                 $ranges->push(['start' => $dateStart, 'end' => $dateEnd]);
+
                 continue;
             }
 

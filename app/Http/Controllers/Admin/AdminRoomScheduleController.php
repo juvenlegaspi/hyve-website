@@ -3,8 +3,10 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\HyveRecurringClosure;
 use App\Models\HyveRoom;
 use App\Models\HyveScheduleOverride;
+use App\Services\HyveOperatingScheduleService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -13,6 +15,8 @@ use Illuminate\View\View;
 
 class AdminRoomScheduleController extends Controller
 {
+    public function __construct(private readonly HyveOperatingScheduleService $operatingSchedule) {}
+
     public function index(Request $request): View
     {
         $today = Carbon::today();
@@ -60,7 +64,42 @@ class AdminRoomScheduleController extends Controller
             'selectedDate' => $selectedDate,
             'calendarOverrides' => $overrides,
             'selectedOverride' => $selectedOverride,
+            'sundayClosure' => HyveRecurringClosure::query()->firstOrCreate(
+                ['weekday' => HyveRecurringClosure::SUNDAY],
+                ['is_active' => true, 'reason' => 'HYVE is temporarily closed every Sunday.'],
+            ),
         ]);
+    }
+
+    public function updateSundayClosure(Request $request): RedirectResponse
+    {
+        $validated = $request->validate([
+            'is_active' => ['required', 'boolean'],
+            'reason' => ['nullable', 'string', 'max:255'],
+            'room' => ['nullable', 'integer', 'exists:hyve_rooms,id'],
+            'month' => ['nullable', 'date_format:Y-m'],
+            'date' => ['nullable', 'date'],
+        ]);
+        $isActive = (bool) $validated['is_active'];
+
+        HyveRecurringClosure::query()->updateOrCreate(
+            ['weekday' => HyveRecurringClosure::SUNDAY],
+            [
+                'is_active' => $isActive,
+                'reason' => trim((string) ($validated['reason'] ?? '')) ?: 'HYVE is temporarily closed every Sunday.',
+            ],
+        );
+        $this->operatingSchedule->forgetCachedClosures();
+
+        return redirect()
+            ->route('admin.sections.room-schedule', array_filter([
+                'room' => $validated['room'] ?? null,
+                'month' => $validated['month'] ?? null,
+                'date' => $validated['date'] ?? null,
+            ]))
+            ->with('admin_success', $isActive
+                ? 'Every Sunday is now closed for all HYVE rooms.'
+                : 'Sunday closure removed. Sundays are open for booking again.');
     }
 
     public function store(Request $request): RedirectResponse

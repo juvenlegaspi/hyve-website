@@ -21,6 +21,7 @@ class AdminBookingRescheduleService
     public function __construct(
         private readonly HyvePricing $pricing,
         private readonly HyveDiscountService $discounts,
+        private readonly HyveOperatingScheduleService $operatingSchedule,
     ) {}
 
     public function canReschedule(BookingDetail $detail): bool
@@ -671,6 +672,13 @@ class AdminBookingRescheduleService
     {
         $opening = (string) config('hyve.booking.opening_time', '00:00');
         $closing = (string) config('hyve.booking.closing_time', '24:00');
+
+        if ($this->operatingSchedule->isGloballyClosed($date)) {
+            $boundary = $this->slotBoundary($date, $opening);
+
+            return ['start' => $boundary, 'end' => $boundary->copy(), 'closed' => true];
+        }
+
         $override = HyveScheduleOverride::query()
             ->where(fn ($query) => $query->where('hyve_room_id', $room->id)->orWhereNull('hyve_room_id'))
             ->whereDate('booking_date', $date)

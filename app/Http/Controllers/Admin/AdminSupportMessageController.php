@@ -82,10 +82,11 @@ class AdminSupportMessageController extends Controller
         $latestUnread = SupportMessage::query()
             ->where('sender_type', SupportMessage::SENDER_CUSTOMER)
             ->whereHas('conversation', function (Builder $conversation): void {
-                $conversation->where(function (Builder $unread): void {
-                    $unread->whereColumn('support_messages.id', '>', 'support_conversations.admin_last_read_message_id')
-                        ->orWhereNull('support_conversations.admin_last_read_message_id');
-                });
+                $conversation->where('mode', SupportConversation::MODE_FRONT_DESK)
+                    ->where(function (Builder $unread): void {
+                        $unread->whereColumn('support_messages.id', '>', 'support_conversations.admin_last_read_message_id')
+                            ->orWhereNull('support_conversations.admin_last_read_message_id');
+                    });
             })
             ->with('conversation:id,customer_name')
             ->latest('id')
@@ -119,6 +120,7 @@ class AdminSupportMessageController extends Controller
                 'action_url' => ($validated['action'] ?? null) === 'booking' ? route('bookings.index') : null,
             ]);
             $conversation->forceFill([
+                'mode' => SupportConversation::MODE_FRONT_DESK,
                 'assigned_user_id' => $conversation->assigned_user_id ?: $request->user()?->getKey(),
                 'status' => SupportConversation::STATUS_OPEN,
                 'last_message_at' => $now,
@@ -164,7 +166,10 @@ class AdminSupportMessageController extends Controller
             'customer_name' => $conversation->customer_name,
             'contact' => $conversation->email ?: ($conversation->phone ?: 'No contact provided'),
             'status' => $conversation->status,
-            'unread_count' => (int) ($conversation->unread_count ?? 0),
+            'mode' => $conversation->mode,
+            'unread_count' => $conversation->mode === SupportConversation::MODE_FRONT_DESK
+                ? (int) ($conversation->unread_count ?? 0)
+                : 0,
             'preview' => str((string) ($conversation->latestMessage?->body ?? 'No messages'))->limit(80)->toString(),
             'last_message_at' => optional($conversation->last_message_at)->diffForHumans() ?? '--',
         ];
@@ -182,6 +187,7 @@ class AdminSupportMessageController extends Controller
             'email' => $conversation->email,
             'phone' => $conversation->phone,
             'status' => $conversation->status,
+            'mode' => $conversation->mode,
             'assigned_to' => $conversation->assignedUser?->name,
             'reply_url' => route('admin.messages.reply', $conversation),
             'status_url' => route('admin.messages.status', $conversation),
@@ -190,9 +196,11 @@ class AdminSupportMessageController extends Controller
             'messages' => $conversation->messages->map(fn (SupportMessage $message): array => [
                 'id' => $message->getKey(),
                 'sender' => $message->sender_type,
-                'sender_name' => $message->sender_type === SupportMessage::SENDER_ADMIN
-                    ? ($message->senderUser?->name ?: 'HYVE Front Desk')
-                    : $conversation->customer_name,
+                'sender_name' => match ($message->sender_type) {
+                    SupportMessage::SENDER_ADMIN => $message->senderUser?->name ?: 'HYVE Front Desk',
+                    SupportMessage::SENDER_ASSISTANT => 'HYVE Assistant',
+                    default => $conversation->customer_name,
+                },
                 'body' => $message->body,
                 'created_at' => optional($message->created_at)->format('M j, Y g:i A'),
                 'action' => $message->action_url ? [

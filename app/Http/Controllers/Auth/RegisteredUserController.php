@@ -41,8 +41,9 @@ class RegisteredUserController extends Controller
         Auth::login($user);
 
         $request->session()->regenerate();
+        $request->session()->forget('url.intended');
 
-        return redirect()->intended(route('bookings.index'));
+        return redirect()->route('member.dashboard');
     }
 
     private function rememberReturnTo(Request $request): void

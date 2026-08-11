@@ -11,7 +11,7 @@ class AuthFlowTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_a_new_user_can_register_and_is_redirected_to_bookings(): void
+    public function test_a_new_user_can_register_and_is_redirected_to_member_dashboard(): void
     {
         $response = $this->post(route('register.store'), [
             'username' => 'hyveclient01',
@@ -23,7 +23,7 @@ class AuthFlowTest extends TestCase
             'password_confirmation' => 'Password123',
         ]);
 
-        $response->assertRedirect(route('bookings.index'));
+        $response->assertRedirect(route('member.dashboard'));
         $this->assertAuthenticated();
 
         $this->assertDatabaseHas('booking_users', [
@@ -47,7 +47,7 @@ class AuthFlowTest extends TestCase
             'password_confirmation' => 'Password123',
         ]);
 
-        $response->assertRedirect(route('bookings.index'));
+        $response->assertRedirect(route('member.dashboard'));
         $this->assertAuthenticated();
 
         $this->assertDatabaseHas('booking_users', [
@@ -88,7 +88,7 @@ class AuthFlowTest extends TestCase
             'password' => 'Password123',
         ]);
 
-        $response->assertRedirect(route('bookings.index'));
+        $response->assertRedirect(route('member.dashboard'));
         $this->assertAuthenticatedAs($user);
     }
 
@@ -104,7 +104,7 @@ class AuthFlowTest extends TestCase
             'password' => 'Password123',
         ]);
 
-        $response->assertRedirect(route('bookings.index'));
+        $response->assertRedirect(route('member.dashboard'));
         $this->assertAuthenticatedAs($user);
     }
 }

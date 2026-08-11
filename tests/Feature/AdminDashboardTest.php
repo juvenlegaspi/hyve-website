@@ -24,6 +24,19 @@ class AdminDashboardTest extends TestCase
         parent::tearDown();
     }
 
+    public function test_admin_dashboard_includes_permission_aware_mobile_navigation(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+
+        $this->actingAs($admin)
+            ->get(route('admin.dashboard'))
+            ->assertOk()
+            ->assertSee('data-admin-mobile-nav-open', false)
+            ->assertSee('data-admin-mobile-nav', false)
+            ->assertSee(route('admin.bookings.index'), false)
+            ->assertSee(route('admin.messages.index'), false);
+    }
+
     public function test_dashboard_uses_active_booking_ranges_and_verified_payments(): void
     {
         Carbon::setTestNow('2026-07-21 12:00:00');

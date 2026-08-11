@@ -11,7 +11,10 @@ class SupportMessage extends Model
     use HasFactory;
 
     public const SENDER_CUSTOMER = 'customer';
+
     public const SENDER_ADMIN = 'admin';
+
+    public const SENDER_ASSISTANT = 'assistant';
 
     protected $fillable = [
         'support_conversation_id',

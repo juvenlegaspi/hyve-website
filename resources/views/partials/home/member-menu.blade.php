@@ -20,10 +20,16 @@
             @if ($member->isAdmin())
                 <a href="{{ route('admin.dashboard') }}" class="member-menu__link">Admin dashboard</a>
             @endif
-            @unless (request()->routeIs('home'))
+            @unless (request()->routeIs('home') || ($memberPortalMode ?? false))
                 <a href="{{ route('home') }}" class="member-menu__link">Back to HYVE website</a>
             @endunless
+            @unless ($member->isAdmin())
+                <a href="{{ route('member.dashboard') }}" class="member-menu__link">Dashboard</a>
+            @endunless
             <a href="{{ route('member.index') }}" class="member-menu__link">My bookings</a>
+            @unless ($member->isAdmin())
+                <a href="{{ route('member.dashboard') }}#hyve-announcements" class="member-menu__link">Announcements</a>
+            @endunless
             <a href="{{ route('member.profile.edit') }}" class="member-menu__link">Edit profile</a>
             <a href="{{ route('member.password.edit') }}" class="member-menu__link">Change password</a>
             <a href="{{ route('member.index') }}#booking-history" class="member-menu__link">Booking history</a>

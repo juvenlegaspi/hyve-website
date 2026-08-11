@@ -339,6 +339,22 @@ class AdminSectionController extends Controller
                 );
             }
 
+            if ((string) $request->query('export') === 'excel') {
+                return $this->downloadReportsExcel(
+                    $dateFrom,
+                    $dateTo,
+                    $summary,
+                    $occupancy,
+                    $roomPerformance->all(),
+                    $topMembers->all(),
+                    $paymentBreakdown->all(),
+                    $shiftCollections->all(),
+                    $dailyBookings->all(),
+                    $dailyPayments->all(),
+                    $monthlySummary,
+                );
+            }
+
             if ((string) $request->query('export') === 'csv') {
                 return $this->downloadReportsCsv(
                     $dateFrom,
@@ -765,6 +781,245 @@ class AdminSectionController extends Controller
             fclose($handle);
         }, $fileName, [
             'Content-Type' => 'text/csv',
+        ]);
+    }
+
+    /**
+     * Download a presentation-ready multi-sheet Excel workbook while keeping the
+     * legacy CSV endpoint available for integrations that still depend on it.
+     *
+     * @param  array<string, mixed>  $summary
+     * @param  array<string, mixed>  $occupancy
+     * @param  array<int, array<string, mixed>>  $roomPerformance
+     * @param  array<int, array<string, mixed>>  $topMembers
+     * @param  array<int, array<string, mixed>>  $paymentBreakdown
+     * @param  array<int, array<string, mixed>>  $shiftCollections
+     * @param  array<int, array<string, mixed>>  $dailyBookings
+     * @param  array<int, array<string, mixed>>  $dailyPayments
+     * @param  array<string, mixed>  $monthlySummary
+     */
+    private function downloadReportsExcel(
+        Carbon $dateFrom,
+        Carbon $dateTo,
+        array $summary,
+        array $occupancy,
+        array $roomPerformance,
+        array $topMembers,
+        array $paymentBreakdown,
+        array $shiftCollections,
+        array $dailyBookings,
+        array $dailyPayments,
+        array $monthlySummary,
+    ): StreamedResponse {
+        $fileName = 'hyve-management-report-'.$dateFrom->format('Ymd').'-to-'.$dateTo->format('Ymd').'.xls';
+
+        return response()->streamDownload(function () use (
+            $dateFrom,
+            $dateTo,
+            $summary,
+            $occupancy,
+            $roomPerformance,
+            $topMembers,
+            $paymentBreakdown,
+            $shiftCollections,
+            $dailyBookings,
+            $dailyPayments,
+            $monthlySummary,
+        ): void {
+            $escape = static fn (mixed $value): string => htmlspecialchars((string) $value, ENT_XML1 | ENT_QUOTES, 'UTF-8');
+            $cell = static function (mixed $value, string $style = 'text', string $type = 'String', int $mergeAcross = 0) use ($escape): string {
+                $merge = $mergeAcross > 0 ? ' ss:MergeAcross="'.$mergeAcross.'"' : '';
+
+                return '<Cell ss:StyleID="'.$style.'"'.$merge.'><Data ss:Type="'.$type.'">'.$escape($value).'</Data></Cell>';
+            };
+            $row = static fn (array $cells, ?int $height = null): string => '<Row'.($height ? ' ss:AutoFitHeight="0" ss:Height="'.$height.'"' : '').'>'.implode('', $cells).'</Row>';
+            $blank = '<Row/>';
+            $titleRows = static function (string $title, int $mergeAcross) use ($row, $cell, $dateFrom, $dateTo): array {
+                return [
+                    $row([$cell($title, 'title', 'String', $mergeAcross)], 30),
+                    $row([$cell('Report period: '.$dateFrom->format('F j, Y').' to '.$dateTo->format('F j, Y'), 'subtitle', 'String', $mergeAcross)]),
+                    $row([$cell('Generated: '.now()->format('F j, Y g:i A'), 'subtitle', 'String', $mergeAcross)]),
+                    '<Row/>',
+                ];
+            };
+
+            $confirmedLineRate = (int) ($occupancy['booked_lines_total'] ?? 0) > 0
+                ? (float) ($occupancy['confirmed_lines'] ?? 0) / (float) $occupancy['booked_lines_total']
+                : 0.0;
+
+            $summaryRows = $titleRows('HYVE Management Report', 2);
+            $summaryRows[] = $row([$cell('Financial and Booking Overview', 'section', 'String', 2)]);
+            $summaryRows[] = $row([$cell('Metric', 'header'), $cell('Value', 'header'), $cell('What this means', 'header')], 24);
+            $summaryMetrics = [
+                ['Approved collections', $summary['approved_payments_total'] ?? 0, 'currency', 'Payments approved within the selected report period.'],
+                ['Pending collections', $summary['pending_payments_total'] ?? 0, 'currency', 'Submitted payments still awaiting approval.'],
+                ['Gross booking value', $summary['gross_booking_value'] ?? 0, 'currency', 'Total value of bookings created during the period, before payment status.'],
+                ['Total bookings', $summary['bookings_total'] ?? 0, 'number', 'Booking records created during the selected period.'],
+                ['Confirmed bookings', $summary['approved_bookings'] ?? 0, 'number', 'Booking headers currently marked confirmed.'],
+                ['Pending bookings', $summary['pending_bookings'] ?? 0, 'number', 'Booking headers awaiting confirmation.'],
+                ['Cancelled bookings', $summary['rejected_bookings'] ?? 0, 'number', 'Booking headers currently marked cancelled.'],
+                ['Member bookings', $summary['member_bookings'] ?? 0, 'number', 'Bookings connected to registered member accounts.'],
+                ['Guest bookings', $summary['guest_bookings'] ?? 0, 'number', 'Guest or standard walk-in booking records.'],
+            ];
+
+            foreach ($summaryMetrics as [$label, $value, $style, $description]) {
+                $summaryRows[] = $row([$cell($label), $cell($value, $style, 'Number'), $cell($description, 'note')]);
+            }
+
+            $summaryRows[] = $blank;
+            $summaryRows[] = $row([$cell('Room Activity Signals', 'section', 'String', 2)]);
+            $summaryRows[] = $row([$cell('Metric', 'header'), $cell('Value', 'header'), $cell('What this means', 'header')], 24);
+            $activityMetrics = [
+                ['Booked lines', $occupancy['booked_lines_total'] ?? 0, 'number', 'Individual room/time booking lines scheduled inside the period.'],
+                ['Confirmed lines', $occupancy['confirmed_lines'] ?? 0, 'number', 'Booking lines currently confirmed.'],
+                ['Completed lines', $occupancy['completed_lines'] ?? 0, 'number', 'Booking lines already completed.'],
+                ['In-progress lines', $occupancy['in_progress_lines'] ?? 0, 'number', 'Booking lines currently in progress.'],
+                ['Unique rooms used', $occupancy['unique_rooms_used'] ?? 0, 'number', 'Distinct rooms with booking activity.'],
+                ['Confirmed line rate', $confirmedLineRate, 'percent', 'Confirmed booking lines divided by all booking lines; not an hour-capacity metric.'],
+            ];
+
+            foreach ($activityMetrics as [$label, $value, $style, $description]) {
+                $summaryRows[] = $row([$cell($label), $cell($value, $style, 'Number'), $cell($description, 'note')]);
+            }
+
+            $summaryRows[] = $blank;
+            $summaryRows[] = $row([$cell('Monthly Comparison', 'section', 'String', 2)]);
+            $summaryRows[] = $row([$cell('Period', 'header'), $cell('Bookings', 'header'), $cell('Approved collections', 'header')], 24);
+            foreach ($monthlySummary as $period) {
+                $summaryRows[] = $row([
+                    $cell($period['label'] ?? '--'),
+                    $cell($period['bookings'] ?? 0, 'number', 'Number'),
+                    $cell($period['sales'] ?? 0, 'currency', 'Number'),
+                ]);
+            }
+
+            $roomRows = $titleRows('HYVE Room Performance', 3);
+            $roomRows[] = $row([$cell('Room', 'header'), $cell('Booking lines', 'header'), $cell('Gross booking value', 'header'), $cell('Confirmed line rate', 'header')], 24);
+            foreach ($roomPerformance as $roomItem) {
+                $roomRows[] = $row([
+                    $cell($roomItem['room'] ?? 'Room'),
+                    $cell($roomItem['bookings'] ?? 0, 'number', 'Number'),
+                    $cell($roomItem['revenue'] ?? 0, 'currency', 'Number'),
+                    $cell(((float) ($roomItem['utilization_rate'] ?? 0)) / 100, 'percent', 'Number'),
+                ]);
+            }
+            if ($roomPerformance === []) {
+                $roomRows[] = $row([$cell('No room activity found for this report period.', 'empty', 'String', 3)]);
+            }
+
+            $memberRows = $titleRows('HYVE Members and Payment Methods', 3);
+            $memberRows[] = $row([$cell('Top Members by Gross Booking Value', 'section', 'String', 3)]);
+            $memberRows[] = $row([$cell('Member', 'header'), $cell('Email', 'header'), $cell('Bookings', 'header'), $cell('Gross booking value', 'header')], 24);
+            foreach ($topMembers as $member) {
+                $memberRows[] = $row([
+                    $cell($member['name'] ?? 'Member'),
+                    $cell($member['email'] ?? '--'),
+                    $cell($member['bookings'] ?? 0, 'number', 'Number'),
+                    $cell($member['revenue'] ?? 0, 'currency', 'Number'),
+                ]);
+            }
+            if ($topMembers === []) {
+                $memberRows[] = $row([$cell('No member activity found for this report period.', 'empty', 'String', 3)]);
+            }
+            $memberRows[] = $blank;
+            $memberRows[] = $row([$cell('Approved Collections by Payment Method', 'section', 'String', 3)]);
+            $memberRows[] = $row([$cell('Payment method', 'header'), $cell('Amount', 'header'), $cell('Share', 'header'), $cell('Definition', 'header')], 24);
+            foreach ($paymentBreakdown as $payment) {
+                $memberRows[] = $row([
+                    $cell($payment['method'] ?? '--'),
+                    $cell($payment['amount'] ?? 0, 'currency', 'Number'),
+                    $cell(((float) ($payment['percentage'] ?? 0)) / 100, 'percent', 'Number'),
+                    $cell('Approved payment records only.', 'note'),
+                ]);
+            }
+            if ($paymentBreakdown === []) {
+                $memberRows[] = $row([$cell('No approved collections found for this report period.', 'empty', 'String', 3)]);
+            }
+
+            $paymentsByDate = collect($dailyPayments)->keyBy('date_key');
+            $dailyRows = $titleRows('HYVE Daily Activity', 4);
+            $dailyRows[] = $row([$cell('Date', 'header'), $cell('Bookings created', 'header'), $cell('Confirmed bookings', 'header'), $cell('Approved collections', 'header'), $cell('Pending collections', 'header')], 24);
+            foreach ($dailyBookings as $day) {
+                $paymentDay = $paymentsByDate->get($day['date_key'] ?? '', []);
+                $dailyRows[] = $row([
+                    $cell($day['date_key'] ?? $day['date'] ?? '--'),
+                    $cell($day['count'] ?? 0, 'number', 'Number'),
+                    $cell($day['approved'] ?? 0, 'number', 'Number'),
+                    $cell($paymentDay['approved_total'] ?? 0, 'currency', 'Number'),
+                    $cell($paymentDay['pending_total'] ?? 0, 'currency', 'Number'),
+                ]);
+            }
+
+            $shiftRows = $titleRows('HYVE Shift Collections', 8);
+            $shiftRows[] = $row([
+                $cell('Staff name', 'header'), $cell('Role', 'header'), $cell('Cash txns', 'header'), $cell('Cash total', 'header'),
+                $cell('Online txns', 'header'), $cell('Online total', 'header'), $cell('All txns', 'header'), $cell('Grand total', 'header'), $cell('Last verified', 'header'),
+            ], 24);
+            foreach ($shiftCollections as $shift) {
+                $shiftRows[] = $row([
+                    $cell($shift['name'] ?? 'Admin'), $cell($shift['role'] ?? 'Admin'),
+                    $cell($shift['cash_count'] ?? 0, 'number', 'Number'), $cell($shift['cash_total'] ?? 0, 'currency', 'Number'),
+                    $cell($shift['online_count'] ?? 0, 'number', 'Number'), $cell($shift['online_total'] ?? 0, 'currency', 'Number'),
+                    $cell($shift['transactions_count'] ?? 0, 'number', 'Number'), $cell($shift['grand_total'] ?? 0, 'currencyStrong', 'Number'),
+                    $cell($shift['last_verified_at'] ?? '--'),
+                ]);
+            }
+            if ($shiftCollections === []) {
+                $shiftRows[] = $row([$cell('No verified shift collections found for this report period.', 'empty', 'String', 8)]);
+            } else {
+                $shiftRows[] = $row([
+                    $cell('TOTAL', 'totalLabel', 'String', 1),
+                    $cell(collect($shiftCollections)->sum('cash_count'), 'totalNumber', 'Number'),
+                    $cell(collect($shiftCollections)->sum('cash_total'), 'totalCurrency', 'Number'),
+                    $cell(collect($shiftCollections)->sum('online_count'), 'totalNumber', 'Number'),
+                    $cell(collect($shiftCollections)->sum('online_total'), 'totalCurrency', 'Number'),
+                    $cell(collect($shiftCollections)->sum('transactions_count'), 'totalNumber', 'Number'),
+                    $cell(collect($shiftCollections)->sum('grand_total'), 'totalCurrency', 'Number'),
+                    $cell('--', 'totalLabel'),
+                ]);
+            }
+
+            $border = '<Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E3EAE0"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E3EAE0"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E3EAE0"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E3EAE0"/></Borders>';
+            $styles = '<Styles>'.
+                '<Style ss:ID="Default" ss:Name="Normal"><Alignment ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="11" ss:Color="#25352D"/></Style>'.
+                '<Style ss:ID="title"><Font ss:FontName="Calibri" ss:Size="18" ss:Bold="1" ss:Color="#173E34"/><Alignment ss:Vertical="Center"/></Style>'.
+                '<Style ss:ID="subtitle"><Font ss:FontName="Calibri" ss:Size="10" ss:Color="#778178"/></Style>'.
+                '<Style ss:ID="section"><Font ss:FontName="Calibri" ss:Size="12" ss:Bold="1" ss:Color="#25472D"/><Interior ss:Color="#EAF3DF" ss:Pattern="Solid"/>'.$border.'</Style>'.
+                '<Style ss:ID="header"><Font ss:FontName="Calibri" ss:Size="10" ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#467436" ss:Pattern="Solid"/><Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>'.$border.'</Style>'.
+                '<Style ss:ID="text"><Alignment ss:Vertical="Center" ss:WrapText="1"/>'.$border.'</Style>'.
+                '<Style ss:ID="note"><Font ss:FontName="Calibri" ss:Size="10" ss:Color="#667168"/><Alignment ss:Vertical="Center" ss:WrapText="1"/>'.$border.'</Style>'.
+                '<Style ss:ID="number"><Alignment ss:Horizontal="Center" ss:Vertical="Center"/><NumberFormat ss:Format="#,##0"/>'.$border.'</Style>'.
+                '<Style ss:ID="currency"><Font ss:Bold="1" ss:Color="#315A38"/><NumberFormat ss:Format="&quot;Php &quot;#,##0.00"/>'.$border.'</Style>'.
+                '<Style ss:ID="currencyStrong"><Font ss:Bold="1" ss:Color="#173E34"/><Interior ss:Color="#F3F8EC" ss:Pattern="Solid"/><NumberFormat ss:Format="&quot;Php &quot;#,##0.00"/>'.$border.'</Style>'.
+                '<Style ss:ID="percent"><Alignment ss:Horizontal="Center"/><NumberFormat ss:Format="0.0%"/>'.$border.'</Style>'.
+                '<Style ss:ID="empty"><Font ss:Italic="1" ss:Color="#899188"/><Interior ss:Color="#FAFBF8" ss:Pattern="Solid"/>'.$border.'</Style>'.
+                '<Style ss:ID="totalLabel"><Font ss:Bold="1" ss:Color="#173E34"/><Interior ss:Color="#EAF3DF" ss:Pattern="Solid"/>'.$border.'</Style>'.
+                '<Style ss:ID="totalNumber"><Font ss:Bold="1"/><Alignment ss:Horizontal="Center"/><Interior ss:Color="#EAF3DF" ss:Pattern="Solid"/><NumberFormat ss:Format="#,##0"/>'.$border.'</Style>'.
+                '<Style ss:ID="totalCurrency"><Font ss:Bold="1" ss:Color="#173E34"/><Interior ss:Color="#EAF3DF" ss:Pattern="Solid"/><NumberFormat ss:Format="&quot;Php &quot;#,##0.00"/>'.$border.'</Style>'.
+                '</Styles>';
+
+            $worksheet = static function (string $name, array $widths, array $rows, int $freezeRow = 5) use ($escape): string {
+                $columns = collect($widths)->map(fn ($width): string => '<Column ss:AutoFitWidth="0" ss:Width="'.(int) $width.'"/>')->implode('');
+                $options = '<WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><FreezePanes/><FrozenNoSplit/><SplitHorizontal>'.$freezeRow.'</SplitHorizontal><TopRowBottomPane>'.$freezeRow.'</TopRowBottomPane><ActivePane>2</ActivePane><ProtectObjects>False</ProtectObjects><ProtectScenarios>False</ProtectScenarios></WorksheetOptions>';
+
+                return '<Worksheet ss:Name="'.$escape($name).'"><Table>'.$columns.implode('', $rows).'</Table>'.$options.'</Worksheet>';
+            };
+
+            echo '<?xml version="1.0"?>';
+            echo '<?mso-application progid="Excel.Sheet"?>';
+            echo '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet" xmlns:html="http://www.w3.org/TR/REC-html40">';
+            echo '<DocumentProperties xmlns="urn:schemas-microsoft-com:office:office"><Author>HYVE</Author><Company>HYVE</Company><Title>HYVE Management Report</Title></DocumentProperties>';
+            echo '<ExcelWorkbook xmlns="urn:schemas-microsoft-com:office:excel"><ProtectStructure>False</ProtectStructure><ProtectWindows>False</ProtectWindows></ExcelWorkbook>';
+            echo $styles;
+            echo $worksheet('Executive Summary', [190, 120, 330], $summaryRows, 6);
+            echo $worksheet('Room Performance', [190, 95, 130, 120], $roomRows, 5);
+            echo $worksheet('Members and Payments', [180, 210, 95, 145], $memberRows, 6);
+            echo $worksheet('Daily Activity', [105, 110, 120, 135, 130], $dailyRows, 5);
+            echo $worksheet('Shift Collections', [155, 95, 75, 100, 82, 105, 75, 110, 135], $shiftRows, 5);
+            echo '</Workbook>';
+        }, $fileName, [
+            'Content-Type' => 'application/vnd.ms-excel; charset=UTF-8',
+            'Cache-Control' => 'no-store, no-cache, must-revalidate',
         ]);
     }
 

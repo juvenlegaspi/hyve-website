@@ -24,6 +24,7 @@
     $fieldScope = old('scope', $activeEvent?->scope ?? HyveCalendarEvent::SCOPE_ALL_ROOMS);
     $fieldAllDay = old('all_day', $activeEvent?->all_day ?? true);
     $fieldAffectsBooking = old('affects_booking', $activeEvent?->affects_booking ?? ($fieldType === HyveCalendarEvent::TYPE_BLOCKED));
+    $fieldShowToMembers = old('show_to_members', $activeEvent?->show_to_members ?? ($fieldType === HyveCalendarEvent::TYPE_HOLIDAY));
     $fieldStatus = old('status', $activeEvent?->status ?? true);
     $fieldStartDate = old('start_date', optional($activeEvent?->start_date)->format('Y-m-d'));
     $fieldEndDate = old('end_date', optional($activeEvent?->end_date)->format('Y-m-d'));
@@ -241,6 +242,7 @@
                                     $timeLabel,
                                     $item->isHoliday() ? 'PH Holiday' : $tag,
                                     $scopeLabel,
+                                    ($item->source === HyveCalendarEvent::SOURCE_SYSTEM || $item->show_to_members) ? 'Visible to members' : 'Admin only',
                                     $item->notes,
                                 ]);
                             @endphp
@@ -434,6 +436,11 @@
                                     <label class="calendar-events-pill" data-calendar-affects-booking-pill>
                                         <input type="checkbox" name="affects_booking" value="1" @checked($fieldAffectsBooking) data-calendar-affects-booking>
                                         Block customer booking
+                                    </label>
+
+                                    <label class="calendar-events-pill">
+                                        <input type="checkbox" name="show_to_members" value="1" @checked($fieldShowToMembers)>
+                                        Show to members
                                     </label>
                                 @endif
 

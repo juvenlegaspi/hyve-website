@@ -19,6 +19,8 @@ return [
             'payments.manage',
             'messages.view',
             'messages.manage',
+            'announcements.view',
+            'announcements.manage',
             'sales_monitoring.view',
             'reports.view',
             'settings.view',
@@ -78,6 +80,7 @@ return [
         [
             'title' => 'Members',
             'items' => [
+                ['label' => 'Announcements', 'route' => 'admin.announcements.index', 'permission' => 'announcements.view'],
                 ['label' => 'Users', 'route' => 'admin.users.index', 'permission' => 'users.view'],
             ],
         ],
@@ -108,6 +111,7 @@ return [
         ['module' => 'Bookings', 'super_admin' => 'full', 'admin' => 'full', 'front_desk' => 'full', 'audit' => 'none', 'owner' => 'none'],
         ['module' => 'Payments', 'super_admin' => 'full', 'admin' => 'full', 'front_desk' => 'full', 'audit' => 'read', 'owner' => 'none'],
         ['module' => 'Messages', 'super_admin' => 'full', 'admin' => 'full', 'front_desk' => 'full', 'audit' => 'none', 'owner' => 'none'],
+        ['module' => 'Announcements', 'super_admin' => 'full', 'admin' => 'full', 'front_desk' => 'none', 'audit' => 'none', 'owner' => 'none'],
         ['module' => 'Sales Monitoring', 'super_admin' => 'full', 'admin' => 'read', 'front_desk' => 'none', 'audit' => 'read', 'owner' => 'read'],
         ['module' => 'Users', 'super_admin' => 'full', 'admin' => 'none', 'front_desk' => 'none', 'audit' => 'none', 'owner' => 'none'],
         ['module' => 'Credits', 'super_admin' => 'full', 'admin' => 'read', 'front_desk' => 'none', 'audit' => 'none', 'owner' => 'none'],

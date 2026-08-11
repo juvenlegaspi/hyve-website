@@ -99,6 +99,7 @@ class AdminCalendarEventController extends Controller
             'end_time' => $validated['all_day'] ? null : ($validated['end_time'] ?? null),
             'all_day' => $validated['all_day'],
             'affects_booking' => $validated['affects_booking'],
+            'show_to_members' => $validated['show_to_members'],
             'status' => true,
             'notes' => $validated['notes'] ?? null,
         ]);
@@ -124,6 +125,7 @@ class AdminCalendarEventController extends Controller
             'end_time' => $validated['all_day'] ? null : ($validated['end_time'] ?? null),
             'all_day' => $validated['all_day'],
             'affects_booking' => $calendarEvent->source === HyveCalendarEvent::SOURCE_SYSTEM ? false : $validated['affects_booking'],
+            'show_to_members' => $calendarEvent->source === HyveCalendarEvent::SOURCE_SYSTEM ? true : $validated['show_to_members'],
             'status' => (bool) $validated['status'],
             'notes' => $validated['notes'] ?? null,
         ]);
@@ -176,6 +178,7 @@ class AdminCalendarEventController extends Controller
             'start_time' => ['nullable', 'date_format:H:i'],
             'end_time' => ['nullable', 'date_format:H:i'],
             'affects_booking' => ['nullable', 'boolean'],
+            'show_to_members' => ['nullable', 'boolean'],
             'status' => ['nullable', 'boolean'],
             'notes' => ['nullable', 'string', 'max:255'],
             'room_ids' => ['nullable', 'array'],
@@ -184,6 +187,7 @@ class AdminCalendarEventController extends Controller
 
         $validated['all_day'] = (bool) ($validated['all_day'] ?? false);
         $validated['affects_booking'] = (bool) ($validated['affects_booking'] ?? false);
+        $validated['show_to_members'] = (bool) ($validated['show_to_members'] ?? false);
         $validated['status'] = (bool) ($validated['status'] ?? true);
         $validated['room_ids'] = array_values(array_unique(array_map('intval', $validated['room_ids'] ?? [])));
 
@@ -192,12 +196,14 @@ class AdminCalendarEventController extends Controller
             $validated['scope'] = HyveCalendarEvent::SCOPE_ALL_ROOMS;
             $validated['all_day'] = true;
             $validated['affects_booking'] = false;
+            $validated['show_to_members'] = true;
             $validated['room_ids'] = [];
         }
 
         if ($validated['type'] === HyveCalendarEvent::TYPE_HOLIDAY) {
             $validated['all_day'] = true;
             $validated['affects_booking'] = false;
+            $validated['show_to_members'] = true;
             $validated['scope'] = HyveCalendarEvent::SCOPE_ALL_ROOMS;
             $validated['room_ids'] = [];
         }

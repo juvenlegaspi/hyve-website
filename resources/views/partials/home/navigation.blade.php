@@ -38,6 +38,18 @@
             @endforeach
             @auth
                 <a href="{{ route('member.index') }}" class="nav-link @if (request()->routeIs('member.*')) is-active @endif">My bookings</a>
+                @unless (auth()->user()->isAdmin())
+                    <a
+                        href="{{ route('member.index') }}#hyve-announcements"
+                        class="member-notification-bell"
+                        aria-label="Member announcements"
+                        data-member-announcement-notification
+                        data-feed-url="{{ route('member.announcements.feed') }}"
+                    >
+                        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4.5 14.2h11l-1.4-2.1V8.5A4.1 4.1 0 0 0 10 4.4a4.1 4.1 0 0 0-4.1 4.1v3.6l-1.4 2.1Z"></path><path d="M8.2 15.2a1.8 1.8 0 0 0 3.6 0M10 2.3v1.5"></path></svg>
+                        <span class="hidden" data-member-announcement-badge>0</span>
+                    </a>
+                @endunless
             @endauth
             @guest
                 <a href="{{ route('login', ['return_to' => url()->full()]) }}" class="nav-link nav-link--muted">Log In</a>
@@ -72,6 +84,14 @@
         @endforeach
         @auth
             <a href="{{ route('member.index') }}" class="mobile-menu__link">My bookings</a>
+            @unless (auth()->user()->isAdmin())
+                <a
+                    href="{{ route('member.index') }}#hyve-announcements"
+                    class="mobile-menu__link member-mobile-announcement-link"
+                    data-member-announcement-notification
+                    data-feed-url="{{ route('member.announcements.feed') }}"
+                >Announcements <span class="hidden" data-member-announcement-badge>0</span></a>
+            @endunless
         @endauth
         @guest
             <a href="{{ route('login', ['return_to' => url()->full()]) }}" class="mobile-menu__link">Log In</a>

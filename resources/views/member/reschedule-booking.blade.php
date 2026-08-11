@@ -17,7 +17,7 @@
     @endphp
 
     <div class="site-shell">
-        @include('partials.home.navigation')
+        @include('partials.member.navigation')
 
         <main class="member-portal section-pad">
             <div class="section-wrap">

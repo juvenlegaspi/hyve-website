@@ -663,22 +663,244 @@ const setupMemberBookingsTabs = () => {
     const tabs = [...wrapper.querySelectorAll('[data-bookings-tab]')];
     const panels = [...wrapper.querySelectorAll('[data-bookings-panel]')];
 
+    const storageKey = 'hyve-member-bookings-active-tab';
+
     const activate = (target) => {
+        const safeTarget = tabs.some((tab) => tab.dataset.bookingsTab === target) ? target : 'upcoming';
         tabs.forEach((tab) => {
-            tab.classList.toggle('is-active', tab.dataset.bookingsTab === target);
+            tab.classList.toggle('is-active', tab.dataset.bookingsTab === safeTarget);
         });
 
         panels.forEach((panel) => {
-            const isActive = panel.dataset.bookingsPanel === target;
+            const isActive = panel.dataset.bookingsPanel === safeTarget;
             panel.classList.toggle('hidden', !isActive);
             panel.classList.toggle('is-active', isActive);
         });
+
+        try {
+            window.sessionStorage.setItem(storageKey, safeTarget);
+        } catch (error) {
+            // The tabs still work when browser storage is unavailable.
+        }
     };
 
     tabs.forEach((tab) => {
         tab.addEventListener('click', () => {
             activate(tab.dataset.bookingsTab || 'upcoming');
         });
+    });
+
+    try {
+        activate(window.sessionStorage.getItem(storageKey) || 'upcoming');
+    } catch (error) {
+        activate('upcoming');
+    }
+};
+
+const setupMemberBookingLiveSync = () => {
+    const root = document.querySelector('[data-member-booking-live-sync]');
+    if (!root) return;
+
+    const stateUrl = root.dataset.stateUrl || '';
+    let currentVersion = root.dataset.stateVersion || '';
+    let refreshing = false;
+
+    const refreshState = async () => {
+        if (!stateUrl || refreshing) return;
+
+        try {
+            const response = await fetch(stateUrl, {
+                headers: { Accept: 'application/json' },
+                cache: 'no-store',
+            });
+            if (!response.ok) return;
+
+            const data = await response.json();
+            const nextVersion = String(data.version || '');
+
+            if (!currentVersion) {
+                currentVersion = nextVersion;
+                return;
+            }
+
+            if (nextVersion && nextVersion !== currentVersion) {
+                refreshing = true;
+                root.querySelector('[data-member-booking-sync-notice]')?.classList.remove('hidden');
+                window.setTimeout(() => window.location.reload(), 350);
+            }
+        } catch (error) {
+            // Retry on the next interval if the connection is temporarily unavailable.
+        }
+    };
+
+    window.setInterval(refreshState, 5000);
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') refreshState();
+    });
+};
+
+const setupMemberLiveRooms = () => {
+    const root = document.querySelector('[data-member-live-rooms]');
+    if (!root) return;
+
+    const feedUrl = root.dataset.feedUrl || '';
+    const statusClasses = ['is-available', 'is-upcoming', 'is-occupied', 'is-unavailable'];
+
+    const refresh = async () => {
+        if (!feedUrl) return;
+
+        try {
+            const response = await fetch(feedUrl, {
+                headers: { Accept: 'application/json' },
+                cache: 'no-store',
+            });
+            if (!response.ok) return;
+
+            const data = await response.json();
+            const rooms = Array.isArray(data.rooms) ? data.rooms : [];
+
+            rooms.forEach((room) => {
+                const card = root.querySelector(`[data-live-room-card][data-room-id="${String(room.id)}"]`);
+                if (!card) return;
+
+                card.classList.remove(...statusClasses);
+                card.classList.add(`is-${String(room.status || 'unavailable')}`);
+
+                const updates = [
+                    ['[data-live-room-name]', room.room_name],
+                    ['[data-live-room-space]', room.space_label],
+                    ['[data-live-room-status]', room.status_label],
+                    ['[data-live-room-note]', room.status_note],
+                    ['[data-live-room-detail]', room.availability_detail],
+                ];
+                updates.forEach(([selector, value]) => {
+                    const element = card.querySelector(selector);
+                    if (element) element.textContent = String(value || '');
+                });
+
+                const bookingLink = card.querySelector('[data-live-room-book]');
+                if (bookingLink && room.book_url) bookingLink.href = room.book_url;
+            });
+
+            const availableCount = root.querySelector('[data-live-room-available-count]');
+            const totalCount = root.querySelector('[data-live-room-total-count]');
+            const updatedAt = root.querySelector('[data-live-room-updated]');
+            if (availableCount) availableCount.textContent = String(data.available_count ?? 0);
+            if (totalCount) totalCount.textContent = String(data.total_count ?? rooms.length);
+            if (updatedAt) updatedAt.textContent = String(data.generated_at || 'just now');
+        } catch (error) {
+            // Keep the last successful room snapshot while temporarily offline.
+        }
+    };
+
+    window.setInterval(refresh, 30000);
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') refresh();
+    });
+};
+
+const setupMemberAnnouncementNotifications = () => {
+    const notificationLinks = [...document.querySelectorAll('[data-member-announcement-notification]')];
+    const panel = document.querySelector('[data-member-announcements-panel]');
+    if (!notificationLinks.length && !panel) return;
+
+    const feedUrl = panel?.dataset.feedUrl || notificationLinks[0]?.dataset.feedUrl || '';
+    const csrfToken = panel?.dataset.csrfToken || '';
+    const lastAnnouncementKey = 'hyve-member-latest-announcement-id';
+    let initialized = false;
+
+    const updateBadges = (count) => {
+        notificationLinks.forEach((link) => {
+            const badge = link.querySelector('[data-member-announcement-badge]');
+            if (!badge) return;
+            badge.textContent = String(count);
+            badge.classList.toggle('hidden', count < 1);
+            link.setAttribute('aria-label', `${count} unread HYVE ${count === 1 ? 'announcement' : 'announcements'}`);
+        });
+    };
+
+    const refresh = async () => {
+        if (!feedUrl) return;
+
+        try {
+            const response = await fetch(feedUrl, { headers: { Accept: 'application/json' }, cache: 'no-store' });
+            if (!response.ok) return;
+            const data = await response.json();
+            const unreadTotal = Number(data.unread_total || 0);
+            const latestId = Number(data.latest_announcement?.id || 0);
+            const previousId = Number(window.localStorage.getItem(lastAnnouncementKey) || 0);
+            updateBadges(unreadTotal);
+
+            if (initialized && latestId > previousId && 'Notification' in window && window.Notification.permission === 'granted') {
+                const browserNotice = new window.Notification('New HYVE announcement', {
+                    body: data.latest_announcement?.title || 'Open your member dashboard to read the update.',
+                    icon: '/images/logohyve.jpg',
+                    tag: `hyve-member-announcement-${latestId}`,
+                });
+                browserNotice.onclick = () => {
+                    window.focus();
+                    window.location.href = notificationLinks[0]?.href || `${window.location.origin}/member-dashboard#hyve-announcements`;
+                    browserNotice.close();
+                };
+            }
+
+            if (latestId > 0) window.localStorage.setItem(lastAnnouncementKey, String(latestId));
+            initialized = true;
+        } catch (error) {
+            // Keep the previous badge while temporarily offline.
+        }
+    };
+
+    const postRead = async (url) => {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'X-CSRF-TOKEN': csrfToken,
+            },
+        });
+        if (!response.ok) throw new Error('Unable to update announcement status.');
+    };
+
+    panel?.addEventListener('click', async (event) => {
+        const readButton = event.target.closest('[data-announcement-read-url]');
+        const readAllButton = event.target.closest('[data-member-announcements-read-all]');
+        if (!readButton && !readAllButton) return;
+
+        const button = readButton || readAllButton;
+        button.disabled = true;
+
+        try {
+            await postRead(readButton?.dataset.announcementReadUrl || panel.dataset.readAllUrl || '');
+
+            if (readButton) {
+                const article = readButton.closest('.member-announcement-item');
+                article?.classList.remove('is-unread');
+                const readLabel = document.createElement('span');
+                readLabel.className = 'member-announcement-item__read';
+                readLabel.textContent = 'Read';
+                readButton.replaceWith(readLabel);
+            } else {
+                panel.querySelectorAll('.member-announcement-item.is-unread').forEach((article) => article.classList.remove('is-unread'));
+                panel.querySelectorAll('[data-announcement-read-url]').forEach((itemButton) => {
+                    const readLabel = document.createElement('span');
+                    readLabel.className = 'member-announcement-item__read';
+                    readLabel.textContent = 'Read';
+                    itemButton.replaceWith(readLabel);
+                });
+                readAllButton.remove();
+            }
+
+            await refresh();
+        } catch (error) {
+            button.disabled = false;
+        }
+    });
+
+    refresh();
+    window.setInterval(refresh, 10000);
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') refresh();
     });
 };
 
@@ -2136,6 +2358,9 @@ const setupBookingPageV2 = () => {
     const startSlots = form.querySelector('[data-start-slots]');
     const endSlots = form.querySelector('[data-end-slots]');
     const manualStartInput = form.querySelector('[data-walk-in-manual-start-time]');
+    const manualStartHour = form.querySelector('[data-walk-in-manual-start-hour]');
+    const manualStartMinute = form.querySelector('[data-walk-in-manual-start-minute]');
+    const manualStartPeriod = form.querySelector('[data-walk-in-manual-start-period]');
     const manualStartApply = form.querySelector('[data-walk-in-manual-start-apply]');
     const manualStartError = form.querySelector('[data-walk-in-manual-start-error]');
     const startStep = form.querySelector('[data-start-step]');
@@ -2254,6 +2479,7 @@ const setupBookingPageV2 = () => {
     }
 
     let blockedDates = new Set();
+    let recurringClosureDates = new Set();
     let unavailableDatesRoomId = '';
     let currentQuote = null;
     let openTimeQuote = null;
@@ -2321,6 +2547,43 @@ const setupBookingPageV2 = () => {
 
     const manualStartIsActive = () => isAdminMode && manualStartFlag?.value === '1';
 
+    const setManualStartControls = (value = '') => {
+        if (!manualStartInput || !manualStartHour || !manualStartMinute || !manualStartPeriod) return;
+
+        const [hourValue, minuteValue] = String(value).split(':').map(Number);
+
+        if (!Number.isInteger(hourValue) || !Number.isInteger(minuteValue)) {
+            manualStartInput.value = '';
+            manualStartHour.value = '';
+            manualStartMinute.value = '';
+            manualStartPeriod.value = '';
+            return;
+        }
+
+        manualStartInput.value = `${String(hourValue).padStart(2, '0')}:${String(minuteValue).padStart(2, '0')}`;
+        manualStartHour.value = String(hourValue % 12 || 12);
+        manualStartMinute.value = String(minuteValue).padStart(2, '0');
+        manualStartPeriod.value = hourValue >= 12 ? 'PM' : 'AM';
+    };
+
+    const syncManualStartValue = () => {
+        if (!manualStartInput || !manualStartHour || !manualStartMinute || !manualStartPeriod) return '';
+
+        const hour = Number(manualStartHour.value);
+        const minute = Number(manualStartMinute.value);
+        const period = manualStartPeriod.value;
+
+        if (!Number.isInteger(hour) || hour < 1 || hour > 12 || !Number.isInteger(minute) || minute < 0 || minute > 59 || !['AM', 'PM'].includes(period)) {
+            manualStartInput.value = '';
+            return '';
+        }
+
+        const hour24 = period === 'AM' ? hour % 12 : (hour % 12) + 12;
+        manualStartInput.value = `${String(hour24).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+
+        return manualStartInput.value;
+    };
+
     const syncManualStartConstraints = () => {
         if (!manualStartInput) return;
 
@@ -2330,7 +2593,7 @@ const setupBookingPageV2 = () => {
 
     const clearManualStart = (clearValue = true) => {
         if (manualStartFlag) manualStartFlag.value = '0';
-        if (manualStartInput && clearValue) manualStartInput.value = '';
+        if (manualStartInput && clearValue) setManualStartControls('');
         manualStartError?.classList.add('hidden');
     };
 
@@ -3352,7 +3615,7 @@ const setupBookingPageV2 = () => {
         while (cursor <= end) {
             const value = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
 
-            if (blockedDates.has(value)) {
+            if (blockedDates.has(value) && !recurringClosureDates.has(value)) {
                 return true;
             }
 
@@ -3380,7 +3643,7 @@ const setupBookingPageV2 = () => {
         while (cursor <= end) {
             const value = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
 
-            if (blockedDates.has(value)) {
+            if (blockedDates.has(value) && !recurringClosureDates.has(value)) {
                 matches.push(value);
             }
 
@@ -3401,8 +3664,12 @@ const setupBookingPageV2 = () => {
 
         monthlyBlockedOpen.disabled = false;
 
-        if (!blockedDates.size) {
-            monthlyBlockedNote.textContent = 'No blocked stay dates found yet for this room within the current booking window.';
+        const actualBlockedDates = [...blockedDates].filter((value) => !recurringClosureDates.has(value));
+
+        if (!actualBlockedDates.length) {
+            monthlyBlockedNote.textContent = recurringClosureDates.size
+                ? 'No conflicting bookings found. Sundays inside a weekly or monthly stay are included in the plan period but have no HYVE access.'
+                : 'No blocked stay dates found yet for this room within the current booking window.';
             monthlyStartDateInput.setCustomValidity('');
             monthlyEndDateInput.setCustomValidity('');
             return;
@@ -3423,7 +3690,7 @@ const setupBookingPageV2 = () => {
             return;
         }
 
-        const upcomingBlockedDates = [...blockedDates]
+        const upcomingBlockedDates = actualBlockedDates
             .filter((value) => value >= (monthlyStartDateInput.min || todayValue))
             .slice(0, 4)
             .map((value) => formatDate(value));
@@ -3477,7 +3744,9 @@ const setupBookingPageV2 = () => {
                 button.classList.add('is-range-edge');
             }
 
-            if (blockedDates.has(value)) {
+            if (recurringClosureDates.has(value)) {
+                button.classList.add('is-closed');
+            } else if (blockedDates.has(value)) {
                 button.classList.add('is-booked');
             }
 
@@ -3487,7 +3756,9 @@ const setupBookingPageV2 = () => {
 
     const renderMonthlyBlockedModal = () => {
         const roomCard = getSelectedRoomCard();
-        const blockedDateValues = [...blockedDates].sort((a, b) => a.localeCompare(b));
+        const blockedDateValues = [...blockedDates]
+            .filter((value) => !recurringClosureDates.has(value))
+            .sort((a, b) => a.localeCompare(b));
 
         monthlyBlockedTitle.textContent = roomCard
             ? `${roomCard.dataset.roomName || 'Room'} blocked dates`
@@ -3753,9 +4024,15 @@ const setupBookingPageV2 = () => {
         const commonAvailabilityMessage = commonAvailability
             ? ` ${commonAvailability.available_tables} of ${commonAvailability.total_tables} Common Area tables remain available; HYVE will assign one table automatically.`
             : '';
+        const hasSundayClosure = [...recurringClosureDates].some((value) => (
+            value >= bookingDateInput.value && value <= (data.booking_end_date || bookingEndDateInput.value)
+        ));
+        const sundayExclusionMessage = hasSundayClosure
+            ? ' Sundays within this plan period have no HYVE access while the Sunday closure is active.'
+            : '';
         monthlyPlanDescription.textContent = (data.long_stay_use_label
             ? `Automatic breakdown applied: ${data.long_stay_use_label} - ${data.monthly_plan_label || '--'}. Review the total below, then continue to checkout.`
-            : `Automatic breakdown applied: ${data.monthly_plan_label || '--'}. Review the total below, then continue to checkout.`) + commonAvailabilityMessage;
+            : `Automatic breakdown applied: ${data.monthly_plan_label || '--'}. Review the total below, then continue to checkout.`) + commonAvailabilityMessage + sundayExclusionMessage;
         monthlyInlineSummary.classList.remove('hidden');
         monthlyContinue.disabled = false;
         syncStudentVerification(selectedCommonMonthlyPlan());
@@ -3961,7 +4238,8 @@ const setupBookingPageV2 = () => {
             button.type = 'button';
             button.className = 'booking-calendar-day';
             button.textContent = String(day);
-            const isBlocked = blockedDates.has(value);
+            const isRecurringClosure = recurringClosureDates.has(value);
+            const isBlocked = blockedDates.has(value) && !isRecurringClosure;
             const isBeforeToday = value < todayValue;
             const roomMissing = !roomSelect.value;
 
@@ -3977,7 +4255,10 @@ const setupBookingPageV2 = () => {
                 button.classList.add('is-range-edge');
             }
 
-            if (isBlocked) {
+            if (isRecurringClosure) {
+                button.classList.add('is-closed');
+                button.title = 'Sunday is included in long-stay periods, but HYVE access is closed.';
+            } else if (isBlocked) {
                 button.classList.add('is-booked');
             }
 
@@ -4282,6 +4563,7 @@ const setupBookingPageV2 = () => {
     const fetchUnavailableDates = async (requestedStart = '', requestedEnd = '') => {
         if (!roomSelect.value) {
             blockedDates = new Set();
+            recurringClosureDates = new Set();
             unavailableDatesRoomId = '';
             renderCalendar();
             renderMonthlyCalendar();
@@ -4293,6 +4575,7 @@ const setupBookingPageV2 = () => {
 
         if (unavailableDatesRoomId !== activeRoomId) {
             blockedDates = new Set();
+            recurringClosureDates = new Set();
             unavailableDatesRoomId = activeRoomId;
         }
 
@@ -4325,9 +4608,15 @@ const setupBookingPageV2 = () => {
                 blockedDates.delete(value);
             }
         });
+        recurringClosureDates.forEach((value) => {
+            if (value >= rangeStart && value <= actualEndValue) {
+                recurringClosureDates.delete(value);
+            }
+        });
 
         const data = await fetchJson(`${unavailableDatesUrl}?hyve_room_id=${encodeURIComponent(activeRoomId)}&start_date=${encodeURIComponent(rangeStart)}&horizon_days=${encodeURIComponent(days)}`);
         (Array.isArray(data.unavailable_dates) ? data.unavailable_dates : []).forEach((item) => blockedDates.add(item.value));
+        (Array.isArray(data.recurring_closure_dates) ? data.recurring_closure_dates : []).forEach((item) => recurringClosureDates.add(item.value));
         renderCalendar();
         renderMonthlyCalendar();
         updateMonthlyBlockedNote();
@@ -4413,7 +4702,7 @@ const setupBookingPageV2 = () => {
             return;
         }
 
-        const value = manualStartInput.value;
+        const value = syncManualStartValue();
         const showError = (message) => {
             if (manualStartError) {
                 manualStartError.textContent = message;
@@ -4864,7 +5153,9 @@ const setupBookingPageV2 = () => {
     });
 
     manualStartApply?.addEventListener('click', applyManualWalkInStart);
-    manualStartInput?.addEventListener('change', applyManualWalkInStart);
+    [manualStartHour, manualStartMinute, manualStartPeriod].forEach((control) => {
+        control?.addEventListener('change', syncManualStartValue);
+    });
     paymentMethod.addEventListener('change', updatePaymentDestination);
     downpaymentInput.addEventListener('input', () => updateBalance(false));
     downpaymentInput.addEventListener('blur', () => updateBalance(true));
@@ -5177,7 +5468,7 @@ const setupBookingPageV2 = () => {
 
                 if (initialManualStart && manualStartFlag && manualStartInput) {
                     manualStartFlag.value = '1';
-                    manualStartInput.value = initialStartTime;
+                    setManualStartControls(initialStartTime);
                     setSelectOptions(startSelect, [{ value: initialStartTime, label: timeLabelForValue(initialStartTime) }], initialStartTime);
                 } else {
                     startSelect.value = initialStartTime;
@@ -5403,16 +5694,19 @@ const setupHyveFaqChat = () => {
     const conversationWrap = chat.querySelector('[data-hyve-support-conversation]');
     const messagesWrap = chat.querySelector('[data-hyve-support-messages]');
     const statusLabel = chat.querySelector('[data-hyve-support-status]');
+    const modeLabel = chat.querySelector('[data-hyve-support-mode]');
     const replyForm = chat.querySelector('[data-hyve-support-reply-form]');
     const replyFeedback = chat.querySelector('[data-hyve-support-reply-feedback]');
     const newConversationButton = chat.querySelector('[data-hyve-support-new]');
     const forgetConversationButton = chat.querySelector('[data-hyve-support-forget]');
+    const handoffButton = chat.querySelector('[data-hyve-support-handoff]');
     const createUrl = chat.dataset.supportCreateUrl || '';
     const csrfToken = chat.dataset.csrfToken || '';
     const storageKey = 'hyve-support-conversation-token';
     let conversationToken = '';
     let pollUrl = '';
     let messageUrl = '';
+    let handoffUrl = '';
     let lastMessageSignature = '';
 
     if (!panel || !toggle || !answer) {
@@ -5454,6 +5748,7 @@ const setupHyveFaqChat = () => {
         conversationToken = String(data.token || conversationToken);
         pollUrl = String(data.poll_url || pollUrl);
         messageUrl = String(data.message_url || messageUrl);
+        handoffUrl = String(data.handoff_url || handoffUrl);
         const messages = Array.isArray(data.messages) ? data.messages : [];
         const signature = messages.map((message) => message.id).join(',');
 
@@ -5468,6 +5763,8 @@ const setupHyveFaqChat = () => {
         startForm?.setAttribute('hidden', 'hidden');
         if (conversationWrap) conversationWrap.hidden = false;
         if (statusLabel) statusLabel.textContent = data.status || 'open';
+        if (modeLabel) modeLabel.textContent = data.mode === 'front_desk' ? 'HYVE Front Desk' : 'HYVE Assistant';
+        if (handoffButton) handoffButton.hidden = data.mode === 'front_desk';
 
         if (messagesWrap && signature !== lastMessageSignature) {
             lastMessageSignature = signature;
@@ -5479,7 +5776,7 @@ const setupHyveFaqChat = () => {
                 const body = document.createElement('div');
                 const time = document.createElement('time');
                 bubble.className = `hyve-support-chat__bubble${sender === 'customer' ? ' is-customer' : ''}`;
-                senderName.textContent = message.sender_name || (sender === 'admin' ? 'HYVE Front Desk' : 'You');
+                senderName.textContent = message.sender_name || (sender === 'admin' ? 'HYVE Front Desk' : (sender === 'assistant' ? 'HYVE Assistant' : 'You'));
                 body.textContent = message.body || '';
                 time.textContent = message.created_at || '';
                 bubble.append(senderName, body);
@@ -5528,6 +5825,7 @@ const setupHyveFaqChat = () => {
         conversationToken = '';
         pollUrl = '';
         messageUrl = '';
+        handoffUrl = '';
         lastMessageSignature = '';
         try {
             window.localStorage.removeItem(storageKey);
@@ -5558,6 +5856,23 @@ const setupHyveFaqChat = () => {
     forgetConversationButton?.addEventListener('click', () => {
         if (window.confirm('Forget this conversation on this device? The Front Desk record will remain until an admin deletes it.')) {
             resetLocalConversation({ returnToFaq: true });
+        }
+    });
+
+    handoffButton?.addEventListener('click', async () => {
+        if (!handoffUrl) return;
+        handoffButton.disabled = true;
+        if (replyFeedback) replyFeedback.textContent = 'Connecting you to the HYVE Front Desk...';
+        try {
+            renderConversation(await requestJson(handoffUrl, {
+                method: 'POST',
+                body: JSON.stringify({}),
+            }));
+            if (replyFeedback) replyFeedback.textContent = 'The Front Desk has been notified and can reply here.';
+        } catch (error) {
+            if (replyFeedback) replyFeedback.textContent = error.message;
+        } finally {
+            handoffButton.disabled = false;
         }
     });
 
@@ -5654,6 +5969,7 @@ const setupAdminSupportMessages = () => {
     const active = root.querySelector('[data-admin-support-active]');
     const name = root.querySelector('[data-admin-support-name]');
     const contact = root.querySelector('[data-admin-support-contact]');
+    const mode = root.querySelector('[data-admin-support-mode]');
     const messagesWrap = root.querySelector('[data-admin-support-messages]');
     const replyForm = root.querySelector('[data-admin-support-reply-form]');
     const feedback = root.querySelector('[data-admin-support-feedback]');
@@ -5715,6 +6031,7 @@ const setupAdminSupportMessages = () => {
             const meta = document.createElement('div');
             const status = document.createElement('span');
             const contactText = document.createElement('span');
+            const modeBadge = document.createElement('span');
             button.type = 'button';
             button.className = `block w-full border-b border-[#edf1e9] px-4 py-3 text-left transition hover:bg-[#f8faf5]${Number(conversation.id) === Number(selectedId) ? ' bg-[#f1f7e9]' : ''}`;
             top.className = 'flex items-center justify-between gap-2';
@@ -5727,10 +6044,12 @@ const setupAdminSupportMessages = () => {
             meta.className = 'mt-1.5 flex items-center gap-2 text-[0.59rem]';
             status.className = `rounded-full px-2 py-0.5 font-bold ${conversation.status === 'closed' ? 'bg-[#eee] text-[#777]' : 'bg-[#e8f4dd] text-[#3c713c]'}`;
             status.textContent = conversation.status || 'open';
+            modeBadge.className = `rounded-full px-2 py-0.5 font-bold ${conversation.mode === 'front_desk' ? 'bg-[#edf0ff] text-[#4e5e9c]' : 'bg-[#f1eadd] text-[#8b692c]'}`;
+            modeBadge.textContent = conversation.mode === 'front_desk' ? 'Front Desk' : 'Assistant';
             contactText.className = 'min-w-0 flex-1 truncate text-[#9a9f97]';
             contactText.textContent = conversation.contact || '';
             top.append(customerName, time);
-            meta.append(status, contactText);
+            meta.append(status, modeBadge, contactText);
             if (Number(conversation.unread_count || 0) > 0) {
                 const badge = document.createElement('span');
                 badge.className = 'rounded-full bg-[#dc3f36] px-1.5 py-0.5 font-bold text-white';
@@ -5761,6 +6080,10 @@ const setupAdminSupportMessages = () => {
         active?.classList.add('flex');
         if (name) name.textContent = conversation.customer_name || 'Website visitor';
         if (contact) contact.textContent = [conversation.email, conversation.phone].filter(Boolean).join(' · ') || 'No contact provided';
+        if (mode) {
+            mode.textContent = conversation.mode === 'front_desk' ? 'Front Desk conversation' : 'HYVE Assistant conversation';
+            mode.className = `mt-1 inline-flex rounded-full px-2 py-0.5 text-[0.61rem] font-bold ${conversation.mode === 'front_desk' ? 'bg-[#edf0ff] text-[#4e5e9c]' : 'bg-[#f1eadd] text-[#8b692c]'}`;
+        }
         if (statusButton) statusButton.textContent = conversation.status === 'closed' ? 'Reopen conversation' : 'Close conversation';
         if (bookingMatch) {
             if (conversation.booking_match?.count > 0) {
@@ -5784,7 +6107,8 @@ const setupAdminSupportMessages = () => {
             const body = document.createElement('div');
             const time = document.createElement('time');
             const isAdmin = message.sender === 'admin';
-            article.className = `max-w-[82%] rounded-[1rem] px-3.5 py-2.5 text-[0.75rem] leading-relaxed shadow-sm ${isAdmin ? 'ml-auto rounded-br-[0.25rem] bg-[#34753d] text-white' : 'mr-auto rounded-bl-[0.25rem] border border-[#e0e7dc] bg-white text-[#284138]'}`;
+            const isAssistant = message.sender === 'assistant';
+            article.className = `max-w-[82%] rounded-[1rem] px-3.5 py-2.5 text-[0.75rem] leading-relaxed shadow-sm ${isAdmin ? 'ml-auto rounded-br-[0.25rem] bg-[#34753d] text-white' : (isAssistant ? 'mr-auto rounded-bl-[0.25rem] border border-[#e5dcc9] bg-[#fffaf0] text-[#5d4a28]' : 'mr-auto rounded-bl-[0.25rem] border border-[#e0e7dc] bg-white text-[#284138]')}`;
             sender.className = 'mb-0.5 block text-[0.62rem] font-bold opacity-75';
             sender.textContent = message.sender_name || (isAdmin ? 'HYVE Front Desk' : conversation.customer_name);
             body.textContent = message.body || '';
@@ -5945,10 +6269,10 @@ const setupAdminSupportMessages = () => {
 
 const setupAdminMessageBadge = () => {
     const root = document.querySelector('[data-admin-message-badge-root]');
-    const badge = root?.querySelector('[data-admin-message-badge]');
+    const badges = [...document.querySelectorAll('[data-admin-message-badge]')];
     const unreadUrl = root?.dataset.unreadUrl || '';
     const messagesUrl = root?.dataset.messagesUrl || '';
-    if (!root || !badge || !unreadUrl) return;
+    if (!root || !badges.length || !unreadUrl) return;
     const lastAlertKey = 'hyve-admin-last-alert-message-id';
     let audioContext = null;
 
@@ -5987,9 +6311,11 @@ const setupAdminMessageBadge = () => {
             const count = Number(data.unread_total || 0);
             const latestMessageId = Number(data.latest_message?.id || 0);
             const previousMessageId = Number(window.localStorage.getItem(lastAlertKey) || 0);
-            badge.textContent = String(count);
-            badge.setAttribute('aria-label', `${count} unread customer ${count === 1 ? 'conversation' : 'conversations'}`);
-            badge.classList.toggle('hidden', count < 1);
+            badges.forEach((badge) => {
+                badge.textContent = String(count);
+                badge.setAttribute('aria-label', `${count} unread customer ${count === 1 ? 'conversation' : 'conversations'}`);
+                badge.classList.toggle('hidden', count < 1);
+            });
             if (latestMessageId > 0 && previousMessageId > 0 && latestMessageId > previousMessageId && window.localStorage.getItem('hyve-admin-chat-alerts') === '1') {
                 playAlertSound();
                 if ('Notification' in window && window.Notification.permission === 'granted') {
@@ -6017,10 +6343,10 @@ const setupAdminMessageBadge = () => {
 
 const setupAdminOnlineBookingBadge = () => {
     const root = document.querySelector('[data-admin-booking-badge-root]');
-    const badge = root?.querySelector('[data-admin-booking-badge]');
+    const badges = [...document.querySelectorAll('[data-admin-booking-badge]')];
     const unreadUrl = root?.dataset.bookingUnreadUrl || '';
     const bookingsUrl = root?.dataset.bookingsUrl || '';
-    if (!root || !badge || !unreadUrl) return;
+    if (!root || !badges.length || !unreadUrl) return;
 
     const lastAlertKey = 'hyve-admin-last-online-booking-activity-id';
     let initialized = false;
@@ -6035,9 +6361,11 @@ const setupAdminOnlineBookingBadge = () => {
             const latestId = Number(data.latest_booking?.id || 0);
             const previousId = Number(window.localStorage.getItem(lastAlertKey) || 0);
 
-            badge.textContent = String(count);
-            badge.setAttribute('aria-label', `${count} new online ${count === 1 ? 'booking' : 'bookings'}`);
-            badge.classList.toggle('hidden', count < 1);
+            badges.forEach((badge) => {
+                badge.textContent = String(count);
+                badge.setAttribute('aria-label', `${count} new online ${count === 1 ? 'booking' : 'bookings'}`);
+                badge.classList.toggle('hidden', count < 1);
+            });
 
             if (initialized && latestId > previousId && window.localStorage.getItem('hyve-admin-chat-alerts') === '1') {
                 if ('Notification' in window && window.Notification.permission === 'granted') {
@@ -6066,12 +6394,42 @@ const setupAdminOnlineBookingBadge = () => {
     window.setInterval(refresh, 10000);
 };
 
+const setupAdminMobileNav = () => {
+    const drawer = document.querySelector('[data-admin-mobile-nav]');
+    const openButton = document.querySelector('[data-admin-mobile-nav-open]');
+    const closeButtons = [...document.querySelectorAll('[data-admin-mobile-nav-close]')];
+    if (!drawer || !openButton || !closeButtons.length) return;
+
+    const setOpen = (isOpen) => {
+        drawer.classList.toggle('hidden', !isOpen);
+        drawer.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+        openButton.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        document.body.classList.toggle('overflow-hidden', isOpen);
+
+        if (isOpen) {
+            drawer.querySelector('[data-admin-mobile-nav-close]')?.focus();
+        } else {
+            openButton.focus();
+        }
+    };
+
+    openButton.addEventListener('click', () => setOpen(true));
+    closeButtons.forEach((button) => button.addEventListener('click', () => setOpen(false)));
+    drawer.querySelectorAll('a').forEach((link) => link.addEventListener('click', () => setOpen(false)));
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && drawer.getAttribute('aria-hidden') === 'false') setOpen(false);
+    });
+};
+
 document.addEventListener('DOMContentLoaded', () => {
     setupNav();
     setupAmenitiesGallery();
     setupAdminRoomModals();
     setupMemberMenu();
     setupMemberBookingsTabs();
+    setupMemberBookingLiveSync();
+    setupMemberLiveRooms();
+    setupMemberAnnouncementNotifications();
     setupMemberBookingModal();
     setupAgreementModals();
     setupSpacesBrowser();
@@ -6083,4 +6441,5 @@ document.addEventListener('DOMContentLoaded', () => {
     setupAdminSupportMessages();
     setupAdminMessageBadge();
     setupAdminOnlineBookingBadge();
+    setupAdminMobileNav();
 });

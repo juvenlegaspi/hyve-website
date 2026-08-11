@@ -2,9 +2,9 @@
 
 namespace Tests\Feature;
 
+use App\Models\BookingHeader;
 use App\Models\SupportConversation;
 use App\Models\SupportMessage;
-use App\Models\BookingHeader;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
@@ -13,6 +13,56 @@ use Tests\TestCase;
 class SupportChatTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_hyve_assistant_replies_instantly_without_notifying_front_desk(): void
+    {
+        $frontDesk = User::factory()->create(['role' => User::ROLE_FRONT_DESK]);
+
+        $created = $this->postJson(route('support.conversations.store'), [
+            'customer_name' => 'AI Customer',
+            'email' => 'ai@example.com',
+            'message' => 'How much are the room rates?',
+            'mode' => SupportConversation::MODE_ASSISTANT,
+        ])->assertCreated()
+            ->assertJsonPath('mode', SupportConversation::MODE_ASSISTANT)
+            ->assertJsonPath('messages.1.sender', SupportMessage::SENDER_ASSISTANT)
+            ->assertJsonPath('messages.1.sender_name', 'HYVE Assistant')
+            ->assertJsonPath('messages.1.action.label', 'View Rates and Book');
+
+        $this->assertDatabaseCount('support_messages', 2);
+        $this->actingAs($frontDesk)
+            ->getJson(route('admin.messages.unread'))
+            ->assertOk()
+            ->assertJsonPath('unread_total', 0);
+
+        $token = (string) $created->json('token');
+        $this->postJson(route('support.conversations.message', $token), [
+            'message' => 'I want to talk to the front desk.',
+        ])->assertOk()
+            ->assertJsonPath('mode', SupportConversation::MODE_FRONT_DESK)
+            ->assertJsonPath('messages.3.sender', SupportMessage::SENDER_ASSISTANT);
+
+        $this->actingAs($frontDesk)
+            ->getJson(route('admin.messages.unread'))
+            ->assertOk()
+            ->assertJsonPath('unread_total', 1)
+            ->assertJsonPath('latest_message.customer_name', 'AI Customer');
+    }
+
+    public function test_customer_can_manually_handoff_assistant_conversation_to_front_desk(): void
+    {
+        $created = $this->postJson(route('support.conversations.store'), [
+            'customer_name' => 'Handoff Customer',
+            'phone' => '09170000000',
+            'message' => 'Hello',
+            'mode' => SupportConversation::MODE_ASSISTANT,
+        ])->assertCreated();
+
+        $this->postJson(route('support.conversations.handoff', $created->json('token')))
+            ->assertOk()
+            ->assertJsonPath('mode', SupportConversation::MODE_FRONT_DESK)
+            ->assertJsonPath('messages.2.sender', SupportMessage::SENDER_ASSISTANT);
+    }
 
     public function test_customer_can_start_and_continue_a_private_support_conversation(): void
     {

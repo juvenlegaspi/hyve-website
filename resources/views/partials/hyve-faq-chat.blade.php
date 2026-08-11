@@ -15,8 +15,8 @@
         <header class="hyve-faq-chat__header">
             <div class="hyve-faq-chat__brand" aria-hidden="true">H</div>
             <div>
-                <strong>HYVE Help</strong>
-                <span>Quick answers &middot; Available 24/7</span>
+                <strong>HYVE Assistant</strong>
+                <span>Instant HYVE answers &middot; Front Desk available</span>
             </div>
             <button type="button" class="hyve-faq-chat__close" data-hyve-faq-close aria-label="Close HYVE Help">&times;</button>
         </header>
@@ -42,8 +42,8 @@
             </div>
 
             <button type="button" class="hyve-faq-chat__staff-button" data-hyve-support-open>
-                Message the HYVE Front Desk
-                <span>Start a real conversation with our staff</span>
+                Chat with HYVE Assistant
+                <span>Get an instant answer or choose the Front Desk</span>
             </button>
         </div>
 
@@ -51,8 +51,8 @@
             <button type="button" class="hyve-faq-chat__back" data-hyve-support-back>&larr; Back to quick answers</button>
 
             <div class="hyve-support-chat__intro">
-                <strong>Chat with HYVE Front Desk</strong>
-                <p>Send your question here. Staff replies will appear in this conversation automatically.</p>
+                <strong>Start a HYVE conversation</strong>
+                <p>The HYVE Assistant replies instantly. You may choose the Front Desk now or switch to staff at any time.</p>
             </div>
 
             <form class="hyve-support-chat__start" data-hyve-support-start-form>
@@ -74,18 +74,30 @@
                     <span>Your question</span>
                     <textarea name="message" rows="3" maxlength="2000" required placeholder="How can HYVE help you?"></textarea>
                 </label>
+                <fieldset class="hyve-support-chat__mode-picker">
+                    <legend>Who would you like to chat with?</legend>
+                    <label>
+                        <input type="radio" name="mode" value="assistant" checked>
+                        <span><strong>HYVE Assistant</strong><small>Instant answers, available anytime</small></span>
+                    </label>
+                    <label>
+                        <input type="radio" name="mode" value="front_desk">
+                        <span><strong>HYVE Front Desk</strong><small>A staff member will reply here</small></span>
+                    </label>
+                </fieldset>
                 <button type="submit">Start conversation</button>
                 <p class="hyve-support-chat__feedback" data-hyve-support-start-feedback></p>
             </form>
 
             <div class="hyve-support-chat__conversation" data-hyve-support-conversation hidden>
-                <div class="hyve-support-chat__status"><span data-hyve-support-status>Open</span> conversation</div>
+                <div class="hyve-support-chat__status"><span data-hyve-support-mode>HYVE Assistant</span> &middot; <span data-hyve-support-status>Open</span></div>
                 <div class="hyve-support-chat__messages" data-hyve-support-messages aria-live="polite"></div>
                 <form class="hyve-support-chat__reply" data-hyve-support-reply-form>
                     <textarea name="message" rows="2" maxlength="2000" required placeholder="Type a message..."></textarea>
                     <button type="submit" aria-label="Send message">Send</button>
                 </form>
                 <p class="hyve-support-chat__feedback" data-hyve-support-reply-feedback></p>
+                <button type="button" class="hyve-support-chat__handoff" data-hyve-support-handoff>Chat with HYVE Front Desk</button>
                 <div class="hyve-support-chat__controls">
                     <button type="button" data-hyve-support-new>Start New Conversation</button>
                     <button type="button" data-hyve-support-forget>Forget This Conversation</button>

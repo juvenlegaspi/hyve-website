@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Admin\AdminAnnouncementController;
 use App\Http\Controllers\Admin\AdminAuthController;
 use App\Http\Controllers\Admin\AdminBookingController;
 use App\Http\Controllers\Admin\AdminCalendarEventController;
@@ -9,9 +10,9 @@ use App\Http\Controllers\Admin\AdminPricingRuleController;
 use App\Http\Controllers\Admin\AdminRoleController;
 use App\Http\Controllers\Admin\AdminRoomController;
 use App\Http\Controllers\Admin\AdminRoomScheduleController;
+use App\Http\Controllers\Admin\AdminSalesMonitoringController;
 use App\Http\Controllers\Admin\AdminSectionController;
 use App\Http\Controllers\Admin\AdminSettingController;
-use App\Http\Controllers\Admin\AdminSalesMonitoringController;
 use App\Http\Controllers\Admin\AdminSupportMessageController;
 use App\Http\Controllers\Admin\AdminUserController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
@@ -20,6 +21,7 @@ use App\Http\Controllers\Auth\PasswordResetLinkController;
 use App\Http\Controllers\Auth\RegisteredUserController;
 use App\Http\Controllers\BookingController;
 use App\Http\Controllers\HomeController;
+use App\Http\Controllers\MemberAnnouncementController;
 use App\Http\Controllers\MemberPortalController;
 use App\Http\Controllers\OwnerAuthController;
 use App\Http\Controllers\SupportChatController;
@@ -81,10 +83,14 @@ Route::middleware('throttle:30,1')->prefix('support')->name('support.')->group(f
     Route::post('/conversations', [SupportChatController::class, 'store'])->name('conversations.store');
     Route::get('/conversations/{publicToken}', [SupportChatController::class, 'show'])->name('conversations.show');
     Route::post('/conversations/{publicToken}/messages', [SupportChatController::class, 'message'])->name('conversations.message');
+    Route::post('/conversations/{publicToken}/handoff', [SupportChatController::class, 'handoff'])->name('conversations.handoff');
 });
 
 Route::middleware('auth')->group(function () {
+    Route::get('/member-dashboard', [MemberPortalController::class, 'bookings'])->name('member.dashboard');
     Route::get('/my-bookings', [MemberPortalController::class, 'bookings'])->name('member.index');
+    Route::get('/my-bookings/state', [MemberPortalController::class, 'bookingState'])->name('member.bookings.state');
+    Route::get('/member-dashboard/live-rooms', [MemberPortalController::class, 'liveRooms'])->name('member.live-rooms');
     Route::get('/my-account', [MemberPortalController::class, 'account'])->name('member.account');
     Route::get('/my-account/profile', [MemberPortalController::class, 'profile'])->name('member.profile.edit');
     Route::get('/my-account/password', [MemberPortalController::class, 'password'])->name('member.password.edit');
@@ -96,6 +102,9 @@ Route::middleware('auth')->group(function () {
     Route::patch('/my-bookings/profile', [MemberPortalController::class, 'updateProfile'])->name('member.profile.update');
     Route::patch('/my-bookings/password', [MemberPortalController::class, 'updatePassword'])->name('member.password.update');
     Route::post('/logout', [AuthenticatedSessionController::class, 'destroy'])->name('logout');
+    Route::get('/my-announcements/feed', [MemberAnnouncementController::class, 'feed'])->name('member.announcements.feed');
+    Route::post('/my-announcements/read-all', [MemberAnnouncementController::class, 'markAllRead'])->name('member.announcements.read-all');
+    Route::post('/my-announcements/{announcement}/read', [MemberAnnouncementController::class, 'markRead'])->name('member.announcements.read');
 });
 
 Route::middleware('auth')->prefix('admin')->name('admin.')->group(function () {
@@ -150,11 +159,17 @@ Route::middleware('auth')->prefix('admin')->name('admin.')->group(function () {
     Route::post('/room-schedule', [AdminRoomScheduleController::class, 'store'])->middleware('permission:room_schedule.manage')->name('room-schedule.store');
     Route::post('/room-schedule/reset-day', [AdminRoomScheduleController::class, 'resetDay'])->middleware('permission:room_schedule.manage')->name('room-schedule.reset-day');
     Route::post('/room-schedule/reset-all', [AdminRoomScheduleController::class, 'resetAll'])->middleware('permission:room_schedule.manage')->name('room-schedule.reset-all');
+    Route::post('/room-schedule/sunday-closure', [AdminRoomScheduleController::class, 'updateSundayClosure'])->middleware('permission:room_schedule.manage')->name('room-schedule.sunday-closure');
 
     Route::get('/calendar-events', [AdminCalendarEventController::class, 'index'])->middleware('permission:calendar_events.view')->name('sections.calendar-events');
     Route::post('/calendar-events', [AdminCalendarEventController::class, 'store'])->middleware('permission:calendar_events.manage')->name('calendar-events.store');
     Route::patch('/calendar-events/{calendarEvent}', [AdminCalendarEventController::class, 'update'])->middleware('permission:calendar_events.manage')->name('calendar-events.update');
     Route::delete('/calendar-events/{calendarEvent}', [AdminCalendarEventController::class, 'destroy'])->middleware('permission:calendar_events.manage')->name('calendar-events.destroy');
+
+    Route::get('/announcements', [AdminAnnouncementController::class, 'index'])->middleware('permission:announcements.view')->name('announcements.index');
+    Route::post('/announcements', [AdminAnnouncementController::class, 'store'])->middleware('permission:announcements.manage')->name('announcements.store');
+    Route::patch('/announcements/{announcement}', [AdminAnnouncementController::class, 'update'])->middleware('permission:announcements.manage')->name('announcements.update');
+    Route::delete('/announcements/{announcement}', [AdminAnnouncementController::class, 'destroy'])->middleware('permission:announcements.manage')->name('announcements.destroy');
 
     Route::get('/pricing-rules', [AdminPricingRuleController::class, 'index'])->middleware('permission:pricing_rules.view')->name('sections.pricing-rules');
     Route::patch('/pricing-rules/{rate}', [AdminPricingRuleController::class, 'update'])->middleware('permission:pricing_rules.manage')->name('pricing-rules.update');

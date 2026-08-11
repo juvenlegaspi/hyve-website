@@ -21,6 +21,19 @@ class AdminManualWalkInStartTest extends TestCase
         parent::tearDown();
     }
 
+    public function test_admin_walk_in_page_uses_browser_independent_manual_time_controls(): void
+    {
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+
+        $this->actingAs($admin)
+            ->get(route('admin.bookings.create'))
+            ->assertOk()
+            ->assertSee('data-walk-in-manual-start-hour', false)
+            ->assertSee('data-walk-in-manual-start-minute', false)
+            ->assertSee('data-walk-in-manual-start-period', false)
+            ->assertDontSee('type="time" step="60"', false);
+    }
+
     public function test_admin_can_load_end_times_from_an_exact_manual_walk_in_start(): void
     {
         Carbon::setTestNow('2026-08-04 09:14:00');

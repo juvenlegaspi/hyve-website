@@ -173,6 +173,65 @@ class AdminBookingExtensionTest extends TestCase
             ->assertJsonPath('booking.bookings.0.can_extend', false);
     }
 
+    public function test_daily_booking_can_be_extended_with_succeeding_hour_pricing(): void
+    {
+        Carbon::setTestNow('2026-08-10 09:00:00');
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+        [$header, $detail] = $this->createConfirmedBooking('2026-08-12', '08:00', '20:00');
+        $detail->update([
+            'charge_period' => 'daily',
+            'duration_hours' => 12,
+            'billed_hours' => 12,
+            'rate_name' => 'Daily stay',
+        ]);
+
+        $options = $this->actingAs($admin)
+            ->getJson(route('admin.booking-details.extension-options', $detail))
+            ->assertOk();
+
+        $twoHourOption = collect($options->json('options'))->firstWhere('end_at', '2026-08-12 22:00');
+        $this->assertNotNull($twoHourOption);
+        $this->assertSame(120, $twoHourOption['duration_minutes']);
+        $this->assertGreaterThan(0, (float) $twoHourOption['amount']);
+
+        $response = $this->postJson(route('admin.booking-details.extend', $detail), [
+            'extension_end_at' => '2026-08-12 22:00',
+        ])->assertOk()
+            ->assertJsonPath('booking.bookings.0.can_extend', false)
+            ->assertJsonPath('booking.bookings.1.can_extend', true);
+
+        $extension = BookingDetail::query()
+            ->where('booking_header_id', $header->getKey())
+            ->whereKeyNot($detail->getKey())
+            ->firstOrFail();
+
+        $this->assertSame('20:00', substr((string) $extension->start_time, 0, 5));
+        $this->assertSame('22:00', substr((string) $extension->end_time, 0, 5));
+        $this->assertSame(2.0, (float) $extension->duration_hours);
+        $this->assertStringContainsString('Extension', (string) $extension->rate_name);
+    }
+
+    public function test_weekly_and_monthly_bookings_still_cannot_be_extended(): void
+    {
+        Carbon::setTestNow('2026-08-10 09:00:00');
+        $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);
+
+        foreach (['weekly', 'monthly'] as $chargePeriod) {
+            [, $detail] = $this->createConfirmedBooking('2026-08-12', '08:00', '20:00');
+            $detail->update(['charge_period' => $chargePeriod]);
+
+            $this->actingAs($admin)
+                ->getJson(route('admin.booking-details.extension-options', $detail))
+                ->assertUnprocessable()
+                ->assertJsonPath('message', 'This booked line cannot be extended right now.');
+
+            $this->actingAs($admin)
+                ->getJson(route('admin.bookings.summary', $detail->booking_header_id))
+                ->assertOk()
+                ->assertJsonPath('booking.bookings.0.can_extend', false);
+        }
+    }
+
     public function test_ended_booking_can_still_be_extended_within_twenty_four_hours(): void
     {
         $admin = User::factory()->create(['role' => User::ROLE_ADMIN]);

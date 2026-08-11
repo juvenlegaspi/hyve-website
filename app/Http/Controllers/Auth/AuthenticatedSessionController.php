@@ -25,6 +25,7 @@ class AuthenticatedSessionController extends Controller
     {
         $request->authenticate();
         $request->session()->regenerate();
+        $request->session()->forget('url.intended');
 
         /** @var User|null $user */
         $user = $request->user();
@@ -41,7 +42,7 @@ class AuthenticatedSessionController extends Controller
             return redirect()->route('admin.dashboard');
         }
 
-        return redirect()->intended(route('bookings.index'));
+        return redirect()->route('member.dashboard');
     }
 
     public function destroy(Request $request): RedirectResponse

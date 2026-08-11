@@ -9,12 +9,15 @@ use App\Models\HyveCalendarEvent;
 use App\Models\HyveRoom;
 use App\Models\HyveScheduleOverride;
 use App\Models\User;
+use App\Services\HyveOperatingScheduleService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\View\View;
 
 class AdminDashboardController extends Controller
 {
+    public function __construct(private readonly HyveOperatingScheduleService $operatingSchedule) {}
+
     public function __invoke(Request $request): View
     {
         $today = Carbon::today();
@@ -69,8 +72,10 @@ class AdminDashboardController extends Controller
             ->where('affects_booking', true)
             ->where('all_day', true)
             ->get();
+        $globallyClosedToday = $this->operatingSchedule->isGloballyClosed($today);
+        $globalClosureReason = $this->operatingSchedule->reasonFor($today);
 
-        $roomStatus = $rooms->map(function (HyveRoom $room) use ($todayDetails, $todayOverrides, $todayEvents, $now): array {
+        $roomStatus = $rooms->map(function (HyveRoom $room) use ($todayDetails, $todayOverrides, $todayEvents, $now, $globallyClosedToday, $globalClosureReason): array {
             $activeDetail = $todayDetails->first(function (BookingDetail $detail) use ($room, $now) {
                 if ((int) $detail->hyve_room_id !== (int) $room->id) {
                     return false;
@@ -97,12 +102,14 @@ class AdminDashboardController extends Controller
             $blockingEvent = $todayEvents
                 ->first(fn (HyveCalendarEvent $event): bool => $event->appliesToRoom($room));
 
-            if ($roomOverride?->isClosed() || $blockingEvent) {
+            if ($globallyClosedToday || $roomOverride?->isClosed() || $blockingEvent) {
                 return [
                     'room_name' => $room->room_name,
                     'status' => 'maintenance',
-                    'status_label' => 'Maintenance',
-                    'status_note' => $roomOverride?->reason ?: $blockingEvent?->title ?: 'Temporarily unavailable',
+                    'status_label' => $globallyClosedToday ? 'Closed' : 'Maintenance',
+                    'status_note' => $globallyClosedToday
+                        ? ($globalClosureReason ?: 'HYVE is closed today')
+                        : ($roomOverride?->reason ?: $blockingEvent?->title ?: 'Temporarily unavailable'),
                     'until' => null,
                 ];
             }

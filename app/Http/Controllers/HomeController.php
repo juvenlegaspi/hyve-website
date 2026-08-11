@@ -16,6 +16,10 @@ class HomeController extends Controller
             return redirect()->route('admin.dashboard');
         }
 
+        if ($request->user()) {
+            return redirect()->route('member.dashboard');
+        }
+
         $payload = config('hyve');
 
         if (Schema::hasTable('hyve_rates')) {

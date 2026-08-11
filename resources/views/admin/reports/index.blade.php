@@ -9,7 +9,7 @@
             'year' => route('admin.sections.reports', ['range' => 'year']),
         ];
 
-        $exportParams = ['export' => 'csv'];
+        $exportParams = ['export' => 'excel'];
         $shiftExportParams = ['export' => 'shift_excel'];
 
         if ($selectedRange === 'custom') {
@@ -294,7 +294,7 @@
                 <a href="{{ $rangeLinks['week'] }}" class="reports-pill {{ $selectedRange === 'week' ? 'is-active' : '' }}">This week</a>
                 <a href="{{ $rangeLinks['today'] }}" class="reports-pill {{ $selectedRange === 'today' ? 'is-active' : '' }}">Today</a>
                 <a href="{{ $rangeLinks['year'] }}" class="reports-pill {{ $selectedRange === 'year' ? 'is-active' : '' }}">This year</a>
-                <a href="{{ route('admin.sections.reports', $exportParams) }}" class="reports-pill">Export CSV</a>
+                <a href="{{ route('admin.sections.reports', $exportParams) }}" class="reports-pill">Export Excel</a>
             </div>
         </section>
 

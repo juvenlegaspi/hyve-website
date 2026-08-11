@@ -41,6 +41,7 @@ class HyveCalendarEvent extends Model
         'end_time',
         'all_day',
         'affects_booking',
+        'show_to_members',
         'status',
         'notes',
     ];
@@ -53,6 +54,7 @@ class HyveCalendarEvent extends Model
         'end_date' => 'date',
         'all_day' => 'boolean',
         'affects_booking' => 'boolean',
+        'show_to_members' => 'boolean',
         'status' => 'boolean',
     ];
 
@@ -74,6 +76,14 @@ class HyveCalendarEvent extends Model
     public function scopeUpcoming(Builder $query): Builder
     {
         return $query->whereDate('end_date', '>=', Carbon::today()->toDateString());
+    }
+
+    public function scopeVisibleToMembers(Builder $query): Builder
+    {
+        return $query->where(function (Builder $visible): void {
+            $visible->where('source', self::SOURCE_SYSTEM)
+                ->orWhere('show_to_members', true);
+        });
     }
 
     public function scopeForDate(Builder $query, string $date): Builder

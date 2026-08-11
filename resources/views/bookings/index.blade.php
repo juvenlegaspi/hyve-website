@@ -60,10 +60,10 @@
     <div class="booking-page booking-page--calendar" data-booking-page>
         <header class="booking-topbar">
             <div class="section-wrap booking-topbar__inner">
-                <a href="{{ route('home') }}" class="brand-mark">
+                <a href="{{ $adminMode ? route('admin.dashboard') : (auth()->check() ? route('member.dashboard') : route('home')) }}" class="brand-mark">
                     <span>
-                        <strong>HYVE Workspace</strong>
-                        <small>{{ $adminMode ? 'Walk-In Desk' : 'Booking Desk' }}</small>
+                        <strong>{{ !$adminMode && auth()->check() ? 'HYVE Member' : 'HYVE Workspace' }}</strong>
+                        <small>{{ $adminMode ? 'Walk-In Desk' : (auth()->check() ? 'Member Booking Desk' : 'Booking Desk') }}</small>
                     </span>
                 </a>
 
@@ -71,18 +71,13 @@
                     @if ($adminMode)
                         <a href="{{ route('admin.bookings.index') }}" class="button button--ghost">Back to bookings</a>
                         <a href="{{ route('admin.dashboard') }}" class="button button--dark">Admin dashboard</a>
+                    @elseif (auth()->check())
+                        <a href="{{ route('member.dashboard') }}" class="button button--ghost">Member dashboard</a>
+                        @include('partials.home.member-menu', ['memberPortalMode' => true])
                     @else
                         <a href="{{ route('home') }}" class="button button--ghost">Back Home</a>
-                        @auth
-                            <a href="{{ route('member.index') }}" class="nav-link @if (request()->routeIs('member.*')) is-active @endif">My bookings</a>
-                        @endauth
-                        @guest
-                            <a href="{{ route('login', ['return_to' => url()->full()]) }}" class="nav-link nav-link--muted">Log In</a>
-                        @endguest
+                        <a href="{{ route('login', ['return_to' => url()->full()]) }}" class="nav-link nav-link--muted">Log In</a>
                         <a href="{{ route('bookings.index') }}" class="button button--dark">Book Now</a>
-                        @auth
-                            @include('partials.home.member-menu')
-                        @endauth
                     @endif
                 </div>
             </div>
@@ -262,10 +257,36 @@
                                         <strong class="block text-[0.82rem] text-[#294531]">Manual exact start time (walk-in only)</strong>
                                         <span class="mt-1 block text-[0.72rem] text-[#758076]">Enter the customer's exact start time. For today, only the current time onward is allowed.</span>
                                         <div class="mt-3 flex flex-wrap items-end gap-3">
-                                            <label class="min-w-[12rem] flex-1">
-                                                <span class="mb-1.5 block text-[0.72rem] font-semibold text-[#526358]">Start time</span>
-                                                <input type="time" step="60" value="{{ old('walk_in_manual_start') === '1' ? old('start_time') : '' }}" data-walk-in-manual-start-time>
-                                            </label>
+                                            <fieldset class="walk-in-time-picker min-w-[12rem] flex-1">
+                                                <legend class="mb-1.5 block text-[0.72rem] font-semibold text-[#526358]">Start time</legend>
+                                                <input type="hidden" value="{{ old('walk_in_manual_start') === '1' ? old('start_time') : '' }}" data-walk-in-manual-start-time>
+                                                <label>
+                                                    <span>Hour</span>
+                                                    <select data-walk-in-manual-start-hour aria-label="Walk-in start hour">
+                                                        <option value="">Hour</option>
+                                                        @for ($hour = 1; $hour <= 12; $hour++)
+                                                            <option value="{{ $hour }}">{{ $hour }}</option>
+                                                        @endfor
+                                                    </select>
+                                                </label>
+                                                <label>
+                                                    <span>Minute</span>
+                                                    <select data-walk-in-manual-start-minute aria-label="Walk-in start minute">
+                                                        <option value="">Minute</option>
+                                                        @for ($minute = 0; $minute < 60; $minute++)
+                                                            <option value="{{ str_pad((string) $minute, 2, '0', STR_PAD_LEFT) }}">{{ str_pad((string) $minute, 2, '0', STR_PAD_LEFT) }}</option>
+                                                        @endfor
+                                                    </select>
+                                                </label>
+                                                <label>
+                                                    <span>Period</span>
+                                                    <select data-walk-in-manual-start-period aria-label="Walk-in start period">
+                                                        <option value="">AM/PM</option>
+                                                        <option value="AM">AM</option>
+                                                        <option value="PM">PM</option>
+                                                    </select>
+                                                </label>
+                                            </fieldset>
                                             <button type="button" class="button button--ghost" data-walk-in-manual-start-apply>Show available end times</button>
                                         </div>
                                         <small class="field-error hidden" data-walk-in-manual-start-error></small>

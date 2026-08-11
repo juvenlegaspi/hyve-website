@@ -3,17 +3,21 @@
 namespace App\Http\Controllers;
 
 use App\Models\BookingActivity;
-use App\Models\BookingHeader;
 use App\Models\BookingDetail;
+use App\Models\BookingHeader;
 use App\Models\BookingPayment;
 use App\Models\HyveCalendarEvent;
 use App\Models\HyveRoom;
+use App\Models\HyveScheduleOverride;
+use App\Models\MemberAnnouncement;
 use App\Models\PaymentSetting;
 use App\Models\Space;
-use App\Models\HyveScheduleOverride;
 use App\Services\BookingWifiVoucherService;
 use App\Services\HyveDiscountService;
+use App\Services\HyveOperatingScheduleService;
+use App\Services\LiveRoomAvailabilityService;
 use App\Support\HyvePricing;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -29,8 +33,9 @@ class MemberPortalController extends Controller
         private readonly BookingWifiVoucherService $wifiVoucherService,
         private readonly HyvePricing $pricing,
         private readonly HyveDiscountService $discounts,
-    ) {
-    }
+        private readonly LiveRoomAvailabilityService $liveRoomAvailability,
+        private readonly HyveOperatingScheduleService $operatingSchedule,
+    ) {}
 
     public function bookings(Request $request): View|RedirectResponse
     {
@@ -42,11 +47,29 @@ class MemberPortalController extends Controller
 
         return view('member.bookings', [
             'meta' => [
-                'title' => 'My Bookings | HYVE Workspace',
-                'description' => 'Manage your HYVE member profile, review booking history, and update your account details.',
+                'title' => $request->routeIs('member.dashboard') ? 'Member Dashboard | HYVE Workspace' : 'My Bookings | HYVE Workspace',
+                'description' => $request->routeIs('member.dashboard')
+                    ? 'Review your HYVE member activity, announcements, events, and account summary.'
+                    : 'Review and manage your upcoming and past HYVE bookings.',
             ],
             ...$memberData,
         ]);
+    }
+
+    public function bookingState(Request $request): JsonResponse
+    {
+        abort_if($request->user()?->isAdmin(), 403);
+
+        return response()->json([
+            'version' => $this->memberBookingStateVersion($request),
+        ]);
+    }
+
+    public function liveRooms(Request $request): JsonResponse
+    {
+        abort_if($request->user()?->isAdmin(), 403);
+
+        return response()->json($this->liveRoomAvailability->memberSnapshot());
     }
 
     public function account(Request $request): View|RedirectResponse
@@ -290,7 +313,7 @@ class MemberPortalController extends Controller
             ]);
         }
 
-        DB::transaction(function () use ($request, $bookingDetail, $bookingHeader, $bookableRoom, $quote, $bookingDate, $bookingEndDate, $startTime, $endTime, $isLongStay): void {
+        DB::transaction(function () use ($request, $bookingDetail, $bookingHeader, $bookableRoom, $quote, $bookingDate, $bookingEndDate, $startTime, $endTime): void {
             $oldSchedule = $this->detailDateLabel($bookingDetail).' | '.$this->detailTimeLabel($bookingDetail);
             $space = $this->spaceForRoom($bookableRoom);
 
@@ -622,6 +645,10 @@ class MemberPortalController extends Controller
                             && in_array($status, ['pending', 'confirmed'], true)
                         : false,
                     'reschedule_url' => route('member.bookings.reschedule', $detail),
+                    'balance_payment_url' => route('member.bookings.balance-payment', [
+                        'bookingHeader' => $header->id,
+                        'detail' => $detail->id,
+                    ]),
                     'has_pending_balance_payment' => $hasPendingBalancePayment,
                     'is_long_stay' => $isLongStay,
                     'wifi_voucher' => $this->wifiVoucherService->payloadForBooking($header),
@@ -633,21 +660,257 @@ class MemberPortalController extends Controller
             ])
             ->values();
 
+        $upcomingBookings = $bookingCards
+            ->filter(fn (array $booking) => $booking['is_upcoming'])
+            ->sortBy([
+                ['booking_date', 'asc'],
+                ['start_label', 'asc'],
+            ])
+            ->values();
+        $pastBookings = $bookingCards
+            ->reject(fn (array $booking) => $booking['is_upcoming'])
+            ->values();
+        $activeHeaders = $bookingHeaders->filter(fn (BookingHeader $header): bool => in_array(
+            strtolower((string) $header->status),
+            ['pending', 'confirmed'],
+            true
+        ));
+        $paymentActionBookings = $upcomingBookings
+            ->filter(fn (array $booking): bool => $booking['can_pay_balance'])
+            ->unique('booking_header_id')
+            ->values();
+
         return [
             'navigation' => config('hyve.navigation', []),
             'bookingHeaders' => $bookingHeaders,
             'bookingDetails' => $bookingDetails,
-            'upcomingBookings' => $bookingCards->filter(fn (array $booking) => $booking['is_upcoming'])->sortBy([
-                ['booking_date', 'asc'],
-                ['start_label', 'asc'],
-            ])->values(),
-            'pastBookings' => $bookingCards->reject(fn (array $booking) => $booking['is_upcoming'])->values(),
+            'upcomingBookings' => $upcomingBookings,
+            'pastBookings' => $pastBookings,
             'memberStats' => [
                 'total_bookings' => $bookingHeaders->count(),
                 'total_hours' => (float) $bookingDetails->sum(fn ($detail) => (float) ($detail->duration_hours ?? 0)),
                 'upcoming_slots' => $bookingDetails->filter(fn ($detail) => optional($detail->booking_date)?->isToday() || optional($detail->booking_date)?->isFuture())->count(),
             ],
+            'memberInsights' => [
+                'next_booking' => $upcomingBookings->first(),
+                'outstanding_balance' => round((float) $activeHeaders->sum(fn (BookingHeader $header) => (float) $header->balance_amount), 2),
+                'pending_approval_count' => $activeHeaders
+                    ->filter(fn (BookingHeader $header): bool => strtolower((string) $header->status) === BookingHeader::STATUS_PENDING)
+                    ->count(),
+                'confirmed_upcoming_count' => $upcomingBookings
+                    ->filter(fn (array $booking): bool => $booking['status_label'] === 'Confirmed')
+                    ->unique('booking_header_id')
+                    ->count(),
+                'payment_action_count' => $paymentActionBookings->count(),
+                'first_payment_action' => $paymentActionBookings->first(),
+            ],
+            'memberLiveRooms' => $this->liveRoomAvailability->memberSnapshot(),
+            'memberEvents' => $this->memberUpcomingEvents(),
+            'memberPromotions' => $this->memberPromotionGuide(),
+            ...$this->memberAnnouncementData($request),
+            'memberBookingStateVersion' => $this->memberBookingStateVersion($request),
         ];
+    }
+
+    private function memberUpcomingEvents()
+    {
+        if (! Schema::hasTable('hyve_calendar_events') || ! Schema::hasColumn('hyve_calendar_events', 'show_to_members')) {
+            return collect();
+        }
+
+        return HyveCalendarEvent::query()
+            ->with('rooms:id,room_name')
+            ->active()
+            ->upcoming()
+            ->visibleToMembers()
+            ->orderBy('start_date')
+            ->orderBy('start_time')
+            ->limit(8)
+            ->get()
+            ->map(function (HyveCalendarEvent $event): array {
+                $startDate = $event->start_date;
+                $endDate = $event->end_date ?: $startDate;
+                $dateLabel = $startDate?->format('F j, Y') ?? 'Date to be announced';
+
+                if ($startDate && $endDate && $endDate->ne($startDate)) {
+                    $dateLabel = $startDate->format('M j').' - '.$endDate->format('M j, Y');
+                }
+
+                $timeLabel = $event->isAllDay()
+                    ? 'All day'
+                    : Carbon::parse((string) $event->start_time)->format('g:i A')
+                        .' - '.Carbon::parse((string) $event->end_time)->format('g:i A');
+                $scopeLabel = $event->scope === HyveCalendarEvent::SCOPE_ALL_ROOMS
+                    ? 'All HYVE spaces'
+                    : $event->rooms->pluck('room_name')->join(', ');
+
+                return [
+                    'id' => $event->getKey(),
+                    'title' => $event->title,
+                    'type' => $event->type,
+                    'type_label' => match ((string) $event->type) {
+                        HyveCalendarEvent::TYPE_HOLIDAY => 'Holiday',
+                        HyveCalendarEvent::TYPE_BLOCKED => 'Availability notice',
+                        default => 'HYVE event',
+                    },
+                    'month' => $startDate?->format('M') ?? '--',
+                    'day' => $startDate?->format('d') ?? '--',
+                    'date_label' => $dateLabel,
+                    'time_label' => $timeLabel,
+                    'scope_label' => $scopeLabel !== '' ? $scopeLabel : 'Selected HYVE spaces',
+                    'affects_booking' => (bool) $event->affects_booking,
+                ];
+            })
+            ->values();
+    }
+
+    private function memberPromotionGuide(): array
+    {
+        $definitions = $this->discounts->definitions();
+
+        return [
+            ['code' => HyveDiscountService::EARLY_BIRD, 'badge' => '10% off', 'title' => $definitions[HyveDiscountService::EARLY_BIRD]['label'], 'note' => 'For eligible hourly visits starting from 4:00 AM through 10:00 AM.'],
+            ['code' => HyveDiscountService::VOUCHER_COMMON_2H, 'badge' => '2 hours free', 'title' => $definitions[HyveDiscountService::VOUCHER_COMMON_2H]['label'], 'note' => 'Common Area day or night access. Present a valid HYVE voucher.'],
+            ['code' => HyveDiscountService::ENGAGEMENT, 'badge' => 'Up to 20%', 'title' => $definitions[HyveDiscountService::ENGAGEMENT]['label'], 'note' => '20% hourly/daily and 10% weekly/monthly, subject to verification.'],
+            ['code' => HyveDiscountService::BOARD_REVIEWEE, 'badge' => '10-20% off', 'title' => $definitions[HyveDiscountService::BOARD_REVIEWEE]['label'], 'note' => 'Eligible Common Area and selected private offices with valid reviewee proof.'],
+            ['code' => HyveDiscountService::SENIOR, 'badge' => '20% off', 'title' => $definitions[HyveDiscountService::SENIOR]['label'], 'note' => 'Present a valid Senior Citizen ID to the HYVE front desk.'],
+            ['code' => HyveDiscountService::PWD, 'badge' => '20% off', 'title' => $definitions[HyveDiscountService::PWD]['label'], 'note' => 'Present a valid PWD ID to the HYVE front desk.'],
+        ];
+    }
+
+    private function memberAnnouncementData(Request $request): array
+    {
+        if (! Schema::hasTable('member_announcements') || ! Schema::hasTable('member_announcement_reads')) {
+            return ['memberAnnouncements' => collect(), 'memberAnnouncementUnreadCount' => 0];
+        }
+
+        $userId = (int) $request->user()->id;
+        $announcements = MemberAnnouncement::query()
+            ->published()
+            ->withCount(['reads as member_read_count' => fn ($query) => $query->where('user_id', $userId)])
+            ->latest('published_at')
+            ->latest('id')
+            ->limit(20)
+            ->get()
+            ->map(fn (MemberAnnouncement $announcement): array => [
+                'id' => $announcement->getKey(),
+                'title' => $announcement->title,
+                'body' => $announcement->body,
+                'priority' => $announcement->priority,
+                'priority_label' => match ((string) $announcement->priority) {
+                    MemberAnnouncement::PRIORITY_URGENT => 'Urgent',
+                    MemberAnnouncement::PRIORITY_IMPORTANT => 'Important',
+                    default => 'Announcement',
+                },
+                'published_at' => $announcement->published_at?->format('F j, Y g:i A'),
+                'is_read' => (int) $announcement->member_read_count > 0,
+                'read_url' => route('member.announcements.read', $announcement),
+            ]);
+
+        return [
+            'memberAnnouncements' => $announcements,
+            'memberAnnouncementUnreadCount' => MemberAnnouncement::query()
+                ->published()
+                ->whereDoesntHave('reads', fn ($query) => $query->where('user_id', $userId))
+                ->count(),
+        ];
+    }
+
+    private function memberBookingStateVersion(Request $request): string
+    {
+        $headers = BookingHeader::query()
+            ->with([
+                'details' => fn ($query) => $query
+                    ->select([
+                        'id', 'booking_header_id', 'hyve_room_id', 'booking_date', 'booking_end_date',
+                        'start_time', 'end_time', 'subtotal', 'status', 'progress_status',
+                        'actual_start_at', 'actual_end_at', 'updated_at',
+                    ])
+                    ->orderBy('id'),
+                'payments' => fn ($query) => $query
+                    ->select(['id', 'booking_header_id', 'amount', 'status', 'verified_at', 'updated_at'])
+                    ->orderBy('id'),
+                'wifiVoucher' => fn ($query) => $query
+                    ->select([
+                        'id', 'booking_header_id', 'code', 'status', 'sync_status',
+                        'valid_from', 'valid_until', 'updated_at',
+                    ]),
+            ])
+            ->select([
+                'id', 'user_id', 'booking_type', 'status', 'payment_status', 'total_amount',
+                'discounted_total_amount', 'downpayment_amount', 'balance_amount', 'updated_at',
+            ])
+            ->where('booking_type', BookingHeader::TYPE_MEMBER)
+            ->where('user_id', $request->user()->id)
+            ->orderBy('id')
+            ->get();
+
+        $state = $headers->map(fn (BookingHeader $header): array => [
+            'id' => $header->getKey(),
+            'status' => $header->status,
+            'payment_status' => $header->payment_status,
+            'total_amount' => $header->total_amount,
+            'discounted_total_amount' => $header->discounted_total_amount,
+            'downpayment_amount' => $header->downpayment_amount,
+            'balance_amount' => $header->balance_amount,
+            'updated_at' => $header->updated_at?->format('Y-m-d H:i:s.u'),
+            'details' => $header->details->map(fn (BookingDetail $detail): array => [
+                'id' => $detail->getKey(),
+                'room_id' => $detail->hyve_room_id,
+                'booking_date' => $detail->booking_date?->toDateString(),
+                'booking_end_date' => $detail->booking_end_date?->toDateString(),
+                'start_time' => $detail->start_time,
+                'end_time' => $detail->end_time,
+                'subtotal' => $detail->subtotal,
+                'status' => $detail->status,
+                'progress_status' => $detail->progress_status,
+                'actual_start_at' => $detail->actual_start_at?->toISOString(),
+                'actual_end_at' => $detail->actual_end_at?->toISOString(),
+                'updated_at' => $detail->updated_at?->format('Y-m-d H:i:s.u'),
+            ])->all(),
+            'payments' => $header->payments->map(fn (BookingPayment $payment): array => [
+                'id' => $payment->getKey(),
+                'amount' => $payment->amount,
+                'status' => $payment->status,
+                'verified_at' => $payment->verified_at?->toISOString(),
+                'updated_at' => $payment->updated_at?->format('Y-m-d H:i:s.u'),
+            ])->all(),
+            'wifi_voucher' => $header->wifiVoucher ? [
+                'id' => $header->wifiVoucher->getKey(),
+                'code' => $header->wifiVoucher->code,
+                'status' => $header->wifiVoucher->status,
+                'sync_status' => $header->wifiVoucher->sync_status,
+                'valid_from' => $header->wifiVoucher->valid_from?->toISOString(),
+                'valid_until' => $header->wifiVoucher->valid_until?->toISOString(),
+                'updated_at' => $header->wifiVoucher->updated_at?->format('Y-m-d H:i:s.u'),
+            ] : null,
+        ])->all();
+
+        $state['member_events'] = $this->memberUpcomingEvents()->map(fn (array $event): array => [
+            'id' => $event['id'],
+            'title' => $event['title'],
+            'date_label' => $event['date_label'],
+            'time_label' => $event['time_label'],
+            'scope_label' => $event['scope_label'],
+            'affects_booking' => $event['affects_booking'],
+        ])->all();
+
+        if (Schema::hasTable('member_announcements')) {
+            $state['member_announcements'] = MemberAnnouncement::query()
+                ->published()
+                ->orderBy('id')
+                ->get(['id', 'title', 'priority', 'published_at', 'expires_at', 'updated_at'])
+                ->map(fn (MemberAnnouncement $announcement): array => [
+                    'id' => $announcement->getKey(),
+                    'title' => $announcement->title,
+                    'priority' => $announcement->priority,
+                    'published_at' => $announcement->published_at?->toISOString(),
+                    'expires_at' => $announcement->expires_at?->toISOString(),
+                    'updated_at' => $announcement->updated_at?->toISOString(),
+                ])->all();
+        }
+
+        return hash('sha256', json_encode($state, JSON_THROW_ON_ERROR));
     }
 
     /**
@@ -934,6 +1197,15 @@ class MemberPortalController extends Controller
     {
         $defaultOpeningTime = (string) config('hyve.booking.opening_time', '00:00');
         $defaultClosingTime = (string) config('hyve.booking.closing_time', '24:00');
+
+        if ($this->operatingSchedule->isGloballyClosed($bookingDate)) {
+            return [
+                'start' => $this->slotBoundary($bookingDate, $defaultOpeningTime),
+                'end' => $this->slotBoundary($bookingDate, $defaultOpeningTime),
+                'closed' => true,
+            ];
+        }
+
         $override = $this->scheduleOverrideForRoom($bookingDate, $room);
 
         if ($override?->isClosed()) {

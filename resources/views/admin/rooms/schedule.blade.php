@@ -10,6 +10,7 @@
         $selectedOpeningTime = old('opening_time', $selectedOverride?->opening_time ?? $defaultOpeningTime);
         $selectedClosingTime = old('closing_time', $selectedOverride?->closing_time ?? $defaultClosingTime);
         $selectedRoomId = old('hyve_room_id', $selectedRoom->id);
+        $sundayClosed = (bool) $sundayClosure->is_active;
 
         $monthStart = $monthSeed->copy()->startOfMonth();
         $calendarStart = $monthStart->copy()->startOfWeek(Carbon::SUNDAY);
@@ -38,6 +39,14 @@
         .room-schedule-reset { display: inline-flex; align-items: center; justify-content: center; min-height: 2.8rem; padding: 0.78rem 1.2rem; border: 1px solid #dde4d8; border-radius: 0.95rem; background: #fff; color: #536158; font-size: 0.8rem; font-weight: 600; transition: background 160ms ease, border-color 160ms ease, color 160ms ease; }
         .room-schedule-reset:hover { background: #f8faf6; color: #264134; }
         .room-schedule-grid { display: grid; grid-template-columns: minmax(18rem, 27rem) minmax(0, 1fr); gap: 1rem; }
+        .room-schedule-weekly { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.15rem; border: 1px solid #e0e6db; border-radius: 1.15rem; background: #fff; box-shadow: 0 12px 32px rgba(22, 33, 28, 0.05); }
+        .room-schedule-weekly.is-active { border-color: #e7b0a7; background: #fff8f6; }
+        .room-schedule-weekly-copy strong, .room-schedule-weekly-copy span { display: block; }
+        .room-schedule-weekly-copy strong { color: #263a32; font-size: 0.9rem; }
+        .room-schedule-weekly-copy span { margin-top: 0.2rem; color: #838b82; font-size: 0.72rem; line-height: 1.5; }
+        .room-schedule-weekly-actions { display: flex; flex-wrap: wrap; align-items: end; justify-content: flex-end; gap: 0.6rem; }
+        .room-schedule-weekly-actions input[type="text"] { min-width: min(19rem, 60vw); }
+        .room-schedule-global-note { margin-bottom: 1rem; padding: 0.75rem 0.85rem; border: 1px solid #efc6bf; border-radius: 0.85rem; background: #fff5f2; color: #9b4c42; font-size: 0.72rem; line-height: 1.5; }
         .room-schedule-card { border: 1px solid #dde5d9; border-radius: 1.35rem; background: rgba(255, 255, 255, 0.92); box-shadow: 0 18px 46px rgba(22, 33, 28, 0.06); }
         .room-schedule-card--calendar { padding: 1.25rem 1.2rem 1.05rem; }
         .room-schedule-card--details { padding: 1.25rem 1.35rem 1.3rem; }
@@ -88,6 +97,9 @@
         .room-schedule-button--ghost:hover { background: #f8faf6; }
         @media (max-width: 1100px) { .room-schedule-grid { grid-template-columns: 1fr; } }
         @media (max-width: 640px) {
+            .room-schedule-weekly { align-items: stretch; flex-direction: column; }
+            .room-schedule-weekly-actions { display: grid; justify-content: stretch; }
+            .room-schedule-weekly-actions input[type="text"] { min-width: 0; }
             .room-schedule-card--calendar, .room-schedule-card--details { padding: 1rem; }
             .room-schedule-day { width: 2.45rem; height: 2.45rem; font-size: 0.82rem; }
             .room-schedule-hours-grid { grid-template-columns: 1fr; }
@@ -110,6 +122,24 @@
                 <button type="submit" class="room-schedule-reset">Reset selected room</button>
             </form>
         </header>
+
+        <form method="POST" action="{{ route('admin.room-schedule.sunday-closure') }}" class="room-schedule-weekly @if ($sundayClosed) is-active @endif">
+            @csrf
+            <input type="hidden" name="is_active" value="{{ $sundayClosed ? 0 : 1 }}">
+            <input type="hidden" name="room" value="{{ $selectedRoom->id }}">
+            <input type="hidden" name="month" value="{{ $monthSeed->format('Y-m') }}">
+            <input type="hidden" name="date" value="{{ $selectedDate->toDateString() }}">
+            <div class="room-schedule-weekly-copy">
+                <strong>Every Sunday — {{ $sundayClosed ? 'Closed for all rooms' : 'Open' }}</strong>
+                <span>{{ $sundayClosed ? 'No new online, member, or admin walk-in booking can be created on Sundays.' : 'Sunday follows the normal room schedule and can be booked.' }}</span>
+            </div>
+            <div class="room-schedule-weekly-actions">
+                <input type="text" name="reason" class="room-schedule-input" maxlength="255" value="{{ $sundayClosure->reason }}" placeholder="Reason shown when Sunday is closed">
+                <button type="submit" class="room-schedule-button {{ $sundayClosed ? 'room-schedule-button--ghost' : 'room-schedule-button--primary' }}">
+                    {{ $sundayClosed ? 'Open every Sunday' : 'Close every Sunday' }}
+                </button>
+            </div>
+        </form>
 
         <div class="room-schedule-grid">
             <article class="room-schedule-card room-schedule-card--calendar">
@@ -149,7 +179,9 @@
                         @php
                             $dateKey = $cursor->toDateString();
                             $override = $calendarOverrides->get($dateKey);
-                            $mode = $override?->mode ?? HyveScheduleOverride::MODE_DEFAULT;
+                            $mode = $sundayClosed && $cursor->isSunday()
+                                ? HyveScheduleOverride::MODE_CLOSED
+                                : ($override?->mode ?? HyveScheduleOverride::MODE_DEFAULT);
                             $isOutside = ! $cursor->isSameMonth($monthSeed);
                         @endphp
                         <a
@@ -171,6 +203,12 @@
             <article class="room-schedule-card room-schedule-card--details">
                 <h2 class="room-schedule-details-title">{{ $selectedDate->format('l, F j, Y') }}</h2>
                 <p class="room-schedule-details-subtitle">Selected room: {{ $selectedRoom->room_name }} - custom override for this date only</p>
+
+                @if ($sundayClosed && $selectedDate->isSunday())
+                    <div class="room-schedule-global-note">
+                        <strong>Globally closed every Sunday.</strong> This weekly rule takes priority over room-specific hours. Use “Open every Sunday” above when HYVE resumes Sunday operations.
+                    </div>
+                @endif
 
                 <form method="POST" action="{{ route('admin.room-schedule.store') }}" data-room-schedule-form>
                     @csrf
